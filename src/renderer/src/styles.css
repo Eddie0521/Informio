@@ -1,0 +1,1465 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Informio LXGW WenKai Mono";
+  src: url("./assets/fonts/LXGWWenKaiMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "Informio LXGW WenKai Mono", ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "Informio LXGW WenKai Mono", "SF Mono", "Cascadia Mono", "Roboto Mono", ui-monospace, monospace;
+}
+
+:root {
+  --informio-font-family: "Informio LXGW WenKai Mono", "LXGW WenKai Mono", "霞鹜文楷等宽", ui-sans-serif,
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-sans: var(--informio-font-family);
+  --font-mono: var(--informio-font-family);
+  color: #111820;
+  background: #eef2f3;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--informio-font-family);
+  touch-action: manipulation;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: default;
+}
+
+.app-shell {
+  --surface-app: #ffffff;
+  --surface-editor: #ffffff;
+  --surface-sidebar: #f8fafc;
+  --surface-panel: rgba(248, 250, 252, 0.78);
+  --surface-elevated: #ffffff;
+  --text-main: #111820;
+  --text-muted: #64748b;
+  --divider: rgba(203, 213, 225, 0.75);
+  --accent: #059669;
+  background-color: var(--surface-app);
+  color: var(--text-main);
+}
+
+.theme-white {
+  --surface-app: #ffffff;
+  --surface-editor: #ffffff;
+  --surface-sidebar: #f8fafc;
+  --surface-panel: rgba(248, 250, 252, 0.8);
+  --surface-elevated: #ffffff;
+  --text-main: #111820;
+  --text-muted: #64748b;
+  --divider: rgba(203, 213, 225, 0.75);
+  --accent: #059669;
+}
+
+.theme-paper {
+  --surface-app: #f7f7f2;
+  --surface-editor: #fbfbf7;
+  --surface-sidebar: #f1f3ef;
+  --surface-panel: rgba(244, 246, 242, 0.86);
+  --surface-elevated: #ffffff;
+  --text-main: #121a21;
+  --text-muted: #68758a;
+  --divider: rgba(190, 199, 208, 0.72);
+  --accent: #159447;
+}
+
+.theme-mint {
+  --surface-app: #eef7f0;
+  --surface-editor: #fbfffc;
+  --surface-sidebar: #e7f4eb;
+  --surface-panel: rgba(235, 248, 240, 0.9);
+  --surface-elevated: #ffffff;
+  --text-main: #10201a;
+  --text-muted: #5f756d;
+  --divider: rgba(170, 199, 182, 0.72);
+  --accent: #0d8f55;
+}
+
+.theme-sepia {
+  --surface-app: #f6eedf;
+  --surface-editor: #fffaf0;
+  --surface-sidebar: #f1e7d3;
+  --surface-panel: rgba(246, 236, 219, 0.92);
+  --surface-elevated: #fffdf8;
+  --text-main: #241a13;
+  --text-muted: #7c6a57;
+  --divider: rgba(190, 166, 134, 0.55);
+  --accent: #7b8f2f;
+}
+
+.theme-night {
+  --surface-app: #0f1215;
+  --surface-editor: #13171b;
+  --surface-sidebar: #101418;
+  --surface-panel: rgba(18, 22, 26, 0.96);
+  --surface-elevated: #1b2026;
+  --text-main: rgba(241, 245, 249, 0.88);
+  --text-muted: rgba(203, 213, 225, 0.66);
+  --divider: rgba(255, 255, 255, 0.08);
+  --accent: #5ad08a;
+}
+
+.theme-custom {
+  --surface-app: color-mix(in srgb, var(--custom-theme-color) 7%, white);
+  --surface-editor: color-mix(in srgb, var(--custom-theme-color) 3%, white);
+  --surface-sidebar: color-mix(in srgb, var(--custom-theme-color) 10%, white);
+  --surface-panel: color-mix(in srgb, var(--custom-theme-color) 8%, white);
+  --surface-elevated: #ffffff;
+  --text-main: #111820;
+  --text-muted: #64748b;
+  --divider: color-mix(in srgb, var(--custom-theme-color) 22%, #cbd5e1);
+  --accent: var(--custom-theme-color);
+}
+
+.top-bar,
+.titlebar-left,
+.status-bar {
+  background: var(--surface-app);
+  border-top: 1px solid var(--divider);
+  border-color: var(--divider);
+  color: var(--text-main);
+}
+
+.assistant-panel,
+.assistant-panel .border-b,
+.assistant-panel .border-t {
+  border-color: var(--divider);
+}
+
+.side-rail,
+.context-panel {
+  background: var(--surface-sidebar);
+  border-color: var(--divider);
+  color: var(--text-main);
+}
+
+.assistant-panel {
+  background: var(--surface-panel);
+  border-color: var(--divider);
+  color: var(--text-main);
+}
+
+.surface-card {
+  background: var(--surface-elevated);
+}
+
+.informio-editor-shell {
+  --editor-font-size: 15px;
+  --editor-line-height: 1.62;
+  background: var(--surface-editor);
+}
+
+.settings-window {
+  background: var(--surface-app);
+  color: var(--text-main);
+}
+
+.settings-sidebar {
+  background: var(--surface-sidebar);
+  border-color: var(--divider);
+}
+
+.settings-main {
+  background: var(--surface-editor);
+}
+
+.settings-titlebar {
+  background: var(--surface-app);
+  border-color: var(--divider);
+}
+
+.settings-nav-active {
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface-elevated));
+  color: var(--accent);
+}
+
+.settings-nav-idle {
+  color: var(--text-muted);
+}
+
+.settings-nav-idle:hover {
+  background: var(--surface-elevated);
+}
+
+.settings-divide,
+.settings-window .divide-y > :not(:last-child) {
+  border-color: var(--divider);
+}
+
+.settings-window .bg-white,
+.assistant-panel .bg-white,
+.context-panel .bg-white {
+  background: var(--surface-elevated);
+}
+
+.settings-window .bg-slate-50 {
+  background: var(--surface-panel);
+}
+
+.settings-window .text-slate-950,
+.settings-window .text-slate-900,
+.settings-window .text-slate-800,
+.settings-window .text-slate-700 {
+  color: var(--text-main);
+}
+
+.settings-window .text-slate-500,
+.settings-window .text-slate-600 {
+  color: var(--text-muted);
+}
+
+.panel-resize-handle {
+  position: relative;
+  background: transparent;
+}
+
+.panel-resize-handle::before {
+  position: absolute;
+  inset: 0 auto 0 1px;
+  width: 1px;
+  background: var(--divider);
+  content: "";
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.panel-resize-handle:hover::before,
+.panel-resize-handle:focus-visible::before,
+.is-resizing-panel .panel-resize-handle::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.is-resizing-panel {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag,
+button,
+input,
+textarea {
+  -webkit-app-region: no-drag;
+}
+
+.informio-editor {
+  min-height: calc(100vh - 190px);
+  color: var(--text-main);
+  caret-color: var(--accent);
+  font-family: var(--informio-font-family);
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
+  outline: none;
+}
+
+.informio-editor-source {
+  display: block;
+  white-space: pre;
+  font-family: var(--font-mono);
+  overflow-x: auto;
+}
+
+.informio-editor-source::selection {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.informio-editor :where(p, h1, h2, h3, li, blockquote, th, td, summary, figcaption) {
+  font-family: var(--informio-font-family);
+}
+
+.informio-editor :first-child {
+  margin-top: 0;
+}
+
+.informio-editor h1 {
+  margin: 0 0 28px;
+  color: var(--text-main);
+  font-size: calc(var(--editor-font-size) * 2.45);
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1.04;
+  text-wrap: balance;
+}
+
+.informio-editor h2 {
+  margin: 36px 0 10px;
+  color: var(--text-main);
+  font-size: calc(var(--editor-font-size) * 1.3);
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1.16;
+}
+
+.informio-editor h3 {
+  margin: 26px 0 8px;
+  color: var(--text-main);
+  font-size: calc(var(--editor-font-size) * 1.08);
+  font-weight: 800;
+}
+
+.informio-editor p {
+  margin: 0 0 17px;
+  text-wrap: pretty;
+}
+
+.informio-editor blockquote {
+  margin: 0 0 24px;
+  padding: 0 0 0 18px;
+  color: var(--text-main);
+  font-size: calc(var(--editor-font-size) * 1.08);
+  font-weight: 800;
+  line-height: 1.5;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.informio-editor mark {
+  border-radius: 4px;
+  background: color-mix(in srgb, #facc15 45%, transparent);
+  padding: 0.02em 0.18em;
+}
+
+.informio-editor a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.informio-editor ul,
+.informio-editor ol {
+  margin: 0 0 17px;
+  padding-left: 1.5em;
+}
+
+.informio-editor ul:not([data-type="taskList"]) {
+  list-style: disc;
+}
+
+.informio-editor ol {
+  list-style: decimal;
+}
+
+.informio-editor li::marker {
+  color: var(--text-muted);
+}
+
+.informio-editor li {
+  margin: 5px 0;
+  padding-left: 0.2em;
+}
+
+.informio-editor code {
+  border-radius: 6px;
+  background: #eef3ef;
+  padding: 0.12em 0.35em;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.informio-editor pre {
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: calc(var(--editor-font-size) * 0.9);
+  line-height: 1.55;
+}
+
+.informio-code-block {
+  position: relative;
+  margin: 0 0 20px;
+}
+
+.informio-code-block > pre,
+.informio-code-source {
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-sidebar) 78%, var(--surface-elevated));
+  padding: 10px 12px;
+}
+
+.informio-code-block pre {
+  margin: 0;
+  border-radius: 0;
+}
+
+.informio-code-source {
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: calc(var(--editor-font-size) * 0.9);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.informio-source-fence {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+}
+
+.informio-code-source-content,
+.informio-plain-source-content {
+  display: block;
+  margin: 0;
+  outline: none;
+  white-space: pre-wrap;
+}
+
+.informio-inline-source-content {
+  font-family: var(--font-mono);
+  outline: none;
+  white-space: pre-wrap;
+}
+
+.is-hidden-source-content {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.informio-code-block textarea,
+.informio-source-block textarea {
+  display: block;
+  width: 100%;
+  min-height: 1.55em;
+  resize: none;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: calc(var(--editor-font-size) * 0.9);
+  line-height: 1.55;
+  outline: none;
+}
+
+.informio-code-block textarea:focus,
+.informio-source-block textarea:focus {
+  box-shadow: none;
+}
+
+.informio-code-block .is-hidden-code-content {
+  display: none;
+}
+
+.informio-code-block .hljs-keyword,
+.informio-code-block .hljs-selector-tag,
+.informio-code-block .hljs-title.function_ {
+  color: #7c3aed;
+}
+
+.informio-code-block .hljs-string,
+.informio-code-block .hljs-attr,
+.informio-code-block .hljs-symbol {
+  color: #047857;
+}
+
+.informio-code-block .hljs-number,
+.informio-code-block .hljs-literal {
+  color: #b45309;
+}
+
+.informio-code-block .hljs-comment {
+  color: #64748b;
+  font-style: italic;
+}
+
+.informio-editor pre code {
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.informio-wikilink {
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.informio-wikilink::before {
+  content: "[[";
+  color: color-mix(in srgb, var(--accent) 42%, var(--text-muted));
+}
+
+.informio-wikilink::after {
+  content: "]]";
+  color: color-mix(in srgb, var(--accent) 42%, var(--text-muted));
+}
+
+.informio-wikilink.is-unresolved {
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-underline-offset: 3px;
+}
+
+.informio-properties {
+  margin-bottom: 18px;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.informio-properties-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.informio-properties-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.informio-properties-toggle:hover,
+.informio-properties-toggle:focus-visible {
+  color: var(--text-main);
+  outline: none;
+}
+
+.informio-properties-toggle-icon {
+  transition: transform 160ms ease;
+}
+
+.informio-properties-toggle-icon.is-collapsed {
+  transform: rotate(-90deg);
+}
+
+.informio-properties-header strong {
+  max-width: 70%;
+  overflow: hidden;
+  color: #b91c1c;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.informio-property-list {
+  display: grid;
+  gap: 6px;
+}
+
+.informio-property-row,
+.informio-property-new,
+.informio-property-add {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr) 28px;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+}
+
+.informio-property-row label {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.informio-property-row input,
+.informio-property-new input,
+.informio-properties-raw {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-main);
+  outline: none;
+}
+
+.informio-property-row button,
+.informio-property-new button,
+.informio-property-add {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.informio-property-row button {
+  display: grid;
+  height: 24px;
+  place-items: center;
+}
+
+.informio-property-row button:hover,
+.informio-property-new button:hover,
+.informio-property-add:hover {
+  color: var(--text-main);
+}
+
+.informio-property-new {
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: 8px;
+}
+
+.informio-property-new.is-standalone {
+  margin-top: 0;
+}
+
+.informio-properties-raw {
+  min-height: 72px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  line-height: 1.55;
+}
+
+.informio-editor hr {
+  margin: 26px 0;
+  border: 0;
+  border-top: 1px solid var(--divider);
+}
+
+.informio-editor table {
+  width: 100%;
+  margin: 0 0 20px;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: 8px;
+  font-size: calc(var(--editor-font-size) * 0.92);
+  box-shadow: 0 0 0 1px var(--divider);
+}
+
+.informio-editor .tableWrapper {
+  overflow-x: auto;
+  margin: 0 0 20px;
+  padding: 26px 0 0 26px;
+}
+
+.informio-editor .tableWrapper table {
+  margin: 0;
+}
+
+.informio-editor th,
+.informio-editor td {
+  position: relative;
+  border: 1px solid var(--divider);
+  min-width: 88px;
+  padding: 8px 10px;
+  vertical-align: top;
+}
+
+.informio-editor th {
+  background: var(--surface-sidebar);
+  font-weight: 800;
+}
+
+.informio-editor .column-resize-handle {
+  top: 0;
+  bottom: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  z-index: 5;
+}
+
+.informio-editor.resize-cursor {
+  cursor: col-resize;
+}
+
+.informio-table-controls {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+}
+
+.informio-table-add,
+.informio-table-handle {
+  pointer-events: auto;
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--divider) 80%, transparent);
+  background: var(--surface-elevated);
+  color: var(--text-muted);
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.12);
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.informio-table-add {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+}
+
+.informio-table-add:hover,
+.informio-table-handle:hover,
+.informio-table-handle.is-drop-target {
+  background: var(--accent);
+  color: white;
+  transform: scale(1.04);
+}
+
+.informio-table-handle {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: grab;
+}
+
+.informio-table-handle:active {
+  cursor: grabbing;
+}
+
+.informio-table-handle::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background:
+    radial-gradient(currentColor 1.2px, transparent 1.5px) 0 0 / 5px 5px,
+    radial-gradient(currentColor 1.2px, transparent 1.5px) 2.5px 2.5px / 5px 5px;
+  opacity: 0.8;
+}
+
+.informio-table-merged-note {
+  pointer-events: none;
+  position: absolute;
+  border-radius: 6px;
+  background: var(--surface-elevated);
+  padding: 4px 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+}
+
+.informio-editor img.informio-image {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  margin: 0 auto 20px;
+  border-radius: 8px;
+  border: 1px solid var(--divider);
+}
+
+.informio-editor img:not(.informio-image) {
+  display: block;
+  max-width: 100%;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.informio-editor ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.informio-editor li[data-type="taskItem"] {
+  display: flex;
+  align-items: flex-start;
+  padding-left: 0;
+}
+
+.informio-editor li[data-type="taskItem"] > label {
+  flex: 0 0 auto;
+  margin: 0.08em 0.55em 0 0;
+  user-select: none;
+  pointer-events: none;
+}
+
+.informio-editor li[data-type="taskItem"] > label input[type="checkbox"] {
+  margin: 0;
+  vertical-align: middle;
+  pointer-events: auto;
+}
+
+.informio-editor li[data-type="taskItem"] > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.informio-editor li[data-type="taskItem"] > div > p {
+  margin: 0;
+}
+
+.informio-math-block,
+.informio-chart-block,
+.informio-details-block,
+.informio-callout-block,
+.informio-footnote-block {
+  margin: 0 0 20px;
+}
+
+.informio-source-block {
+  position: relative;
+  margin: 0 0 20px;
+}
+
+.informio-source-preview {
+  padding: 0;
+}
+
+.informio-block-error,
+.informio-block-preview-muted {
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: #b91c1c;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.informio-block-preview-muted {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.informio-mermaid-preview {
+  overflow-x: auto;
+}
+
+.informio-mermaid-preview svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.informio-footnote-preview {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--text-muted);
+  font-size: calc(var(--editor-font-size) * 0.9);
+}
+
+.informio-details-preview summary {
+  cursor: default;
+  font-weight: 800;
+}
+
+.informio-details-preview p,
+.informio-callout-preview p {
+  margin: 8px 0 0;
+}
+
+.informio-callout-preview {
+  border: 0;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-elevated));
+  padding: 14px 16px;
+}
+
+.informio-callout-preview strong {
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.informio-media-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0 0 20px;
+}
+
+.informio-block-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.informio-formula {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-main);
+  font-family: "New York", "Times New Roman", serif;
+  font-size: calc(var(--editor-font-size) * 1.18);
+  font-style: italic;
+  line-height: 1.45;
+}
+
+.informio-math-inline {
+  display: inline-flex;
+  position: relative;
+  min-width: 1.5em;
+  align-items: baseline;
+  vertical-align: baseline;
+}
+
+.informio-math-inline input {
+  width: min(260px, 70vw);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 0.94em;
+  outline: none;
+}
+
+.informio-chart-block {
+  background: transparent;
+}
+
+.informio-chart-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.informio-chart-node {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  font-size: calc(var(--editor-font-size) * 0.86);
+  font-weight: 750;
+}
+
+.informio-chart-arrow {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.informio-chart-source {
+  opacity: 0.78;
+}
+
+.informio-chart-block pre {
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.command-palette {
+  width: min(640px, calc(100vw - 32px));
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--surface-elevated);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24), 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.command-palette-input {
+  display: flex;
+  height: 48px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--divider);
+  padding: 0 14px;
+  color: var(--text-muted);
+}
+
+.command-palette-input input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 15px;
+  outline: none;
+}
+
+.command-palette kbd {
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--surface-sidebar) 80%, var(--surface-elevated));
+  padding: 2px 6px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.command-palette-list {
+  max-height: min(420px, 58vh);
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.command-palette-item {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 7px 9px;
+  color: var(--text-main);
+  text-align: left;
+}
+
+.command-palette-item.is-active,
+.command-palette-item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.command-palette-item span {
+  min-width: 0;
+}
+
+.command-palette-item strong,
+.command-palette-item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-item small {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.command-palette-empty {
+  padding: 18px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.informio-media {
+  display: block;
+  width: 100%;
+  min-height: 200px;
+  max-height: 420px;
+  border-radius: 6px;
+  background: #000;
+}
+
+.informio-media-block video.informio-media {
+  max-width: 100%;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.informio-media-block figcaption {
+  margin-top: 8px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.informio-pdf-block {
+  margin: 0 0 22px;
+  color: var(--text-main);
+}
+
+.informio-editor-shell.is-pdf-document .informio-editor {
+  min-height: 100%;
+  width: 100%;
+}
+
+.informio-editor-shell.is-pdf-document .informio-editor > * {
+  width: 100%;
+}
+
+.informio-editor-shell.is-pdf-document .informio-editor > p:empty {
+  display: none;
+}
+
+.informio-editor-shell.is-pdf-document .informio-editor > p:empty + .informio-pdf-block {
+  margin-top: 0;
+}
+
+.informio-editor-shell.is-pdf-document .informio-editor > .informio-pdf-block:only-child {
+  min-height: 0;
+}
+
+.informio-editor-shell.is-pdf-document .informio-pdf-block {
+  margin: 0;
+}
+
+.informio-pdf-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-height: 80vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 2px 0;
+  gap: 4px;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
+.informio-editor-shell.is-pdf-document .informio-pdf-frame {
+  width: 100%;
+  min-height: 100%;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+}
+
+.informio-pdf-page {
+  flex: 0 0 auto;
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: white;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.informio-pdf-page-placeholder {
+  width: min(100%, 760px);
+  height: min(76vh, 920px);
+}
+
+.informio-pdf-canvas {
+  display: block;
+  max-width: none;
+  background: white;
+}
+
+.informio-pdf-canvas.is-hidden {
+  display: none;
+}
+
+.informio-pdf-message {
+  align-self: center;
+  justify-self: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.informio-pdf-message.is-error {
+  color: #b91c1c;
+}
+
+.informio-pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 2;
+}
+
+.informio-pdf-text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.informio-pdf-text-layer ::selection {
+  background: rgba(56, 189, 248, 0.32);
+}
+
+.informio-pdf-annotation-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.informio-pdf-annotation {
+  position: absolute;
+  display: block;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.informio-pdf-annotation.is-highlight {
+  background: color-mix(in srgb, var(--annotation-color) 48%, transparent);
+}
+
+.informio-pdf-annotation.is-underline {
+  border-bottom: 0.14em solid color-mix(in srgb, var(--annotation-color) 86%, #111827 6%);
+}
+
+.informio-pdf-annotation.is-comment,
+.informio-pdf-annotation.is-link {
+  background: color-mix(in srgb, var(--annotation-color) 28%, transparent);
+  border-bottom: 0.14em solid color-mix(in srgb, var(--annotation-color) 86%, #111827 6%);
+}
+
+.informio-pdf-annotation.is-comment::after {
+  content: "";
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--annotation-color) 86%, #111827 8%);
+}
+
+.informio-pdf-annotation.is-focused {
+  outline: 2px solid rgba(16, 185, 129, 0.72);
+  outline-offset: 2px;
+}
+
+.informio-pdf-selection-popover {
+  position: absolute;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: min(360px, calc(100% - 16px));
+  padding: 5px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.informio-pdf-annotation-menu {
+  position: absolute;
+  z-index: 12;
+  display: grid;
+  gap: 4px;
+  min-width: 136px;
+  max-width: min(280px, calc(100% - 16px));
+  padding: 7px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.informio-pdf-annotation-menu-title {
+  padding: 1px 4px 3px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.informio-pdf-annotation-menu-comment {
+  max-height: 80px;
+  overflow: auto;
+  padding: 4px;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.informio-pdf-annotation-menu button {
+  height: 26px;
+  border-radius: 5px;
+  padding: 0 8px;
+  text-align: left;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.informio-pdf-annotation-menu button:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.informio-pdf-annotation-menu button.is-danger {
+  color: #dc2626;
+}
+
+.informio-pdf-selection-popover button {
+  height: 24px;
+  border-radius: 5px;
+  padding: 0 7px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.informio-pdf-selection-popover button:hover:not(:disabled) {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.informio-pdf-selection-popover button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.informio-pdf-color-row {
+  display: flex;
+  gap: 3px;
+  padding-right: 3px;
+  border-right: 1px solid var(--divider);
+}
+
+.informio-pdf-color-row .informio-pdf-color {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  padding: 0;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.12);
+}
+
+.informio-pdf-color-row .informio-pdf-color.is-selected {
+  box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.48);
+}
+
+.informio-pdf-notice {
+  position: sticky;
+  top: 8px;
+  z-index: 15;
+  max-width: min(620px, calc(100% - 24px));
+  align-self: center;
+  border-radius: 8px;
+  background: rgba(255, 247, 237, 0.96);
+  padding: 8px 10px;
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(251, 146, 60, 0.22);
+}
+
+.informio-details-block summary {
+  cursor: default;
+  font-weight: 800;
+}
+
+.informio-details-block p,
+.informio-callout-block p {
+  margin: 8px 0 0;
+}
+
+.informio-callout-block {
+  border: 0;
+  background: transparent;
+}
+
+.informio-footnote-block {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--text-muted);
+  font-size: calc(var(--editor-font-size) * 0.9);
+}
+
+.informio-editor .is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.line-clamp-4 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+@media (max-width: 900px) {
+  .informio-editor h1 {
+    font-size: 34px;
+  }
+
+  .informio-pdf-toolbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .informio-pdf-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

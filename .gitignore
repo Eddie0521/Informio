@@ -1,0 +1,10 @@
+node_modules
+dist
+dist-electron
+out
+release
+.playwright-cli
+output
+output/playwright
+.DS_Store
+*.log
