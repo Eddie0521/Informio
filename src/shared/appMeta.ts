@@ -4,7 +4,7 @@ const resolveGithubRepository = () => {
 
   const owner = process.env.INFORMIO_GITHUB_OWNER?.trim() || "";
   const repo = process.env.INFORMIO_GITHUB_REPO?.trim() || "";
-  return owner && repo ? `${owner}/${repo}` : "";
+  return owner && repo ? `${owner}/${repo}` : "Eddie0521/Informio";
 };
 
 export const APP_NAME = "Informio";
