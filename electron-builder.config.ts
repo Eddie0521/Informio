@@ -63,7 +63,7 @@ const config: Configuration = {
   },
   linux: {
     category: "Office",
-    icon: "build/linux-icons",
+    icon: "build/icons",
     target: ["AppImage", "deb"]
   }
 };
