@@ -579,7 +579,7 @@ export class ClaudeAgentSdkManager {
         tools: { type: "preset", preset: "claude_code" },
         env: {
           ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/0.1.0"
+          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/0.1.1"
         }
       }
     });
@@ -676,7 +676,7 @@ export class ClaudeAgentSdkManager {
         tools: [],
         env: {
           ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/0.1.0"
+          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/0.1.1"
         }
       }
     });
@@ -775,7 +775,7 @@ export class ClaudeAgentSdkManager {
         },
         env: {
           ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/0.1.0"
+          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/0.1.1"
         }
       }
     });
