@@ -303,7 +303,7 @@ export class CodexAppServerManager {
       this.sessions.set(provider.id, nextSession);
       const initialized = asRecord(
         await this.request(nextSession, "initialize", {
-          clientInfo: { name: "informio", version: "0.1.1" },
+          clientInfo: { name: "informio", version: "0.1.2" },
           capabilities: { experimentalApi: true }
         })
       );

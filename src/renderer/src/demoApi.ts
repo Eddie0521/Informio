@@ -361,7 +361,7 @@ export function installDemoApi() {
     },
     getAppInfo: async () => ({
       name: "Informio",
-      version: "0.1.1",
+      version: "0.1.2",
       githubUrl: ""
     }),
     saveDocuments: async (documents: InformioDocument[], activeDocumentId: string) => {
