@@ -17,11 +17,11 @@ jobs:
         include:
           - os: macos-15
             platform: mac
-            command: pnpm exec electron-builder --mac dmg zip -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --publish always --config electron-builder.config.ts
+            command: node scripts/run-electron-builder.cjs --mac dmg zip -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --publish always --config electron-builder.config.ts
             artifact_glob: release/*mac*
           - os: windows-2025
             platform: win
-            command: pnpm exec electron-builder --win nsis --publish always --config electron-builder.config.ts
+            command: node scripts/run-electron-builder.cjs --win nsis --publish always --config electron-builder.config.ts
             artifact_glob: release/*win*
 
     runs-on: ${{ matrix.os }}
@@ -95,7 +95,7 @@ jobs:
       - name: Package desktop app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm exec electron-builder --linux AppImage --x64 --config electron-builder.config.ts
+        run: node scripts/run-electron-builder.cjs --linux AppImage --x64 --publish always --config electron-builder.config.ts
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
