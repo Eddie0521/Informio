@@ -17,7 +17,12 @@ const env = {
   PATH: [shimDir, process.env.PATH || ""].filter(Boolean).join(path.delimiter)
 };
 
-const result = spawnSync(electronBuilderBin, process.argv.slice(2), {
+const command = isWindows ? "cmd.exe" : electronBuilderBin;
+const commandArgs = isWindows
+  ? ["/c", electronBuilderBin, ...process.argv.slice(2)]
+  : process.argv.slice(2);
+
+const result = spawnSync(command, commandArgs, {
   cwd: repoRoot,
   env,
   stdio: "inherit",

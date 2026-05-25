@@ -15,7 +15,13 @@ const config: Configuration = {
   artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
   fileAssociations: [
     {
-      ext: ["md", "markdown"],
+      ext: "md",
+      name: "Markdown Document",
+      description: "Markdown document",
+      role: "Editor"
+    },
+    {
+      ext: "markdown",
       name: "Markdown Document",
       description: "Markdown document",
       role: "Editor"
