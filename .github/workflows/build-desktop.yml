@@ -66,6 +66,7 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: electronuserland/builder:20
+      options: --platform linux/amd64
 
     steps:
       - name: Checkout
