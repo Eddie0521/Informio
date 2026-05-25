@@ -1,0 +1,67 @@
+name: Build Desktop Packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            command: pnpm exec electron-builder --mac dmg zip -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --publish always --config electron-builder.config.ts
+            artifact_glob: release/*mac*
+          - os: windows-latest
+            platform: win
+            command: pnpm exec electron-builder --win nsis --publish always --config electron-builder.config.ts
+            artifact_glob: release/*win*
+          - os: ubuntu-latest
+            platform: linux
+            command: pnpm exec electron-builder --linux AppImage deb --publish always --config electron-builder.config.ts
+            artifact_glob: release/*linux*
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build renderer and main process
+        run: pnpm build
+
+      - name: Package desktop app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ${{ matrix.command }}
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: informio-${{ matrix.platform }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
