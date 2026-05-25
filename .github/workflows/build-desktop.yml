@@ -94,7 +94,7 @@ jobs:
       - name: Package desktop app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm exec electron-builder --linux AppImage deb --x64 --publish always --config electron-builder.config.ts
+        run: pnpm exec electron-builder --linux AppImage deb --x64 --config electron-builder.config.ts
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -102,3 +102,25 @@ jobs:
           name: informio-linux
           path: release/*linux*
           if-no-files-found: error
+
+  publish-linux-release:
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - build
+      - build-linux
+
+    steps:
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: informio-linux
+          path: release
+
+      - name: Upload Linux assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            release/*.AppImage
+            release/*.deb
