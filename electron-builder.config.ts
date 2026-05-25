@@ -13,6 +13,14 @@ const config: Configuration = {
   files: ["out/**/*", "package.json"],
   asar: true,
   artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
+  fileAssociations: [
+    {
+      ext: ["md", "markdown"],
+      name: "Markdown Document",
+      description: "Markdown document",
+      role: "Editor"
+    }
+  ],
   publish: githubOwner && githubRepo
     ? [
         {
@@ -27,7 +35,18 @@ const config: Configuration = {
     icon: "build/icon.icns",
     target: ["dmg", "zip"],
     hardenedRuntime: true,
-    notarize: true
+    notarize: true,
+    extendInfo: {
+      CFBundleDocumentTypes: [
+        {
+          CFBundleTypeName: "Markdown Document",
+          CFBundleTypeRole: "Editor",
+          CFBundleTypeExtensions: ["md", "markdown"],
+          LSHandlerRank: "Alternate",
+          LSItemContentTypes: ["net.daringfireball.markdown"]
+        }
+      ]
+    }
   },
   dmg: {
     sign: true
@@ -41,6 +60,10 @@ const config: Configuration = {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     perMachine: false
+  },
+  linux: {
+    category: "Office",
+    target: ["AppImage", "deb"]
   }
 };
 

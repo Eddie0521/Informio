@@ -60,6 +60,17 @@ export type SaveAttachmentResult = {
   fileName: string;
 };
 
+export type LocalFontOption = {
+  family: string;
+  fullName?: string;
+  style?: string;
+};
+
+export type ListLocalFontsResult = {
+  fonts: LocalFontOption[];
+  error?: string;
+};
+
 export type AgentProvider = {
   id: string;
   name: string;
@@ -75,19 +86,11 @@ export type AgentProvider = {
   description: string;
 };
 
-export type UpdaterState = {
-  status: "idle" | "checking" | "available" | "downloading" | "downloaded" | "up-to-date" | "error";
-  version?: string;
-  progress?: number;
-  transferredBytes?: number;
-  totalBytes?: number;
-  message?: string;
-};
-
 export type AppInfo = {
   name: string;
   version: string;
   githubUrl: string;
+  iconDataUrl?: string;
 };
 
 export type AppSettings = {
@@ -107,6 +110,9 @@ export type AppSettings = {
   appearance: {
     theme: ThemeName;
     customThemeColor: string;
+    chineseFontFamily: string;
+    englishFontFamily: string;
+    codeFontFamily: string;
     showTitleInWindow: boolean;
     autoHideStatusBar: boolean;
     chatFontSize: number;
@@ -121,7 +127,7 @@ export type AppSettings = {
     contentWidth: number;
     spellcheck: boolean;
     typewriterMode: boolean;
-    writePdfAnnotationsToSource: boolean;
+    assetImportMode: "copy-to-attachment" | "link-original-file";
   };
   markdown: {
     autoSave: boolean;
@@ -129,12 +135,8 @@ export type AppSettings = {
     exportFormat: "markdown" | "html";
   };
   shortcuts: {
-    quickSave: string;
-    quickCapture: string;
     quickFolder: string;
-  };
-  updates: {
-    autoCheckOnLaunch: boolean;
+    bindings: Record<string, string>;
   };
   language: "zh-CN" | "en-US";
   agents: AgentProvider[];
@@ -278,7 +280,7 @@ export type AgentSessionContext = {
   }>;
 };
 
-export type PdfAnnotationType = "highlight" | "underline" | "comment" | "link";
+export type PdfAnnotationType = "highlight" | "comment" | "link";
 
 export type PdfAnnotationRect = {
   x: number;
@@ -307,11 +309,13 @@ export type PdfAnnotation = {
   text: string;
   comment?: string;
   markdownTarget?: PdfMarkdownTarget;
+  sourceAnnotationId?: string;
   createdAt: string;
   updatedAt: string;
   sourceWrite?: {
     attempted: boolean;
     ok: boolean;
+    pending?: boolean;
     message?: string;
   };
 };
@@ -328,6 +332,10 @@ export type PdfAnnotationSelection = {
 export type LoadPdfAnnotationsInput = {
   pdfPath: string;
   fingerprint?: string;
+};
+
+export type FindPdfAnnotationInput = {
+  annotationId: string;
 };
 
 export type SavePdfAnnotationInput = {
@@ -349,6 +357,23 @@ export type DeletePdfAnnotationInput = {
 export type DeletePdfAnnotationResult = {
   annotationId: string;
   sourceWrite?: PdfAnnotation["sourceWrite"];
+};
+
+export type WritePdfDocumentBytesInput = {
+  pdfPath: string;
+  bytes: Uint8Array;
+};
+
+export type WritePdfDocumentBytesResult = {
+  ok: boolean;
+};
+
+export type WritePdfAnnotationSourceInput = {
+  annotation: PdfAnnotation;
+};
+
+export type WritePdfAnnotationSourceResult = {
+  sourceWrite: PdfAnnotation["sourceWrite"];
 };
 
 export type AgentContextSelection =

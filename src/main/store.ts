@@ -18,23 +18,25 @@ import {
   migrateThemeName,
   normalizeThemeColor
 } from "../shared/theme.js";
+import { normalizeShortcutBindings } from "../shared/shortcuts.js";
 import { buildWorkspaceScopeId } from "../shared/workspaceScope.js";
 
 const now = () => new Date().toISOString();
 const quickFolder = () => join(homedir(), "Documents", "Informio Quick Notes");
-
-const codexModels = [
-  { id: "gpt-5.5", label: "GPT-5.5" },
-  { id: "gpt-5.4", label: "GPT-5.4" },
-  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-  { id: "gpt-5.2", label: "GPT-5.2" }
-];
+const defaultChineseFontFamily = "PingFang SC";
+const defaultEnglishFontFamily = "Helvetica Neue";
+const defaultCodeFontFamily = "SF Mono";
+const normalizeFontFamilySetting = (value: string | undefined, fallback: string) => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+};
+const normalizeAssetImportMode = (value: AppSettings["editor"]["assetImportMode"] | undefined): AppSettings["editor"]["assetImportMode"] =>
+  value === "link-original-file" ? "link-original-file" : "copy-to-attachment";
 
 export const defaultSettings: AppSettings = {
   agentRuntime: {
     enabled: true,
-    autoStart: false,
+    autoStart: true,
     conversationRetentionLimit: 5,
     conversationRetentionDays: 30
   },
@@ -48,6 +50,9 @@ export const defaultSettings: AppSettings = {
   appearance: {
     theme: "paper",
     customThemeColor: DEFAULT_CUSTOM_THEME_COLOR,
+    chineseFontFamily: defaultChineseFontFamily,
+    englishFontFamily: defaultEnglishFontFamily,
+    codeFontFamily: defaultCodeFontFamily,
     showTitleInWindow: true,
     autoHideStatusBar: false,
     chatFontSize: 13,
@@ -62,7 +67,7 @@ export const defaultSettings: AppSettings = {
     contentWidth: 820,
     spellcheck: true,
     typewriterMode: false,
-    writePdfAnnotationsToSource: false
+    assetImportMode: "copy-to-attachment"
   },
   markdown: {
     autoSave: true,
@@ -70,12 +75,8 @@ export const defaultSettings: AppSettings = {
     exportFormat: "markdown"
   },
   shortcuts: {
-    quickSave: "Command+S",
-    quickCapture: "Control+Space",
-    quickFolder: quickFolder()
-  },
-  updates: {
-    autoCheckOnLaunch: true
+    quickFolder: quickFolder(),
+    bindings: normalizeShortcutBindings()
   },
   language: "zh-CN",
   activeAgentId: "codex",
@@ -102,7 +103,7 @@ export const defaultSettings: AppSettings = {
       args: ["app-server", "--listen", "stdio://"],
       enabled: true,
       model: "gpt-5.3-codex",
-      models: codexModels,
+      models: [],
       runtimeSupportsResume: true,
       runtimePermissionModes: ["read_only", "default", "full_access"],
       description: "适合在当前工作区里分析、改写和执行开发任务。"
@@ -182,7 +183,7 @@ export const pruneAgentConversations = (
   conversations.forEach((conversation) => {
     const updatedAtTime = Date.parse(conversation.updatedAt);
     if (!Number.isFinite(updatedAtTime) || updatedAtTime < cutoffTime) return;
-    const key = `${conversation.workspaceScopeId}::${conversation.providerId}`;
+    const key = conversation.providerId;
     const items = grouped.get(key) ?? [];
     items.push(conversation);
     grouped.set(key, items);
@@ -324,6 +325,7 @@ const isUnsupportedAgent = (agent: Partial<AgentProvider>) => {
 const mergeAgent = (agent: Partial<AgentProvider>): AgentProvider => {
   const base = (agent.id && defaultAgentById.get(agent.id)) || defaultSettings.agents[0];
   const legacyClaudeModelAliases = new Set(["default", "sonnet", "opus", "haiku"]);
+  const legacyCodexModelIds = new Set(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2"]);
   const legacyCodexMcpPreset =
     agent.id === "codex"
     && (agent.transport as string | undefined) === "mcp"
@@ -339,6 +341,13 @@ const mergeAgent = (agent: Partial<AgentProvider>): AgentProvider => {
     && (agent.transport as string | undefined) === "cli";
   const legacyPreset = !agent.transport;
   const defaultPreset = Boolean(agent.id && defaultAgentById.has(agent.id));
+  const normalizedCodexModels =
+    agent.id === "codex"
+    && Array.isArray(agent.models)
+    && agent.models.length > 0
+    && agent.models.every((model) => legacyCodexModelIds.has(model.id))
+      ? base.models
+      : agent.models;
   const normalizedClaudeModel =
     agent.id === "claude-code" && agent.model && legacyClaudeModelAliases.has(agent.model)
       ? base.model
@@ -357,7 +366,7 @@ const mergeAgent = (agent: Partial<AgentProvider>): AgentProvider => {
     command: legacyPreset || legacyCodexMcpPreset || legacyClaudeMcpPreset || legacyOpencodeCliPreset ? base.command : (agent.command ?? base.command),
     args: legacyPreset || legacyCodexMcpPreset || legacyClaudeMcpPreset || legacyOpencodeCliPreset ? base.args : (agent.args ?? base.args),
     model: normalizedClaudeModel,
-    models: normalizedClaudeModels,
+    models: normalizedClaudeModels ?? normalizedCodexModels ?? base.models,
     runtimeSupportsResume: agent.runtimeSupportsResume ?? base.runtimeSupportsResume,
     runtimePermissionModes: agent.runtimePermissionModes ?? base.runtimePermissionModes,
     description: defaultPreset || legacyPreset || legacyCodexMcpPreset || legacyClaudeMcpPreset || legacyOpencodeCliPreset ? base.description : (agent.description ?? base.description)
@@ -373,7 +382,10 @@ const mergeAgents = (agents?: Partial<AgentProvider>[]) => {
 };
 
 const mergeData = (value: Partial<AppData>): AppData => {
-  const resolvedWorkspacePath = value.workspacePath ?? value.settings?.shortcuts?.quickFolder ?? quickFolder();
+  const persistedShortcuts = value.settings?.shortcuts as
+    | (AppSettings["shortcuts"] & { quickSave?: string; quickCapture?: string })
+    | undefined;
+  const resolvedWorkspacePath = value.workspacePath ?? persistedShortcuts?.quickFolder ?? quickFolder();
   const projects: InformioProject[] = value.projects?.length
     ? value.projects
     : [projectRecord(resolvedWorkspacePath)];
@@ -399,6 +411,9 @@ const mergeData = (value: Partial<AppData>): AppData => {
         : value.settings?.appearance?.customThemeColor,
     DEFAULT_CUSTOM_THEME_COLOR
   );
+  const legacyAppearance = value.settings?.appearance as
+    | (Partial<AppSettings["appearance"]> & { bodyFontFamily?: string })
+    | undefined;
   return {
     ...defaultData,
     ...value,
@@ -434,6 +449,18 @@ const mergeData = (value: Partial<AppData>): AppData => {
         ...value.settings?.appearance,
         theme,
         customThemeColor,
+        chineseFontFamily: normalizeFontFamilySetting(
+          value.settings?.appearance?.chineseFontFamily ?? legacyAppearance?.bodyFontFamily,
+          defaultSettings.appearance.chineseFontFamily
+        ),
+        englishFontFamily: normalizeFontFamilySetting(
+          value.settings?.appearance?.englishFontFamily ?? legacyAppearance?.bodyFontFamily,
+          defaultSettings.appearance.englishFontFamily
+        ),
+        codeFontFamily: normalizeFontFamilySetting(
+          value.settings?.appearance?.codeFontFamily,
+          defaultSettings.appearance.codeFontFamily
+        ),
         chatFontSize: Math.max(10, Math.min(18, value.settings?.appearance?.chatFontSize ?? defaultSettings.appearance.chatFontSize))
       },
       editor: {
@@ -445,11 +472,14 @@ const mergeData = (value: Partial<AppData>): AppData => {
         lineHeight:
           [1.66, 1.78].includes(value.settings?.editor?.lineHeight ?? 0)
             ? defaultSettings.editor.lineHeight
-            : (value.settings?.editor?.lineHeight ?? defaultSettings.editor.lineHeight)
+            : (value.settings?.editor?.lineHeight ?? defaultSettings.editor.lineHeight),
+        assetImportMode: normalizeAssetImportMode(value.settings?.editor?.assetImportMode)
       },
       markdown: { ...defaultSettings.markdown, ...value.settings?.markdown },
-      shortcuts: { ...defaultSettings.shortcuts, ...value.settings?.shortcuts },
-      updates: { ...defaultSettings.updates, ...value.settings?.updates },
+      shortcuts: {
+        quickFolder: persistedShortcuts?.quickFolder || defaultSettings.shortcuts.quickFolder,
+        bindings: normalizeShortcutBindings(persistedShortcuts?.bindings, persistedShortcuts)
+      },
       agents,
       activeAgentId,
       toolbarAgentId

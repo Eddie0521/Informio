@@ -5,6 +5,7 @@ import type {
   AppData,
   AppSettings,
   DeletePdfAnnotationInput,
+  FindPdfAnnotationInput,
   InformioDocument,
   LoadPdfAnnotationsInput,
   SaveAgentConversationsInput,
@@ -14,6 +15,24 @@ import type {
 import type { InformioApi } from "../../preload";
 
 const now = () => new Date().toISOString();
+const normalizeDemoPath = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
+const demoPathContains = (root: string, path: string) => {
+  const normalizedRoot = normalizeDemoPath(root);
+  const normalizedPath = normalizeDemoPath(path);
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+};
+const replaceDemoPathRoot = (path: string, oldRoot: string, newRoot: string) =>
+  demoPathContains(oldRoot, path) ? `${normalizeDemoPath(newRoot)}${normalizeDemoPath(path).slice(normalizeDemoPath(oldRoot).length)}` : path;
+const demoDirname = (path: string) => {
+  const normalized = normalizeDemoPath(path);
+  const index = normalized.lastIndexOf("/");
+  return index > 0 ? normalized.slice(0, index) : "/";
+};
+const demoBasename = (path: string) => {
+  const normalized = normalizeDemoPath(path);
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(index + 1) : normalized;
+};
 
 const localDateStamp = () => {
   const date = new Date();
@@ -60,6 +79,9 @@ const demoData: AppData = {
     appearance: {
       theme: "paper",
       customThemeColor: "#159447",
+      chineseFontFamily: "PingFang SC",
+      englishFontFamily: "Helvetica Neue",
+      codeFontFamily: "SF Mono",
       showTitleInWindow: true,
       autoHideStatusBar: false,
       chatFontSize: 13,
@@ -74,7 +96,7 @@ const demoData: AppData = {
       contentWidth: 820,
       spellcheck: true,
       typewriterMode: false,
-      writePdfAnnotationsToSource: false
+      assetImportMode: "copy-to-attachment"
     },
     markdown: {
       autoSave: true,
@@ -82,12 +104,27 @@ const demoData: AppData = {
       exportFormat: "markdown"
     },
     shortcuts: {
-      quickSave: "Command+S",
-      quickCapture: "Control+Space",
-      quickFolder: "/Users/acumen7/Documents/Informio Quick Notes"
-    },
-    updates: {
-      autoCheckOnLaunch: true
+      quickFolder: "/Users/acumen7/Documents/Informio Quick Notes",
+      bindings: {
+        "app.quickCapture": "Control+Space",
+        "file.new": "CommandOrControl+N",
+        "window.new": "Shift+CommandOrControl+N",
+        "commandPalette.open": "CommandOrControl+P",
+        "file.open": "CommandOrControl+O",
+        "workspace.open": "Shift+CommandOrControl+O",
+        "file.closeTab": "CommandOrControl+W",
+        "window.close": "Shift+CommandOrControl+W",
+        "file.save": "CommandOrControl+S",
+        "file.saveAs": "Shift+CommandOrControl+S",
+        "settings.open": "CommandOrControl+,",
+        "edit.find": "CommandOrControl+F",
+        "edit.findNext": "CommandOrControl+G",
+        "format.bold": "CommandOrControl+B",
+        "format.italic": "CommandOrControl+I",
+        "format.underline": "CommandOrControl+U",
+        "format.strike": "Shift+CommandOrControl+X",
+        "format.highlight": "Shift+CommandOrControl+M"
+      }
     },
     language: "zh-CN",
     activeAgentId: "codex",
@@ -208,6 +245,9 @@ export function installDemoApi() {
     openSettings: async () => {
       window.open(`${window.location.origin}${window.location.pathname}#settings`, "_blank");
     },
+    newWindow: async () => {
+      window.open(window.location.href.replace(/#settings$/, ""), "_blank");
+    },
     openFiles: async () => state,
     openWorkspace: async () => state,
     createDocument: async () => {
@@ -287,20 +327,33 @@ export function installDemoApi() {
       fileName: input.fileName
     }),
     loadPdfAnnotations: async (_input: LoadPdfAnnotationsInput) => [],
+    findPdfAnnotation: async (_input: FindPdfAnnotationInput) => null,
     savePdfAnnotation: async (input: SavePdfAnnotationInput) => ({
       annotation: {
         ...input.annotation,
-        sourceWrite: input.writeToSource
-          ? { attempted: true, ok: false, message: "浏览器预览不会修改本地 PDF；Electron 中会写入 sidecar 并尽量写回源文件。" }
-          : { attempted: false, ok: true }
+        sourceWrite:
+          input.annotation.sourceWrite ??
+          (input.writeToSource
+            ? { attempted: true, ok: false, pending: true, message: "浏览器预览不会修改本地 PDF；Electron 中会在后台写回源文件。" }
+            : undefined)
       },
-      sourceWrite: input.writeToSource
-        ? { attempted: true, ok: false, message: "浏览器预览不会修改本地 PDF；Electron 中会写入 sidecar 并尽量写回源文件。" }
-        : { attempted: false, ok: true }
+      sourceWrite:
+        input.annotation.sourceWrite ??
+        (input.writeToSource
+          ? { attempted: true, ok: false, pending: true, message: "浏览器预览不会修改本地 PDF；Electron 中会在后台写回源文件。" }
+          : undefined)
     }),
     deletePdfAnnotation: async (input: DeletePdfAnnotationInput) => ({
       annotationId: input.annotationId,
       sourceWrite: { attempted: false, ok: true }
+    }),
+    writePdfDocumentBytes: async () => ({ ok: false }),
+    writePdfAnnotationSource: async () => ({
+      sourceWrite: {
+        attempted: true,
+        ok: false,
+        message: "浏览器预览不会修改本地 PDF；Electron 中会在后台写回源文件。"
+      }
     }),
     saveSettings: async (settings: AppSettings) => {
       state = { ...state, settings };
@@ -311,10 +364,6 @@ export function installDemoApi() {
       version: "0.1.0",
       githubUrl: ""
     }),
-    getUpdaterState: async () => ({
-      status: "idle",
-      message: "浏览器预览不执行自动更新。"
-    }),
     saveDocuments: async (documents: InformioDocument[], activeDocumentId: string) => {
       state = { ...state, documents, activeDocumentId };
       return state;
@@ -323,10 +372,37 @@ export function installDemoApi() {
       state = { ...state, documents, activeDocumentId };
       return { data: state, savedAt: new Date().toISOString() };
     },
+    saveActiveDocumentAs: async (documents: InformioDocument[], activeDocumentId: string) => {
+      state = { ...state, documents, activeDocumentId };
+      const active = state.documents.find((document) => document.id === activeDocumentId);
+      if (!active) return state;
+      const nextTitle = active.title.endsWith(".md") ? active.title : `${active.title}.md`;
+      const nextPath = `${state.settings.shortcuts.quickFolder}/${nextTitle}`;
+      state = {
+        ...state,
+        documents: state.documents.map((document) =>
+          document.id === active.id
+            ? { ...document, title: nextTitle, filePath: nextPath, updatedAt: new Date().toISOString() }
+            : document
+        )
+      };
+      return state;
+    },
+    exportActiveDocument: async (_documents, _activeDocumentId, _format) => undefined,
     saveAgentConversations: async (input: SaveAgentConversationsInput) => {
       state = { ...state, agentConversations: input.conversations as AgentConversation[] };
       return state.agentConversations;
     },
+    listLocalFonts: async () => ({
+      fonts: [
+        { family: "PingFang SC" },
+        { family: "Hiragino Sans GB" },
+        { family: "Helvetica Neue" },
+        { family: "Arial" },
+        { family: "SF Mono" },
+        { family: "Cascadia Mono" }
+      ]
+    }),
     chooseFolder: async () => "/Users/acumen7/Documents/Informio Quick Notes",
     onAppDataUpdated: () => () => undefined,
     onMenuCommand: () => () => undefined,
@@ -406,12 +482,6 @@ export function installDemoApi() {
     },
     respondAgentApproval: async () => ({ ok: true }),
     cancelAgentRun: async () => ({ ok: true }),
-    checkForUpdates: async () => ({
-      status: "idle",
-      message: "浏览器预览不执行自动更新。"
-    }),
-    restartToInstallUpdate: async () => undefined,
-    onUpdaterStateChanged: () => () => undefined,
     openExternal: async (url: string) => {
       window.open(url, "_blank");
     },
@@ -419,7 +489,30 @@ export function installDemoApi() {
     addProject: async () => state,
     removeProject: async (_path: string) => state,
     renameProject: async (path: string, title: string) => {
-      state = { ...state, projects: state.projects.map((project) => (project.path === path ? { ...project, title } : project)) };
+      const cleanTitle = title.trim();
+      if (!cleanTitle) return state;
+      const nextPath = `${demoDirname(path)}/${cleanTitle}`;
+      state = {
+        ...state,
+        workspacePath: state.workspacePath && demoPathContains(path, state.workspacePath) ? replaceDemoPathRoot(state.workspacePath, path, nextPath) : state.workspacePath,
+        projects: state.projects.map((project) =>
+          project.path === path
+            ? { ...project, id: `project-${nextPath}`, path: nextPath, title: demoBasename(nextPath) || cleanTitle }
+            : demoPathContains(path, project.path)
+              ? { ...project, path: replaceDemoPathRoot(project.path, path, nextPath) }
+              : project
+        ),
+        folders: state.folders.map((folder) =>
+          demoPathContains(path, folder.path)
+            ? { ...folder, id: `folder-${replaceDemoPathRoot(folder.path, path, nextPath)}`, path: replaceDemoPathRoot(folder.path, path, nextPath), title: demoBasename(replaceDemoPathRoot(folder.path, path, nextPath)) || folder.title }
+            : folder
+        ),
+        documents: state.documents.map((document) =>
+          document.filePath && demoPathContains(path, document.filePath)
+            ? { ...document, filePath: replaceDemoPathRoot(document.filePath, path, nextPath), updatedAt: now() }
+            : document
+        )
+      };
       return state;
     },
     toggleProjectPinned: async (path: string) => {

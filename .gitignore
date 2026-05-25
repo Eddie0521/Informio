@@ -6,5 +6,6 @@ release
 .playwright-cli
 output
 output/playwright
+.cache
 .DS_Store
 *.log

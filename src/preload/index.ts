@@ -14,10 +14,12 @@ import type {
   AppSettings,
   DeletePdfAnnotationInput,
   DeletePdfAnnotationResult,
+  FindPdfAnnotationInput,
   FileSystemOperationInput,
   InformioDocument,
   MenuCommand,
   LoadPdfAnnotationsInput,
+  ListLocalFontsResult,
   PdfAnnotation,
   SaveAttachmentInput,
   SavePdfAnnotationInput,
@@ -29,12 +31,16 @@ import type {
   SendAgentMessageResult,
   TranslateSelectionInput,
   TranslateSelectionResult,
-  UpdaterState
+  WritePdfAnnotationSourceInput,
+  WritePdfAnnotationSourceResult,
+  WritePdfDocumentBytesInput,
+  WritePdfDocumentBytesResult
 } from "../shared/types.js";
 
 const api = {
   loadApp: () => ipcRenderer.invoke("app:load") as Promise<AppData>,
   openSettings: () => ipcRenderer.invoke("app:open-settings") as Promise<void>,
+  newWindow: () => ipcRenderer.invoke("app:new-window") as Promise<void>,
   openFiles: () => ipcRenderer.invoke("app:open-files") as Promise<AppData | null>,
   openWorkspace: () => ipcRenderer.invoke("app:open-workspace") as Promise<AppData | null>,
   addProject: () => ipcRenderer.invoke("app:add-project") as Promise<AppData | null>,
@@ -55,20 +61,71 @@ const api = {
     ipcRenderer.invoke("app:save-attachment", input) as Promise<SaveAttachmentResult>,
   loadPdfAnnotations: (input: LoadPdfAnnotationsInput) =>
     ipcRenderer.invoke("pdf:load-annotations", input) as Promise<PdfAnnotation[]>,
+  findPdfAnnotation: (input: FindPdfAnnotationInput) =>
+    ipcRenderer.invoke("pdf:find-annotation", input) as Promise<PdfAnnotation | null>,
   savePdfAnnotation: (input: SavePdfAnnotationInput) =>
     ipcRenderer.invoke("pdf:save-annotation", input) as Promise<SavePdfAnnotationResult>,
   deletePdfAnnotation: (input: DeletePdfAnnotationInput) =>
     ipcRenderer.invoke("pdf:delete-annotation", input) as Promise<DeletePdfAnnotationResult>,
+  writePdfDocumentBytes: (input: WritePdfDocumentBytesInput) =>
+    ipcRenderer.invoke("pdf:write-document-bytes", input) as Promise<WritePdfDocumentBytesResult>,
+  writePdfAnnotationSource: (input: WritePdfAnnotationSourceInput) =>
+    ipcRenderer.invoke("pdf:write-annotation-source", input) as Promise<WritePdfAnnotationSourceResult>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("app:save-settings", settings) as Promise<AppSettings>,
   getAppInfo: () => ipcRenderer.invoke("app:get-info") as Promise<AppInfo>,
-  getUpdaterState: () => ipcRenderer.invoke("app:get-updater-state") as Promise<UpdaterState>,
   saveDocuments: (documents: InformioDocument[], activeDocumentId: string) =>
     ipcRenderer.invoke("app:save-documents", documents, activeDocumentId) as Promise<AppData>,
   saveNow: (documents: InformioDocument[], activeDocumentId: string) =>
     ipcRenderer.invoke("app:save-now", documents, activeDocumentId) as Promise<SaveResult>,
+  saveActiveDocumentAs: (documents: InformioDocument[], activeDocumentId: string) =>
+    ipcRenderer.invoke("app:save-active-document-as", documents, activeDocumentId) as Promise<AppData | undefined>,
+  exportActiveDocument: (documents: InformioDocument[], activeDocumentId: string, format: "markdown" | "html" | "pdf") =>
+    ipcRenderer.invoke("app:export-active-document", documents, activeDocumentId, format) as Promise<void>,
   saveAgentConversations: (input: SaveAgentConversationsInput) =>
     ipcRenderer.invoke("app:save-agent-conversations", input) as Promise<AgentConversation[]>,
   chooseFolder: () => ipcRenderer.invoke("app:choose-folder") as Promise<string | null>,
+  listLocalFonts: async (): Promise<ListLocalFontsResult> => {
+    type QueryLocalFontsFn = () => Promise<Array<{ family: string; fullName?: string; style?: string }>>;
+    const queryLocalFonts = (globalThis as typeof globalThis & { queryLocalFonts?: QueryLocalFontsFn }).queryLocalFonts;
+    const mergeFontLists = (...fontLists: Array<Array<{ family: string; fullName?: string; style?: string }>>) => {
+      const deduped = new Map<string, { family: string; fullName?: string; style?: string }>();
+      fontLists.flat().forEach((font) => {
+        const family = font.family?.trim();
+        if (!family) return;
+        const existing = deduped.get(family);
+        deduped.set(family, {
+          family,
+          fullName: existing?.fullName || font.fullName?.trim() || undefined,
+          style: existing?.style || font.style?.trim() || undefined
+        });
+      });
+      return Array.from(deduped.values()).sort((left, right) => left.family.localeCompare(right.family, "zh-Hans-CN"));
+    };
+    const systemFonts = await ipcRenderer.invoke("app:list-local-fonts") as ListLocalFontsResult;
+    try {
+      if (typeof queryLocalFonts !== "function") {
+        return systemFonts;
+      }
+      const browserFonts = await queryLocalFonts();
+      const mergedFonts = mergeFontLists(browserFonts, systemFonts.fonts);
+      if (mergedFonts.length) {
+        return {
+          fonts: mergedFonts,
+          error: systemFonts.error && !systemFonts.fonts.length ? systemFonts.error : undefined
+        };
+      }
+      return systemFonts.fonts.length ? systemFonts : { fonts: [], error: systemFonts.error || "没有读取到可用字体。" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (systemFonts.fonts.length) {
+        return {
+          fonts: systemFonts.fonts,
+          error: `浏览器字体接口失败，已改用系统字体列表：${message || "未知错误"}`
+        };
+      }
+      return { fonts: [], error: systemFonts.error || `无法读取本地字体列表：${message || "未知错误"}` };
+    }
+  },
   onAppDataUpdated: (callback: (data: AppData) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, data: AppData) => callback(data);
     ipcRenderer.on("app:data-updated", listener);
@@ -116,15 +173,6 @@ const api = {
     ipcRenderer.invoke("agent:approval-response", input) as Promise<{ ok: boolean }>,
   cancelAgentRun: (providerId: string) =>
     ipcRenderer.invoke("agent:cancel-run", providerId) as Promise<{ ok: boolean }>,
-  checkForUpdates: () => ipcRenderer.invoke("app:check-for-updates") as Promise<UpdaterState>,
-  restartToInstallUpdate: () => ipcRenderer.invoke("app:restart-to-install-update") as Promise<void>,
-  onUpdaterStateChanged: (callback: (state: UpdaterState) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, state: UpdaterState) => callback(state);
-    ipcRenderer.on("app:updater-state", listener);
-    return () => {
-      ipcRenderer.removeListener("app:updater-state", listener);
-    };
-  },
   openExternal: (url: string) => ipcRenderer.invoke("app:open-external", url) as Promise<void>,
   openPath: (path: string) => ipcRenderer.invoke("app:open-path", path) as Promise<void>
 };

@@ -1,23 +1,29 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, screen, shell } from "electron";
 import type { MenuItemConstructorOptions, NativeImage, OpenDialogOptions } from "electron";
+import { execFile } from "node:child_process";
 import { existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { PDFDocument, rgb } from "pdf-lib";
 import type {
   ApiModelDetectionInput,
   AgentConversation,
+  AppInfo,
   AppData,
   AppSettings,
   DeletePdfAnnotationInput,
   DeletePdfAnnotationResult,
+  FindPdfAnnotationInput,
   FileSystemOperationInput,
   InformioDocument,
   InformioFolder,
   InformioProject,
+  ListLocalFontsResult,
+  LocalFontOption,
   LoadPdfAnnotationsInput,
   PdfAnnotation,
   SaveAttachmentInput,
@@ -29,7 +35,11 @@ import type {
   AgentApprovalResponseInput,
   AgentSessionInput,
   SendAgentMessageInput,
-  TranslateSelectionInput
+  TranslateSelectionInput,
+  WritePdfAnnotationSourceInput,
+  WritePdfAnnotationSourceResult,
+  WritePdfDocumentBytesInput,
+  WritePdfDocumentBytesResult
 } from "../shared/types.js";
 import {
   createQuickDocument,
@@ -40,9 +50,10 @@ import {
   saveAppDataAndFiles
 } from "./store.js";
 import { AgentRuntimeManager } from "./agentRuntime.js";
+import { prepareRuntimeEnvironment } from "./runtimeEnvironment.js";
 import { detectApiModels, translateSelection } from "./translationApi.js";
-import { checkForUpdates, getAppInfo, getUpdaterState, initializeUpdater, restartToInstallUpdate } from "./updater.js";
 import { APP_GITHUB_URL, APP_NAME } from "../shared/appMeta.js";
+import { getShortcutAccelerator, shortcutRegistry } from "../shared/shortcuts.js";
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
@@ -53,6 +64,8 @@ const mainWindows = new Set<BrowserWindow>();
 let workspaceWatchers: FSWatcher[] = [];
 let workspaceRefreshTimer: NodeJS.Timeout | null = null;
 let workspaceRefreshInFlight = false;
+let appDataLoaded = false;
+const pendingExternalOpenFiles = new Map<string, string>();
 
 const agentRuntime = new AgentRuntimeManager();
 
@@ -65,7 +78,63 @@ const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".sv
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
 const PDF_EXTENSIONS = new Set([".pdf"]);
+const EXTERNAL_MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
 const DEFAULT_WORKSPACE_PATH = join(homedir(), "Documents", "Informio Quick Notes");
+const execFileAsync = promisify(execFile);
+let localFontsCache: ListLocalFontsResult | null = null;
+
+const getAppInfo = (): AppInfo => ({
+  name: app.getName() || APP_NAME,
+  version: app.getVersion(),
+  githubUrl: APP_GITHUB_URL,
+  iconDataUrl: appIcon?.isEmpty() ? undefined : appIcon?.toDataURL()
+});
+
+const listSystemLocalFonts = async (): Promise<ListLocalFontsResult> => {
+  if (localFontsCache) return localFontsCache;
+  try {
+    const { stdout } = await execFileAsync("system_profiler", ["SPFontsDataType", "-json"], {
+      maxBuffer: 64 * 1024 * 1024
+    });
+    const parsed = JSON.parse(stdout) as {
+      SPFontsDataType?: Array<{
+        typefaces?: Array<{
+          family?: string;
+          fullname?: string;
+          style?: string;
+          enabled?: string;
+          valid?: string;
+        }>;
+      }>;
+    };
+    const deduped = new Map<string, LocalFontOption>();
+    (parsed.SPFontsDataType ?? []).forEach((fontFile) => {
+      (fontFile.typefaces ?? []).forEach((typeface) => {
+        const family = typeface.family?.trim();
+        if (!family || family.startsWith(".")) return;
+        if (typeface.enabled === "no" || typeface.valid === "no") return;
+        if (!deduped.has(family)) {
+          deduped.set(family, {
+            family,
+            fullName: typeface.fullname?.trim() || undefined,
+            style: typeface.style?.trim() || undefined
+          });
+        }
+      });
+    });
+    const fonts = Array.from(deduped.values()).sort((left, right) => left.family.localeCompare(right.family, "zh-Hans-CN"));
+    localFontsCache = fonts.length
+      ? { fonts }
+      : { fonts: [], error: "系统没有返回可用字体列表。" };
+    return localFontsCache;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      fonts: [],
+      error: `读取系统字体列表失败：${message || "未知错误"}`
+    };
+  }
+};
 
 const resolveAppIconPath = () => {
   const appPath = app.getAppPath();
@@ -112,6 +181,25 @@ const getFocusedMainWindow = () => {
 
 const sendMenuCommand = (command: string, payload?: unknown) => {
   getFocusedMainWindow()?.webContents.send("menu:command", command, payload);
+};
+
+const shortcutBinding = (id: string) => getShortcutAccelerator(appData?.settings.shortcuts.bindings, id) || undefined;
+
+const registerGlobalShortcuts = () => {
+  globalShortcut.unregisterAll();
+  shortcutRegistry
+    .filter((entry) => entry.scope === "global")
+    .forEach((entry) => {
+      const accelerator = shortcutBinding(entry.id);
+      if (!accelerator) return;
+      globalShortcut.register(accelerator, () => {
+        if (entry.command === "app:quick-capture") {
+          void triggerQuickCapture();
+        } else {
+          sendMenuCommand(entry.command);
+        }
+      });
+    });
 };
 
 const triggerQuickCapture = async () => {
@@ -216,6 +304,38 @@ const activeDocument = () => appData.documents.find((doc) => doc.id === appData.
 const sanitizeUpdatedAt = (value: string) => (Number.isNaN(Date.parse(value)) ? new Date().toISOString() : value);
 
 const normalizeForCompare = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
+const isExternalMarkdownPath = (path: string) => EXTERNAL_MARKDOWN_EXTENSIONS.has(extname(path).toLowerCase());
+
+const enqueueExternalOpenFiles = (paths: string[]) => {
+  paths.forEach((path) => {
+    if (!path || !isExternalMarkdownPath(path)) return;
+    pendingExternalOpenFiles.set(normalizeForCompare(path), path);
+  });
+};
+
+const openExternalMarkdownFiles = async (paths: string[]) => {
+  const nextPaths = Array.from(
+    new Map(
+      paths
+        .filter((path) => path && isExternalMarkdownPath(path))
+        .map((path) => [normalizeForCompare(path), path])
+    ).values()
+  );
+  if (!nextPaths.length) return;
+  await openMarkdownFiles(nextPaths);
+  const window = getFocusedMainWindow();
+  if (!window) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+};
+
+const flushPendingExternalOpenFiles = async () => {
+  if (!appDataLoaded || !mainWindow || mainWindow.isDestroyed() || !pendingExternalOpenFiles.size) return;
+  const paths = Array.from(pendingExternalOpenFiles.values());
+  pendingExternalOpenFiles.clear();
+  await openExternalMarkdownFiles(paths);
+};
 
 const isWritableTextDocument = (document: InformioDocument) => {
   if (!document.filePath) return true;
@@ -231,6 +351,24 @@ const pathContains = (folder: string, path: string) => {
 type PdfAnnotationStore = {
   version: 1;
   annotations: PdfAnnotation[];
+};
+
+const supportedPdfAnnotationTypes = new Set<PdfAnnotation["type"]>(["highlight", "comment", "link"]);
+
+const isSupportedPdfAnnotation = (value: unknown): value is PdfAnnotation => {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PdfAnnotation>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.pdfPath === "string" &&
+    typeof candidate.fingerprint === "string" &&
+    typeof candidate.page === "number" &&
+    typeof candidate.text === "string" &&
+    typeof candidate.color === "string" &&
+    Array.isArray(candidate.rects) &&
+    typeof candidate.type === "string" &&
+    supportedPdfAnnotationTypes.has(candidate.type as PdfAnnotation["type"])
+  );
 };
 
 const normalizePdfAnnotationPath = (value: string) => {
@@ -251,7 +389,7 @@ const readPdfAnnotationStore = async (pdfPath: string): Promise<PdfAnnotationSto
     const parsed = JSON.parse(raw) as Partial<PdfAnnotationStore>;
     return {
       version: 1,
-      annotations: Array.isArray(parsed.annotations) ? parsed.annotations : []
+      annotations: Array.isArray(parsed.annotations) ? parsed.annotations.filter((annotation) => isSupportedPdfAnnotation(annotation)) : []
     };
   } catch {
     return { version: 1, annotations: [] };
@@ -299,15 +437,6 @@ const bestEffortWritePdfAnnotationToSource = async (annotation: PdfAnnotation) =
       const height = rect.height * pageHeight;
       if (annotation.type === "highlight") {
         page.drawRectangle({ x, y, width, height, color, opacity: 0.32, borderOpacity: 0 });
-      }
-      if (annotation.type === "underline") {
-        page.drawLine({
-          start: { x, y: y + Math.max(1, height * 0.08) },
-          end: { x: x + width, y: y + Math.max(1, height * 0.08) },
-          thickness: Math.max(1, height * 0.08),
-          color,
-          opacity: 0.9
-        });
       }
       if (annotation.type === "comment") {
         page.drawRectangle({
@@ -358,12 +487,44 @@ const loadPdfAnnotations = async (input: LoadPdfAnnotationsInput) => {
   });
 };
 
+const findPdfAnnotation = async (input: FindPdfAnnotationInput): Promise<PdfAnnotation | null> => {
+  const candidatePdfPaths = Array.from(
+    new Set(
+      appData.documents
+        .filter((document) => document.filePath && PDF_EXTENSIONS.has(extname(document.filePath).toLowerCase()))
+        .map((document) => normalizePdfAnnotationPath(document.filePath!))
+    )
+  );
+  for (const pdfPath of candidatePdfPaths) {
+    const store = await readPdfAnnotationStore(pdfPath);
+    const matched = store.annotations.find((annotation) => annotation.id === input.annotationId);
+    if (matched) return matched;
+  }
+  return null;
+};
+
 const savePdfAnnotation = async (input: SavePdfAnnotationInput): Promise<SavePdfAnnotationResult> => {
+  if (!supportedPdfAnnotationTypes.has(input.annotation.type)) {
+    throw new Error("PDF 下划线标注功能已移除，请改用高亮或批注。");
+  }
   const pdfPath = normalizePdfAnnotationPath(input.annotation.pdfPath);
   const now = new Date().toISOString();
-  const sourceWrite = input.writeToSource
-    ? await bestEffortWritePdfAnnotationToSource({ ...input.annotation, pdfPath })
-    : { attempted: false, ok: true };
+  const sourceWrite =
+    input.annotation.type === "link"
+      ? input.annotation.sourceWrite ?? {
+          attempted: false,
+          ok: true,
+          message: "PDF 与 Markdown 跳转是 Informio 专属数据，已保存在本地标注数据中。"
+        }
+      : input.annotation.sourceWrite ??
+        (input.writeToSource
+          ? {
+              attempted: true,
+              ok: false,
+              pending: true,
+              message: "正在后台写回源 PDF。"
+            }
+          : undefined);
   const annotation: PdfAnnotation = {
     ...input.annotation,
     pdfPath,
@@ -382,22 +543,31 @@ const savePdfAnnotation = async (input: SavePdfAnnotationInput): Promise<SavePdf
 const deletePdfAnnotation = async (input: DeletePdfAnnotationInput): Promise<DeletePdfAnnotationResult> => {
   const pdfPath = normalizePdfAnnotationPath(input.pdfPath);
   const store = await readPdfAnnotationStore(pdfPath);
-  const annotation = store.annotations.find((item) => item.id === input.annotationId);
   const nextAnnotations = store.annotations.filter((item) => {
     if (item.id !== input.annotationId) return true;
     if (input.fingerprint && item.fingerprint !== input.fingerprint) return true;
     return false;
   });
   await writePdfAnnotationStore(pdfPath, { version: 1, annotations: nextAnnotations });
-  const sourceWrite =
-    annotation?.sourceWrite?.attempted && annotation.sourceWrite.ok
-      ? {
-          attempted: true,
-          ok: false,
-          message: "已删除 Informio 标注数据；此前写回源 PDF 的视觉痕迹无法无损自动擦除。"
-        }
-      : { attempted: false, ok: true };
+  const sourceWrite = { attempted: false, ok: true };
   return { annotationId: input.annotationId, sourceWrite };
+};
+
+const writePdfDocumentBytes = async (input: WritePdfDocumentBytesInput): Promise<WritePdfDocumentBytesResult> => {
+  const pdfPath = normalizePdfAnnotationPath(input.pdfPath);
+  if (!PDF_EXTENSIONS.has(extname(pdfPath).toLowerCase())) {
+    throw new Error("目标文件不是 PDF，无法写回。");
+  }
+  await writeFile(pdfPath, Buffer.from(input.bytes));
+  return { ok: true };
+};
+
+const writePdfAnnotationSource = async (input: WritePdfAnnotationSourceInput): Promise<WritePdfAnnotationSourceResult> => {
+  const sourceWrite = await bestEffortWritePdfAnnotationToSource({
+    ...input.annotation,
+    pdfPath: normalizePdfAnnotationPath(input.annotation.pdfPath)
+  });
+  return { sourceWrite };
 };
 
 const createFolderRecord = (path: string, updatedAt = new Date().toISOString()): InformioFolder => ({
@@ -583,11 +753,47 @@ const scanWorkspaceFiles = async (folder: string): Promise<string[]> => (await s
 const escapeHtml = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-const markdownToBasicHtml = (markdown: string) => {
+const markdownToBasicHtml = (markdown: string, title = "Informio Export") => {
   const blocks = markdown.split(/\n{2,}/);
   return `<!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Informio Export</title></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>
+  :root {
+    color-scheme: light;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.7;
+    color: #0f172a;
+    background: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto;
+    max-width: 780px;
+    padding: 56px 40px 72px;
+    font-size: 15px;
+    background: #ffffff;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    line-height: 1.28;
+    margin: 1.8em 0 0.72em;
+  }
+  h1:first-child, h2:first-child, h3:first-child, h4:first-child, h5:first-child, h6:first-child, p:first-child {
+    margin-top: 0;
+  }
+  p {
+    margin: 0 0 1em;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  @page {
+    margin: 18mm 16mm 20mm;
+  }
+</style>
+</head>
 <body>
 ${blocks
   .map((block) => {
@@ -598,6 +804,33 @@ ${blocks
   .join("\n")}
 </body>
 </html>`;
+};
+
+const exportHtmlToPdf = async (outputPath: string, html: string) => {
+  const exportWindow = new BrowserWindow({
+    show: false,
+    width: 900,
+    height: 1200,
+    backgroundColor: "#ffffff",
+    webPreferences: {
+      sandbox: false
+    }
+  });
+
+  try {
+    await exportWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    await exportWindow.webContents.executeJavaScript(
+      "document.fonts?.ready ? document.fonts.ready.then(() => true) : Promise.resolve(true)",
+      true
+    );
+    const pdf = await exportWindow.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true
+    });
+    await writeFile(outputPath, pdf);
+  } finally {
+    if (!exportWindow.isDestroyed()) exportWindow.destroy();
+  }
 };
 
 const localFileUrl = (path: string) => `local-file://${encodeURI(path.replace(/\\/g, "/"))}`;
@@ -938,15 +1171,77 @@ const removeProject = async (projectPath: string): Promise<AppData> => {
 };
 
 const renameProject = async (projectPath: string, title: string): Promise<AppData> => {
-  const trimmedTitle = title.trim();
-  if (!trimmedTitle) return appData;
+  const cleanTitle = sanitizeFilesystemName(title.trim());
+  if (!cleanTitle) throw new Error("A new project name is required.");
+
+  const nextPath = join(dirname(projectPath), cleanTitle);
+  if (normalizeForCompare(nextPath) === normalizeForCompare(projectPath)) return appData;
+
+  try {
+    const [currentStat, nextStat] = await Promise.all([stat(projectPath), stat(nextPath)]);
+    if (currentStat.dev !== nextStat.dev || currentStat.ino !== nextStat.ino) {
+      throw new Error(`A folder named "${basename(nextPath)}" already exists.`);
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") throw error;
+  }
+
+  await rename(projectPath, nextPath);
+
+  const documents = appData.documents.map((doc) => {
+    const relinked = withUpdatedLocalFileUrls(doc, (currentPath) =>
+      pathContains(projectPath, currentPath) ? replacePathRoot(currentPath, projectPath, nextPath) : null
+    );
+    return doc.filePath && pathContains(projectPath, doc.filePath)
+      ? {
+          ...relinked,
+          filePath: replacePathRoot(doc.filePath, projectPath, nextPath),
+          updatedAt: new Date().toISOString()
+        }
+      : relinked;
+  });
+
+  const folders = withTrackedFolders(
+    appData.folders
+      .filter((folder) => folder.path !== projectPath)
+      .map((folder) =>
+        pathContains(projectPath, folder.path)
+          ? createFolderRecord(replacePathRoot(folder.path, projectPath, nextPath))
+          : folder
+      ),
+    [nextPath]
+  );
+
+  const projects = (appData.projects ?? []).map((project) => {
+    if (project.path === projectPath) {
+      return {
+        ...project,
+        id: projectRecord(nextPath).id,
+        path: nextPath,
+        title: basename(nextPath) || cleanTitle
+      };
+    }
+    return pathContains(projectPath, project.path)
+      ? { ...project, path: replacePathRoot(project.path, projectPath, nextPath) }
+      : project;
+  });
+
+  const workspacePath = appData.workspacePath && pathContains(projectPath, appData.workspacePath)
+    ? replacePathRoot(appData.workspacePath, projectPath, nextPath)
+    : appData.workspacePath;
+
   appData = await saveAppData({
     ...appData,
-    projects: (appData.projects ?? []).map((project) =>
-      project.path === projectPath ? { ...project, title: trimmedTitle } : project
-    )
+    projects,
+    workspacePath,
+    folders: dedupeFolders(folders),
+    documents,
+    activeDocumentId: normalizeActiveDocumentId(documents, appData.activeDocumentId)
   });
   emitAppData();
+  updateApplicationMenu();
+  await startWorkspaceWatchers();
   return appData;
 };
 
@@ -1134,6 +1429,19 @@ const copyAttachmentFromPath = async (sourcePath: string): Promise<SaveAttachmen
   emitAppData();
 
   return { path, fileName: basename(path) };
+};
+
+const resolveInsertedAssetFromPath = async (
+  sourcePath: string,
+  mode: AppSettings["editor"]["assetImportMode"]
+): Promise<SaveAttachmentResult> => {
+  if (mode === "link-original-file") {
+    return {
+      path: sourcePath,
+      fileName: basename(sourcePath)
+    };
+  }
+  return copyAttachmentFromPath(sourcePath);
 };
 
 const duplicatePath = async (sourcePath: string, targetType: "file" | "folder") => {
@@ -1386,7 +1694,18 @@ const runFileSystemAction = async (input: FileSystemOperationInput): Promise<App
   return appData;
 };
 
-const saveActiveDocumentAs = async () => {
+const syncRendererDocuments = async (documents?: InformioDocument[], activeDocumentId?: string) => {
+  if (!documents) return;
+  const mergedDocuments = mergeRendererDocuments(documents);
+  appData = await saveAppData({
+    ...appData,
+    documents: mergedDocuments,
+    activeDocumentId: normalizeActiveDocumentId(mergedDocuments, activeDocumentId ?? appData.activeDocumentId)
+  });
+};
+
+const saveActiveDocumentAs = async (documents?: InformioDocument[], activeDocumentId?: string) => {
+  await syncRendererDocuments(documents, activeDocumentId);
   const window = getFocusedMainWindow();
   const doc = activeDocument();
   if (!window || !doc || !isWritableTextDocument(doc)) return;
@@ -1405,6 +1724,7 @@ const saveActiveDocumentAs = async () => {
   });
   updateApplicationMenu();
   emitAppData();
+  return appData;
 };
 
 const moveActiveDocumentTo = async () => {
@@ -1423,17 +1743,32 @@ const moveActiveDocumentTo = async () => {
   emitAppData();
 };
 
-const exportActiveDocument = async (format: "markdown" | "html") => {
+const exportActiveDocument = async (
+  format: "markdown" | "html" | "pdf",
+  documents = appData.documents,
+  activeDocumentId = appData.activeDocumentId
+) => {
   const window = getFocusedMainWindow();
-  const doc = activeDocument();
+  const mergedDocuments = documents === appData.documents ? appData.documents : mergeRendererDocuments(documents);
+  const doc = mergedDocuments.find((item) => item.id === normalizeActiveDocumentId(mergedDocuments, activeDocumentId));
   if (!window || !doc || !isWritableTextDocument(doc)) return;
-  const extension = format === "html" ? "html" : "md";
+  const extension = format === "pdf" ? "pdf" : format === "html" ? "html" : "md";
+  const html = markdownToBasicHtml(doc.markdown, markdownTitle(doc.title));
   const result = await dialog.showSaveDialog(window, {
     defaultPath: `${doc.title.replace(/\.[^.]+$/, "")}.${extension}`,
-    filters: [{ name: format === "html" ? "HTML" : "Markdown", extensions: [extension] }]
+    filters: [
+      {
+        name: format === "pdf" ? "PDF" : format === "html" ? "HTML" : "Markdown",
+        extensions: [extension]
+      }
+    ]
   });
   if (result.canceled || !result.filePath) return;
-  await saveMarkdownFile(result.filePath, format === "html" ? markdownToBasicHtml(doc.markdown) : doc.markdown);
+  if (format === "pdf") {
+    await exportHtmlToPdf(result.filePath, html);
+    return;
+  }
+  await saveMarkdownFile(result.filePath, format === "html" ? html : doc.markdown);
 };
 
 const insertAsset = async (kind: "image" | "video" | "audio" | "pdf") => {
@@ -1451,7 +1786,7 @@ const insertAsset = async (kind: "image" | "video" | "audio" | "pdf") => {
     filters: [{ name: `${kind} files`, extensions }]
   });
   if (result.canceled) return;
-  const attachment = await copyAttachmentFromPath(result.filePaths[0]);
+  const attachment = await resolveInsertedAssetFromPath(result.filePaths[0], appData.settings.editor.assetImportMode);
 
   if (kind === "video" || kind === "audio") {
     const docMarkdown = kind === "video"
@@ -1488,13 +1823,14 @@ const handleWindowAction = (action: "fill" | "center" | "move-left" | "move-righ
 
 const updateApplicationMenu = () => {
   const recentFiles = appData?.documents.filter((doc) => doc.filePath).slice(0, 8) ?? [];
+  const hasOpenTab = Boolean(getFocusedMainWindow()) && Boolean(appData.documents.length);
   const template: MenuItemConstructorOptions[] = [
     {
       label: app.name,
       submenu: [
         { role: "about", label: `关于 ${app.name}` },
         { type: "separator" },
-        { label: "设置...", accelerator: "CommandOrControl+,", click: openSettingsWindow },
+        { label: "设置...", accelerator: shortcutBinding("settings.open"), click: () => sendMenuCommand("settings:open") },
         { type: "separator" },
         { role: "hide", label: "隐藏 Informio" },
         { role: "hideOthers", label: "隐藏其他" },
@@ -1506,13 +1842,13 @@ const updateApplicationMenu = () => {
     {
       label: "文件",
       submenu: [
-        { label: "新建", accelerator: "CommandOrControl+N", click: () => createFilesystemDocument() },
-        { label: "命令面板", accelerator: "CommandOrControl+P", click: () => sendMenuCommand("command:open-palette") },
-        { label: "新建窗口", accelerator: "Shift+CommandOrControl+N", click: () => createWindow() },
+        { label: "新建", accelerator: shortcutBinding("file.new"), click: () => sendMenuCommand("file:new") },
+        { label: "命令面板", accelerator: shortcutBinding("commandPalette.open"), click: () => sendMenuCommand("command:open-palette") },
+        { label: "新建窗口", accelerator: shortcutBinding("window.new"), click: () => sendMenuCommand("window:new") },
         { type: "separator" },
-        { label: "快速打开", accelerator: "CommandOrControl+O", click: openFileDialog },
+        { label: "快速打开", accelerator: shortcutBinding("file.open"), click: () => sendMenuCommand("file:open") },
         { label: "打开文件...", click: openFileDialog },
-        { label: "打开工作区...", accelerator: "Shift+CommandOrControl+O", click: openWorkspaceDialog },
+        { label: "打开项目...", accelerator: shortcutBinding("workspace.open"), click: () => sendMenuCommand("workspace:open") },
         {
           label: "打开最近文件",
           submenu: recentFiles.length
@@ -1520,23 +1856,25 @@ const updateApplicationMenu = () => {
             : [{ label: "无最近文件", enabled: false }]
         },
         {
-          label: "打开最近工作区",
+          label: "打开最近项目",
           submenu: appData?.settings.shortcuts.quickFolder
             ? [{ label: appData.settings.shortcuts.quickFolder, click: () => loadWorkspace(appData.settings.shortcuts.quickFolder) }]
-            : [{ label: "无最近工作区", enabled: false }]
+            : [{ label: "无最近项目", enabled: false }]
         },
         { type: "separator" },
-        { role: "close", label: "关闭", accelerator: "CommandOrControl+W" },
-        { label: "关闭工作区", click: () => sendMenuCommand("file:close-workspace") },
+        { label: "关闭标签", accelerator: shortcutBinding("file.closeTab"), enabled: hasOpenTab, click: () => sendMenuCommand("file:close-tab") },
+        { label: "关闭窗口", accelerator: shortcutBinding("window.close"), click: () => sendMenuCommand("window:close") },
+        { label: "关闭项目", click: () => sendMenuCommand("file:close-workspace") },
         { type: "separator" },
-        { label: "保存", accelerator: "CommandOrControl+S", click: () => sendMenuCommand("file:save") },
-        { label: "另存为...", accelerator: "Shift+CommandOrControl+S", click: saveActiveDocumentAs },
+        { label: "保存", accelerator: shortcutBinding("file.save"), click: () => sendMenuCommand("file:save") },
+        { label: "另存为...", accelerator: shortcutBinding("file.saveAs"), click: () => sendMenuCommand("file:save-as") },
         { label: "移动到...", click: moveActiveDocumentTo },
         {
           label: "导出",
           submenu: [
             { label: "Markdown...", click: () => exportActiveDocument("markdown") },
-            { label: "HTML...", click: () => exportActiveDocument("html") }
+            { label: "HTML...", click: () => exportActiveDocument("html") },
+            { label: "PDF...", click: () => exportActiveDocument("pdf") }
           ]
         },
         { label: "打印...", click: () => getFocusedMainWindow()?.webContents.print() }
@@ -1556,8 +1894,8 @@ const updateApplicationMenu = () => {
         {
           label: "查找",
           submenu: [
-            { label: "查找选中文本", accelerator: "CommandOrControl+F", click: () => sendMenuCommand("edit:find-selection") },
-            { label: "查找下一个", accelerator: "CommandOrControl+G", click: () => sendMenuCommand("edit:find-next") }
+            { label: "查找与替换", accelerator: shortcutBinding("edit.find"), click: () => sendMenuCommand("edit:find") },
+            { label: "查找下一个", accelerator: shortcutBinding("edit.findNext"), click: () => sendMenuCommand("edit:find-next") }
           ]
         },
         {
@@ -1604,17 +1942,28 @@ const updateApplicationMenu = () => {
           ]
         },
         { type: "separator" },
-        { label: "加粗", accelerator: "CommandOrControl+B", click: () => sendMenuCommand("format:bold") },
-        { label: "倾斜", accelerator: "CommandOrControl+I", click: () => sendMenuCommand("format:italic") },
-        { label: "下划线", accelerator: "CommandOrControl+U", click: () => sendMenuCommand("format:underline") },
-        { label: "删除线", accelerator: "Shift+CommandOrControl+X", click: () => sendMenuCommand("format:strike") },
+        { label: "加粗", accelerator: shortcutBinding("format.bold"), click: () => sendMenuCommand("format:bold") },
+        { label: "倾斜", accelerator: shortcutBinding("format.italic"), click: () => sendMenuCommand("format:italic") },
+        { label: "下划线", accelerator: shortcutBinding("format.underline"), click: () => sendMenuCommand("format:underline") },
+        { label: "删除线", accelerator: shortcutBinding("format.strike"), click: () => sendMenuCommand("format:strike") },
         { label: "链接", click: () => sendMenuCommand("insert:link") },
-        { label: "行内代码", accelerator: "Shift+CommandOrControl+`", click: () => sendMenuCommand("format:inline-code") },
-        { label: "高亮", accelerator: "Shift+CommandOrControl+M", click: () => sendMenuCommand("format:highlight") },
+        { label: "行内代码", click: () => sendMenuCommand("format:inline-code") },
+        { label: "高亮", accelerator: shortcutBinding("format.highlight"), click: () => sendMenuCommand("format:highlight") },
+        { label: "加密文本", click: () => sendMenuCommand("format:encrypt-text") },
         { type: "separator" },
         { label: "下标", click: () => sendMenuCommand("format:subscript") },
         { label: "上标", click: () => sendMenuCommand("format:superscript") },
+      ]
+    },
+    {
+      label: "插入",
+      submenu: [
+        { label: "图片...", click: () => insertAsset("image") },
+        { label: "视频...", click: () => insertAsset("video") },
+        { label: "音频...", click: () => insertAsset("audio") },
+        { label: "PDF...", click: () => insertAsset("pdf") },
         { type: "separator" },
+        { label: "表格", click: () => sendMenuCommand("insert:table") },
         {
           label: "列表",
           submenu: [
@@ -1623,34 +1972,14 @@ const updateApplicationMenu = () => {
             { label: "任务列表", click: () => sendMenuCommand("format:task-list") }
           ]
         },
-        { label: "引用", click: () => sendMenuCommand("format:blockquote") },
-        {
-          label: "转换",
-          submenu: [
-            { label: "转为大写", click: () => sendMenuCommand("convert:uppercase") },
-            { label: "转为小写", click: () => sendMenuCommand("convert:lowercase") },
-            { label: "清理 Markdown 标记", click: () => sendMenuCommand("convert:plain-text") }
-          ]
-        }
-      ]
-    },
-    {
-      label: "插入",
-      submenu: [
-        { label: "图片...", accelerator: "Shift+CommandOrControl+I", click: () => insertAsset("image") },
-        { label: "视频...", click: () => insertAsset("video") },
-        { label: "音频...", click: () => insertAsset("audio") },
-        { label: "PDF...", click: () => insertAsset("pdf") },
-        { type: "separator" },
-        { label: "表格", click: () => sendMenuCommand("insert:table") },
+        { label: "Note", click: () => sendMenuCommand("format:blockquote") },
         { label: "代码块", click: () => sendMenuCommand("format:code-block") },
         { label: "数学公式块", click: () => sendMenuCommand("insert:math") },
         { label: "图表", click: () => sendMenuCommand("insert:chart") },
         { label: "水平分隔线", click: () => sendMenuCommand("insert:horizontal-rule") },
         { type: "separator" },
         { label: "脚注", click: () => sendMenuCommand("insert:footnote") },
-        { label: "折叠块", click: () => sendMenuCommand("insert:details") },
-        { label: "信息框", click: () => sendMenuCommand("insert:callout") }
+        { label: "Callout", click: () => sendMenuCommand("insert:callout") }
       ]
     },
     {
@@ -1659,7 +1988,7 @@ const updateApplicationMenu = () => {
         { label: "切换左栏", click: () => sendMenuCommand("view:toggle-left-panel") },
         { label: "切换 Assistant", click: () => sendMenuCommand("view:toggle-right-panel") },
         { type: "separator" },
-        { label: "设置", click: openSettingsWindow }
+        { label: "设置", click: () => sendMenuCommand("settings:open") }
       ]
     },
     {
@@ -1711,6 +2040,7 @@ const updateApplicationMenu = () => {
 };
 
 app.whenReady().then(async () => {
+  await prepareRuntimeEnvironment();
   appIcon = loadAppIcon();
   app.setAboutPanelOptions({
     applicationName: APP_NAME,
@@ -1735,6 +2065,7 @@ app.whenReady().then(async () => {
   });
 
   appData = await loadAppData();
+  appDataLoaded = true;
   const startupFolder = appData.settings.shortcuts.quickFolder || appData.workspacePath || DEFAULT_WORKSPACE_PATH;
   appData = await saveAppData({
     ...appData,
@@ -1752,10 +2083,16 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error("Could not load known workspaces.", error);
   }
-  await initializeUpdater(appData.settings.updates.autoCheckOnLaunch);
   updateApplicationMenu();
   createWindow();
-  globalShortcut.register(appData.settings.shortcuts.quickCapture, triggerQuickCapture);
+  registerGlobalShortcuts();
+  await flushPendingExternalOpenFiles();
+});
+
+app.on("open-file", (event, path) => {
+  event.preventDefault();
+  enqueueExternalOpenFiles([path]);
+  if (app.isReady()) void flushPendingExternalOpenFiles();
 });
 
 app.on("window-all-closed", () => {
@@ -1764,6 +2101,7 @@ app.on("window-all-closed", () => {
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  if (app.isReady()) void flushPendingExternalOpenFiles();
 });
 
 app.on("before-quit", async () => {
@@ -1784,6 +2122,10 @@ ipcMain.handle("app:load", async () => {
 
 ipcMain.handle("app:open-settings", async () => {
   openSettingsWindow();
+});
+
+ipcMain.handle("app:new-window", async () => {
+  createWindow();
 });
 
 ipcMain.handle("app:open-files", async () => openFileDialog());
@@ -1814,9 +2156,15 @@ ipcMain.handle("app:save-attachment", async (_event, input: SaveAttachmentInput)
 
 ipcMain.handle("pdf:load-annotations", async (_event, input: LoadPdfAnnotationsInput) => loadPdfAnnotations(input));
 
+ipcMain.handle("pdf:find-annotation", async (_event, input: FindPdfAnnotationInput) => findPdfAnnotation(input));
+
 ipcMain.handle("pdf:save-annotation", async (_event, input: SavePdfAnnotationInput) => savePdfAnnotation(input));
 
 ipcMain.handle("pdf:delete-annotation", async (_event, input: DeletePdfAnnotationInput) => deletePdfAnnotation(input));
+
+ipcMain.handle("pdf:write-document-bytes", async (_event, input: WritePdfDocumentBytesInput) => writePdfDocumentBytes(input));
+
+ipcMain.handle("pdf:write-annotation-source", async (_event, input: WritePdfAnnotationSourceInput) => writePdfAnnotationSource(input));
 
 ipcMain.handle("app:save-settings", async (_event, settings: AppSettings) => {
   const agentConversations = normalizeAgentConversations(
@@ -1830,22 +2178,13 @@ ipcMain.handle("app:save-settings", async (_event, settings: AppSettings) => {
   if (agentConversations.length !== appData.agentConversations.length) {
     appData = await saveAppData({ ...appData, agentConversations });
   }
-  globalShortcut.unregisterAll();
-  globalShortcut.register(appData.settings.shortcuts.quickCapture, triggerQuickCapture);
+  registerGlobalShortcuts();
   updateApplicationMenu();
   emitAppData();
   return appData.settings;
 });
 
 ipcMain.handle("app:get-info", async () => getAppInfo());
-
-ipcMain.handle("app:get-updater-state", async () => getUpdaterState());
-
-ipcMain.handle("app:check-for-updates", async () => checkForUpdates());
-
-ipcMain.handle("app:restart-to-install-update", async () => {
-  await restartToInstallUpdate();
-});
 
 ipcMain.handle("app:save-documents", async (_event, documents: InformioDocument[], activeDocumentId: string) => {
   const mergedDocuments = mergeRendererDocuments(documents);
@@ -1867,6 +2206,16 @@ ipcMain.handle("app:save-now", async (_event, documents: InformioDocument[], act
   return { data: appData, savedAt: new Date().toISOString() };
 });
 
+ipcMain.handle("app:save-active-document-as", async (_event, documents: InformioDocument[], activeDocumentId: string) =>
+  saveActiveDocumentAs(documents, activeDocumentId)
+);
+
+ipcMain.handle(
+  "app:export-active-document",
+  async (_event, documents: InformioDocument[], activeDocumentId: string, format: "markdown" | "html" | "pdf") =>
+    exportActiveDocument(format, documents, activeDocumentId)
+);
+
 ipcMain.handle("app:save-agent-conversations", async (_event, input: SaveAgentConversationsInput) => saveAgentConversations(input));
 
 ipcMain.handle("app:choose-folder", async () => {
@@ -1878,6 +2227,8 @@ ipcMain.handle("app:choose-folder", async () => {
   const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
   return result.canceled ? null : result.filePaths[0];
 });
+
+ipcMain.handle("app:list-local-fonts", async () => listSystemLocalFonts());
 
 ipcMain.handle("agent-runtime:list", async () => agentRuntime.listConnections(appData.settings.agents));
 

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type {
+  AgentModel,
   AgentConversationMessage,
   AgentApprovalDecision,
   AgentApprovalResponseInput,
@@ -12,6 +13,14 @@ import type {
   AgentSessionResult,
   AgentSessionTraceKind
 } from "../shared/types.js";
+import {
+  collectFileChangePaths,
+  createFileChangeAudit,
+  mergeToolOutput,
+  type FileChangeAudit,
+  verifyFileChangeAudit
+} from "./fileChangeVerification.js";
+import { formatAgentLaunchError, summarizeAgentStderr } from "./runtimeEnvironment.js";
 
 type JsonRpcId = string | number;
 
@@ -35,6 +44,7 @@ type CodexClientSession = {
   pendingRequests: Map<JsonRpcId, PendingJsonRpcRequest>;
   ready: boolean;
   userAgent?: string;
+  models?: AgentModel[];
 };
 
 type PendingJsonRpcRequest = {
@@ -46,6 +56,8 @@ type PendingJsonRpcRequest = {
 type ActiveRun = {
   providerId: string;
   threadId: string;
+  cwd: string;
+  roots: string[];
   turnId?: string;
   onEvent: (event: AgentSessionEvent) => void;
   resolve: (result: AgentSessionResult) => void;
@@ -54,6 +66,8 @@ type ActiveRun = {
   rawEvents: unknown[];
   actionsByItemId: Map<string, string>;
   outputsByToolId: Map<string, string>;
+  statusesByToolId: Map<string, AgentSessionActionStatus>;
+  fileChangeAuditsByToolId: Map<string, FileChangeAudit>;
   completed: boolean;
   timer: NodeJS.Timeout;
 };
@@ -76,6 +90,8 @@ const asString = (value: unknown) => (typeof value === "string" ? value : "");
 
 const asNumber = (value: unknown) => (typeof value === "number" ? value : undefined);
 
+const asBoolean = (value: unknown) => (typeof value === "boolean" ? value : undefined);
+
 const toJson = (value: unknown) => JSON.stringify(value, null, 2);
 
 const compactJson = (value: unknown) => JSON.stringify(value);
@@ -85,6 +101,26 @@ const truncate = (value: string, maxLength = 12000) => (value.length > maxLength
 const modelId = (provider: AgentProvider, override?: string) => {
   const value = override || provider.model || provider.models?.[0]?.id || "";
   return value && value !== "default" ? value : "";
+};
+
+const dedupeModels = (models: AgentModel[]) =>
+  Array.from(new Map(models.filter((model) => model.id).map((model) => [model.id, model])).values());
+
+const normalizeRuntimeModels = (value: unknown): AgentModel[] => {
+  const payload = asRecord(value);
+  const data = Array.isArray(payload.data) ? payload.data : [];
+  const normalized = data.map((item): AgentModel | null => {
+    const model = asRecord(item);
+    const hidden = asBoolean(model.hidden) ?? false;
+    if (hidden) return null;
+    const id = asString(model.id) || asString(model.model);
+    if (!id) return null;
+    return {
+      id,
+      label: asString(model.displayName) || id
+    };
+  });
+  return dedupeModels(normalized.filter((model): model is AgentModel => model !== null));
 };
 
 const providerArgs = (provider: AgentProvider) =>
@@ -192,12 +228,13 @@ export class CodexAppServerManager {
   }
 
   private connectedConnection(provider: AgentProvider, session: CodexClientSession): AgentConnection {
+    const models = session.models?.length ? session.models : provider.models;
     return {
       providerId: provider.id,
       status: "connected",
       message: session.userAgent ? `Codex app-server connected: ${session.userAgent}` : "Codex app-server connected.",
       tools: [{ name: "codex_app_server", description: "Codex app-server v2 runtime trace." }],
-      models: provider.models
+      models
     };
   }
 
@@ -224,6 +261,7 @@ export class CodexAppServerManager {
     }
     await this.disconnect(provider.id);
 
+    let session: CodexClientSession | null = null;
     try {
       const child = spawn(provider.command, providerArgs(provider), {
         cwd: provider.cwd || undefined,
@@ -231,7 +269,7 @@ export class CodexAppServerManager {
         stdio: ["pipe", "pipe", "pipe"],
         shell: false
       });
-      const session: CodexClientSession = {
+      const nextSession: CodexClientSession = {
         provider,
         child,
         stdoutBuffer: "",
@@ -239,35 +277,44 @@ export class CodexAppServerManager {
         pendingRequests: new Map(),
         ready: false
       };
+      session = nextSession;
 
-      child.stdout.on("data", (chunk) => this.handleStdout(session, String(chunk)));
+      child.stdout.on("data", (chunk) => this.handleStdout(nextSession, String(chunk)));
       child.stderr.on("data", (chunk) => {
         const text = String(chunk).trim();
         if (!text) return;
-        session.stderr.push(text.slice(0, 1000));
-        if (session.stderr.length > 8) session.stderr.shift();
+        nextSession.stderr.push(text.slice(0, 1000));
+        if (nextSession.stderr.length > 8) nextSession.stderr.shift();
       });
       child.on("error", (error) => {
-        this.failSession(provider.id, error);
+        this.failSession(
+          provider.id,
+          new Error(formatAgentLaunchError("Codex CLI", provider.command, error, summarizeAgentStderr(nextSession.stderr)))
+        );
       });
       child.on("close", (code) => {
-        this.failSession(provider.id, new Error(`Codex app-server exited${code === null ? "" : ` with code ${code}`}.`));
+        const baseError = new Error(`Codex app-server exited${code === null ? "" : ` with code ${code}`}.`);
+        this.failSession(
+          provider.id,
+          new Error(formatAgentLaunchError("Codex CLI", provider.command, baseError, summarizeAgentStderr(nextSession.stderr)))
+        );
       });
 
-      this.sessions.set(provider.id, session);
+      this.sessions.set(provider.id, nextSession);
       const initialized = asRecord(
-        await this.request(session, "initialize", {
+        await this.request(nextSession, "initialize", {
           clientInfo: { name: "informio", version: "0.1.0" },
           capabilities: { experimentalApi: true }
         })
       );
-      session.ready = true;
-      session.userAgent = asString(initialized.userAgent);
+      nextSession.ready = true;
+      nextSession.userAgent = asString(initialized.userAgent);
+      nextSession.models = await this.listModels(nextSession).catch(() => provider.models);
       this.lastErrors.delete(provider.id);
-      return this.connectedConnection(provider, session);
+      return this.connectedConnection(provider, nextSession);
     } catch (error) {
       await this.disconnect(provider.id);
-      const message = `Could not start Codex app-server. ${asErrorMessage(error)}`;
+      const message = formatAgentLaunchError("Codex CLI", provider.command, error, summarizeAgentStderr(session?.stderr));
       this.lastErrors.set(provider.id, message);
       return { providerId: provider.id, status: "error", message, tools: [], models: provider.models };
     }
@@ -313,6 +360,7 @@ export class CodexAppServerManager {
       prompt,
       model: input.model,
       cwd: input.context.workspacePath || provider.cwd,
+      roots: [input.context.workspacePath, ...(input.context.projectRoots ?? [])].filter((value): value is string => Boolean(value?.trim())),
       permissionMode: input.permissionMode,
       runtimeThreadId: input.runtimeThreadId,
       conversationHistory: input.conversationHistory,
@@ -351,6 +399,7 @@ export class CodexAppServerManager {
       prompt: string;
       model?: string;
       cwd?: string;
+      roots?: string[];
       permissionMode: AgentSessionInput["permissionMode"];
       runtimeThreadId?: string;
       conversationHistory?: AgentConversationMessage[];
@@ -438,6 +487,8 @@ export class CodexAppServerManager {
       const run: ActiveRun = {
         providerId: provider.id,
         threadId,
+        cwd,
+        roots: options.roots ?? [],
         onEvent: options.onEvent,
         resolve,
         reject,
@@ -445,6 +496,8 @@ export class CodexAppServerManager {
         rawEvents: [],
         actionsByItemId: new Map(),
         outputsByToolId: new Map(),
+        statusesByToolId: new Map(),
+        fileChangeAuditsByToolId: new Map(),
         completed: false,
         timer
       };
@@ -489,6 +542,24 @@ export class CodexAppServerManager {
     const session = this.sessions.get(provider.id);
     if (!session) throw new Error("Codex app-server session was not created.");
     return session;
+  }
+
+  private async listModels(session: CodexClientSession): Promise<AgentModel[]> {
+    const models: AgentModel[] = [];
+    let cursor: string | null = null;
+
+    do {
+      const response = await this.request(session, "model/list", {
+        limit: 100,
+        includeHidden: false,
+        ...(cursor ? { cursor } : {})
+      });
+      const payload = asRecord(response);
+      models.push(...normalizeRuntimeModels(payload));
+      cursor = asString(payload.nextCursor) || null;
+    } while (cursor);
+
+    return dedupeModels(models);
   }
 
   private request(session: CodexClientSession, method: string, params: unknown, timeoutMs = 30000) {
@@ -734,13 +805,19 @@ export class CodexAppServerManager {
 
   private startActionForItem(run: ActiveRun, item: Record<string, unknown>, startedAt?: number) {
     const itemId = asString(item.id);
-    const type = asString(item.type);
     if (!itemId || run.actionsByItemId.has(itemId)) return;
 
     const action = this.actionFromThreadItem(item, startedAt);
     if (!action) return;
     run.actionsByItemId.set(itemId, action.toolId);
+    run.statusesByToolId.set(action.toolId, action.status);
     if (action.output) run.outputsByToolId.set(action.toolId, action.output);
+    if (action.kind === "file_change") {
+      run.fileChangeAuditsByToolId.set(
+        action.toolId,
+        createFileChangeAudit(collectFileChangePaths(asRecord(item).changes), { cwd: run.cwd, roots: run.roots })
+      );
+    }
     run.onEvent({ type: "tool_start", action });
   }
 
@@ -764,7 +841,13 @@ export class CodexAppServerManager {
 
     const output = this.outputFromThreadItem(item) || run.outputsByToolId.get(toolId);
     const status = statusFromCodex(item.status);
-    run.onEvent({ type: "tool_done", toolId, status, output });
+    const audit = run.fileChangeAuditsByToolId.get(toolId);
+    const verification = audit ? verifyFileChangeAudit(audit) : null;
+    const finalStatus = verification ? (verification.ok ? status : "error") : status;
+    const finalOutput = mergeToolOutput([output, verification?.message]);
+    run.statusesByToolId.set(toolId, finalStatus);
+    if (finalOutput) run.outputsByToolId.set(toolId, finalOutput);
+    run.onEvent({ type: "tool_done", toolId, status: finalStatus, output: finalOutput || undefined });
   }
 
   private actionFromThreadItem(item: Record<string, unknown>, startedAt?: number): AgentSessionAction | undefined {
@@ -906,6 +989,7 @@ export class CodexAppServerManager {
   ) {
     const toolId = itemId || `${tool}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     run.actionsByItemId.set(itemId || toolId, toolId);
+    run.statusesByToolId.set(toolId, "pending");
     run.onEvent({
       type: "tool_start",
       action: {
@@ -933,7 +1017,12 @@ export class CodexAppServerManager {
     }
 
     for (const toolId of run.actionsByItemId.values()) {
-      run.onEvent({ type: "tool_done", toolId, status: "done", output: run.outputsByToolId.get(toolId) });
+      run.onEvent({
+        type: "tool_done",
+        toolId,
+        status: run.statusesByToolId.get(toolId) ?? "done",
+        output: run.outputsByToolId.get(toolId)
+      });
     }
     run.onEvent({ type: "done", content: run.content });
     run.resolve({ content: run.content, raw: { threadId: run.threadId, turn, events: run.rawEvents } });

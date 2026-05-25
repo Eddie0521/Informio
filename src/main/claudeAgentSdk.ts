@@ -34,6 +34,14 @@ import type {
   AgentStreamEvent,
   ToolSummary
 } from "../shared/types.js";
+import {
+  collectFileChangePaths,
+  createFileChangeAudit,
+  mergeToolOutput,
+  type FileChangeAudit,
+  verifyFileChangeAudit
+} from "./fileChangeVerification.js";
+import { formatAgentLaunchError } from "./runtimeEnvironment.js";
 
 type PromptRunOptions = {
   model?: string;
@@ -61,6 +69,7 @@ type ActiveRun = {
   rawEvents: unknown[];
   sessionId?: string;
   toolStates: Map<string, AgentSessionAction>;
+  fileChangeAudits: Map<string, FileChangeAudit>;
   sessionApprovalKeys: Set<string>;
 };
 
@@ -518,7 +527,7 @@ export class ClaudeAgentSdkManager {
       this.lastErrors.delete(provider.id);
       return detected;
     } catch (error) {
-      const message = asErrorMessage(error);
+      const message = formatAgentLaunchError("Claude Code", provider.command, error);
       this.lastErrors.set(provider.id, message);
       const connection: AgentConnection = {
         providerId: provider.id,
@@ -780,6 +789,7 @@ export class ClaudeAgentSdkManager {
       content: "",
       rawEvents: [],
       toolStates: new Map(),
+      fileChangeAudits: new Map(),
       sessionApprovalKeys: new Set(options.runtimeThreadId ? this.sessionApprovalCache.get(options.runtimeThreadId) ?? [] : [])
     };
     this.activeRuns.set(provider.id, run);
@@ -928,6 +938,12 @@ export class ClaudeAgentSdkManager {
       startedAt: Date.now()
     };
     run.toolStates.set(hookInput.tool_use_id, action);
+    if (kind === "file_change") {
+      run.fileChangeAudits.set(
+        hookInput.tool_use_id,
+        createFileChangeAudit(collectFileChangePaths(hookInput.tool_input), { cwd: run.roots[0] || process.cwd(), roots: run.roots })
+      );
+    }
     onEvent({ type: "tool_start", action });
   }
 
@@ -935,15 +951,21 @@ export class ClaudeAgentSdkManager {
     const run = this.activeRuns.get(providerId);
     const existing = run?.toolStates.get(hookInput.tool_use_id);
     const output = summarizeToolOutput(hookInput.tool_response);
+    const verification = existing?.kind === "file_change" ? verifyFileChangeAudit(
+      run?.fileChangeAudits.get(hookInput.tool_use_id)
+      ?? createFileChangeAudit(collectFileChangePaths(hookInput.tool_input), { cwd: run?.roots[0] || process.cwd(), roots: run?.roots ?? [] })
+    ) : null;
+    const finalStatus = verification ? (verification.ok ? "done" : "error") : "done";
+    const finalOutput = mergeToolOutput([output, verification?.message]);
     onEvent({
       type: "tool_done",
       toolId: hookInput.tool_use_id,
-      status: "done",
-      output
+      status: finalStatus,
+      output: finalOutput || undefined
     });
     if (existing) {
-      existing.output = output;
-      existing.status = "done";
+      existing.output = finalOutput || undefined;
+      existing.status = finalStatus;
       existing.completedAt = Date.now();
       existing.durationMs = hookInput.duration_ms;
     }

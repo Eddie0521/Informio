@@ -1,4 +1,5 @@
 import { createOpencode, type OpencodeClient, type EventSubscribeResponse } from "@opencode-ai/sdk";
+import { createServer } from "node:net";
 import { basename } from "node:path";
 import type {
   AgentApprovalDecision,
@@ -19,6 +20,14 @@ import {
   buildFallbackConversationHistory,
   withFallbackConversationHistory
 } from "./agentRuntimeShared.js";
+import {
+  collectFileChangePaths,
+  createFileChangeAudit,
+  mergeToolOutput,
+  type FileChangeAudit,
+  verifyFileChangeAudit
+} from "./fileChangeVerification.js";
+import { formatAgentLaunchError, isMissingCommandError } from "./runtimeEnvironment.js";
 
 type OpenCodeSession = {
   provider: AgentProvider;
@@ -36,6 +45,7 @@ type ActiveRun = {
   providerId: string;
   sessionId: string;
   directory: string;
+  roots: string[];
   onEvent: (event: AgentSessionEvent) => void;
   content: string;
   latestAssistantMessageId?: string;
@@ -44,6 +54,7 @@ type ActiveRun = {
   pendingPartDeltasByMessageId: Map<string, Array<Record<string, unknown>>>;
   activeToolIds: Set<string>;
   actionByPartId: Map<string, AgentSessionAction>;
+  fileChangeAuditsByPartId: Map<string, FileChangeAudit>;
   partKindById: Map<string, string>;
   partTextById: Map<string, string>;
   permissionById: Map<string, { toolId: string; sessionId: string; directory: string; kind: "permission" | "question"; answers?: string[][] }>;
@@ -179,6 +190,25 @@ const buildPermissionRules = (mode: AgentSessionInput["permissionMode"]): OpenCo
   ];
 };
 
+const reserveOpenCodePort = async () =>
+  new Promise<number>((resolve, reject) => {
+    const server = createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Could not reserve an OpenCode port.")));
+        return;
+      }
+      const { port } = address;
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(port);
+      });
+    });
+  });
+
 export class OpenCodeSdkManager {
   private sessions = new Map<string, OpenCodeSession>();
   private activeRuns = new Map<string, ActiveRun>();
@@ -222,7 +252,8 @@ export class OpenCodeSdkManager {
 
     await this.disconnect(provider.id);
     try {
-      const { client, server } = await createOpencode();
+      const port = await reserveOpenCodePort();
+      const { client, server } = await createOpencode({ port, timeout: 10000 });
       const session: OpenCodeSession = {
         provider,
         client,
@@ -310,6 +341,7 @@ export class OpenCodeSdkManager {
     onEvent: (event: AgentSessionEvent) => void
   ): Promise<AgentSessionResult> {
     const directory = input.context.workspacePath || provider.cwd || process.cwd();
+    const roots = [input.context.workspacePath, ...(input.context.projectRoots ?? [])].filter((value): value is string => Boolean(value?.trim()));
     const session = await this.ensureConnected(provider, directory);
     const sessionId = await this.ensureSession(session, input, directory);
     const run = await new Promise<AgentSessionResult>(async (resolve, reject) => {
@@ -326,6 +358,7 @@ export class OpenCodeSdkManager {
         providerId: provider.id,
         sessionId,
         directory,
+        roots,
         onEvent,
         content: "",
         latestAssistantMessageId: undefined,
@@ -334,6 +367,7 @@ export class OpenCodeSdkManager {
         pendingPartDeltasByMessageId: new Map(),
         activeToolIds: new Set(),
         actionByPartId: new Map(),
+        fileChangeAuditsByPartId: new Map(),
         partKindById: new Map(),
         partTextById: new Map(),
         permissionById: new Map(),
@@ -744,18 +778,33 @@ export class OpenCodeSdkManager {
           path: asString(input.path ?? input.file)
         };
         run.actionByPartId.set(partId, action);
+        if (kind === "file_change") {
+          run.fileChangeAuditsByPartId.set(partId, createFileChangeAudit(collectFileChangePaths(input), { cwd: run.directory, roots: run.roots }));
+        }
         run.activeToolIds.add(partId);
         run.onEvent({ type: "tool_start", action });
       }
       if (status === "completed" || status === "error") {
         const action = run.actionByPartId.get(partId);
         const output = status === "completed" ? asString(state.output) : asString(state.error);
+        const verification = status === "completed" && action?.kind === "file_change"
+          ? verifyFileChangeAudit(
+            run.fileChangeAuditsByPartId.get(partId)
+            ?? createFileChangeAudit(collectFileChangePaths(input), { cwd: run.directory, roots: run.roots })
+          )
+          : null;
+        const finalStatus = verification ? (verification.ok ? "done" : "error") : (status === "completed" ? "done" : "error");
+        const finalOutput = mergeToolOutput([output, verification?.message]);
         run.onEvent({
           type: "tool_done",
           toolId: action?.toolId ?? toolId,
-          status: status === "completed" ? "done" : "error",
-          output: output || undefined
+          status: finalStatus,
+          output: finalOutput || undefined
         });
+        if (action) {
+          action.status = finalStatus;
+          action.output = finalOutput || undefined;
+        }
         run.activeToolIds.delete(partId);
       }
       return;
@@ -763,18 +812,39 @@ export class OpenCodeSdkManager {
 
     if (partType === "patch") {
       if (!run.actionByPartId.has(partId)) {
+        const files = Array.isArray(part.files) ? part.files.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
         const action: AgentSessionAction = {
           tool: "patch",
           toolId: partId,
           label: "编辑文件",
           kind: "file_change",
           status: "pending",
-          output: summarizePatchFiles(part.files)
+          output: summarizePatchFiles(part.files),
+          path: files[0]
         };
         run.actionByPartId.set(partId, action);
+        run.fileChangeAuditsByPartId.set(partId, createFileChangeAudit(files, { cwd: run.directory, roots: run.roots }));
         run.onEvent({ type: "tool_start", action });
       }
-      run.onEvent({ type: "tool_done", toolId: partId, status: "done", output: summarizePatchFiles(part.files) || undefined });
+      const verification = verifyFileChangeAudit(
+        run.fileChangeAuditsByPartId.get(partId)
+          ?? createFileChangeAudit(
+          Array.isArray(part.files) ? part.files.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [],
+          { cwd: run.directory, roots: run.roots }
+        )
+      );
+      const finalOutput = mergeToolOutput([summarizePatchFiles(part.files), verification.message]);
+      const action = run.actionByPartId.get(partId);
+      if (action) {
+        action.status = verification.ok ? "done" : "error";
+        action.output = finalOutput || undefined;
+      }
+      run.onEvent({
+        type: "tool_done",
+        toolId: partId,
+        status: verification.ok ? "done" : "error",
+        output: finalOutput || undefined
+      });
       return;
     }
 
@@ -959,6 +1029,7 @@ export class OpenCodeSdkManager {
   }
 
   private normalizeConnectError(error: unknown) {
+    if (isMissingCommandError(error)) return formatAgentLaunchError("OpenCode", "opencode", error);
     const message = asErrorMessage(error);
     if (/ProviderAuthError|provider.*auth|oauth/i.test(message)) return "OpenCode 需要登录或 provider 鉴权未完成。";
     if (/wal_checkpoint|database|sqlite/i.test(message)) return "OpenCode 本地会话数据库当前被占用或异常，请关闭冲突进程后重试。";

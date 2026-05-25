@@ -1,4 +1,4 @@
-import { Component, Fragment, createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Component, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   ComponentType,
@@ -9,11 +9,14 @@ import type {
   ReactNode,
   WheelEvent as ReactWheelEvent
 } from "react";
-import type { Editor } from "@tiptap/core";
-import { InputRule, mergeAttributes, Node } from "@tiptap/core";
+import type { Editor, MarkdownParseHelpers, MarkdownRendererHelpers } from "@tiptap/core";
+import { Extension, InputRule, Mark, mergeAttributes, Node, ResizableNodeView } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { EditorContent, NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { NodeSelection, TextSelection } from "@tiptap/pm/state";
+import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "@tiptap/markdown";
@@ -21,28 +24,34 @@ import { CodeBlockLowlight } from "@tiptap/extension-code-block-lowlight";
 import Highlight from "@tiptap/extension-highlight";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
-import Subscript from "@tiptap/extension-subscript";
-import Superscript from "@tiptap/extension-superscript";
+import SubscriptExtension from "@tiptap/extension-subscript";
+import SuperscriptExtension from "@tiptap/extension-superscript";
 import { Table } from "@tiptap/extension-table";
 import TableCell from "@tiptap/extension-table-cell";
 import TableHeader from "@tiptap/extension-table-header";
 import TableRow from "@tiptap/extension-table-row";
 import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
-import Underline from "@tiptap/extension-underline";
+import UnderlineExtension from "@tiptap/extension-underline";
 import katex from "katex";
 import { common, createLowlight } from "lowlight";
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
-import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 import * as YAML from "yaml";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Select from "@radix-ui/react-select";
 import * as Switch from "@radix-ui/react-switch";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import {
+  AlignCenter,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignHorizontalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignVerticalJustifyStart,
+  Bold,
   Bot,
   Bookmark,
+  ChartNoAxesColumnIncreasing,
   Check,
   ChevronDown,
   ChevronRight,
@@ -56,27 +65,49 @@ import {
   Github,
   FolderPlus,
   FolderRoot,
+  Highlighter,
   History,
   ImageIcon,
   Info,
+  Italic,
   Keyboard,
   LayoutList,
+  Languages,
+  ListOrdered,
   Loader2,
   Maximize2,
+  Merge,
+  MessageSquareQuote,
+  Minus,
+  MoreHorizontal,
   Music,
   Pencil,
   Palette,
   Pin,
   PinOff,
   Plus,
+  Replace,
   Search,
   Settings,
   Shield,
   Square,
+  Strikethrough,
+  Subscript as SubscriptIcon,
+  Superscript as SuperscriptIcon,
+  Columns3,
+  Rows3,
+  Split,
+  Table2,
   Text,
   Trash2,
+  Underline as UnderlineIcon,
   Unplug,
+  Undo2,
+  Redo2,
   X,
+  Link2,
+  ListTodo,
+  TextQuote,
 } from "lucide-react";
 import type {
   ApiProviderKind,
@@ -96,20 +127,38 @@ import type {
   InformioFolder,
   InformioDocument,
   InformioProject,
+  LocalFontOption,
   MenuCommand,
   PdfAnnotation,
   PdfAnnotationRect,
-  PdfAnnotationSelection,
   PdfMarkdownTarget,
-  ThemeName,
-  UpdaterState
+  ThemeName
 } from "../../shared/types";
+import {
+  acceleratorFromKeyboardEvent,
+  acceleratorToDisplay,
+  configurableShortcutEntries,
+  defaultShortcutBindings,
+  findShortcutConflict,
+  getShortcutAccelerator,
+  normalizeAccelerator,
+  shortcutRegistryById
+} from "../../shared/shortcuts";
 import { DEFAULT_CUSTOM_THEME_COLOR } from "../../shared/theme";
 import { buildWorkspaceScopeId } from "../../shared/workspaceScope";
 import { cn } from "./lib/utils";
+import {
+  PdfBlockView as UnifiedPdfBlockView,
+  PdfEditorContext as UnifiedPdfEditorContext,
+  PdfViewerSurface as UnifiedPdfViewerSurface
+} from "./pdfSurface";
+import type {
+  PdfEditorContextValue as UnifiedPdfEditorContextValue,
+  ToolbarTranslateState as UnifiedToolbarTranslateState
+} from "./pdfSurface";
 import "katex/dist/katex.min.css";
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+import "pdfjs-dist/web/pdf_viewer.css";
+const appIconUrl = "/icon.png";
 
 const themeOptions: Array<{ id: ThemeName; label: string; surface: string; accent: string }> = [
   { id: "white", label: "白色", surface: "#ffffff", accent: "#059669" },
@@ -159,6 +208,70 @@ const defaultApiSettings = {
   models: [] as AgentModel[]
 };
 
+const CHINESE_FONT_FALLBACK =
+  `"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif`;
+const ENGLISH_FONT_FALLBACK =
+  `"Helvetica Neue", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
+const CODE_FONT_FALLBACK =
+  `"SF Mono", "Cascadia Mono", "Roboto Mono", ui-monospace, monospace`;
+
+const quoteFontFamily = (family: string) => `"${family.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+const buildConfiguredFontStack = (family: string | undefined, fallback: string) => {
+  const trimmed = family?.trim();
+  return trimmed ? `${quoteFontFamily(trimmed)}, ${fallback}` : fallback;
+};
+
+const buildUiFontStack = (
+  englishFontFamily: string | undefined,
+  chineseFontFamily: string | undefined
+) => {
+  const orderedFamilies = [
+    englishFontFamily?.trim() ? quoteFontFamily(englishFontFamily.trim()) : null,
+    chineseFontFamily?.trim() ? quoteFontFamily(chineseFontFamily.trim()) : null,
+    `"PingFang SC"`,
+    `"Hiragino Sans GB"`,
+    `"Microsoft YaHei"`,
+    `"Noto Sans CJK SC"`,
+    `"Helvetica Neue"`,
+    `-apple-system`,
+    `BlinkMacSystemFont`,
+    `"Segoe UI"`,
+    `Arial`,
+    `sans-serif`
+  ].filter(Boolean);
+  return Array.from(new Set(orderedFamilies)).join(", ");
+};
+
+const mergeFontOptions = (fonts: LocalFontOption[], ...currentFamilies: Array<string | undefined>) => {
+  const deduped = new Map<string, LocalFontOption>();
+  fonts.forEach((font) => {
+    const family = font.family.trim();
+    if (!family || deduped.has(family)) return;
+    deduped.set(family, { ...font, family });
+  });
+  currentFamilies.forEach((family) => {
+    const trimmed = family?.trim();
+    if (!trimmed || deduped.has(trimmed)) return;
+    deduped.set(trimmed, { family: trimmed });
+  });
+  return Array.from(deduped.values()).sort((left, right) => left.family.localeCompare(right.family));
+};
+
+const buildShellStyle = (appearance: AppSettings["appearance"]): CSSProperties => {
+  const style: CSSProperties & Record<string, string> = {
+    "--informio-font-family": buildUiFontStack(
+      appearance.englishFontFamily,
+      appearance.chineseFontFamily
+    ),
+    "--informio-code-font-family": buildConfiguredFontStack(appearance.codeFontFamily, CODE_FONT_FALLBACK)
+  };
+  if (appearance.theme === "custom") {
+    style["--custom-theme-color"] = appearance.customThemeColor || DEFAULT_CUSTOM_THEME_COLOR;
+  }
+  return style;
+};
+
 const connectionTone: Record<AgentConnection["status"], string> = {
   idle: "bg-slate-300",
   connecting: "bg-amber-400",
@@ -171,36 +284,6 @@ const connectionLabel: Record<AgentConnection["status"], string> = {
   connecting: "检测中",
   connected: "可用",
   error: "不可用"
-};
-
-const updaterStateTone: Record<UpdaterState["status"], string> = {
-  idle: "text-[var(--text-muted)]",
-  checking: "text-amber-700",
-  available: "text-emerald-700",
-  downloading: "text-emerald-700",
-  downloaded: "text-emerald-700",
-  "up-to-date": "text-[var(--text-muted)]",
-  error: "text-red-700"
-};
-
-const updaterStateSummary = (state: UpdaterState) => {
-  if (state.message?.trim()) return state.message.trim();
-  switch (state.status) {
-    case "checking":
-      return "正在检查更新...";
-    case "available":
-      return state.version ? `发现新版本 ${state.version}，正在下载...` : "发现新版本，正在下载...";
-    case "downloading":
-      return typeof state.progress === "number" ? `正在下载更新 ${Math.round(state.progress)}%...` : "正在下载更新...";
-    case "downloaded":
-      return state.version ? `新版本 ${state.version} 已下载，重启后安装。` : "更新已下载，重启后安装。";
-    case "up-to-date":
-      return "当前已经是最新版本。";
-    case "error":
-      return "检查更新失败，请稍后重试。";
-    default:
-      return "自动更新尚未检查。";
-  }
 };
 
 const modelLabel = (models: AgentModel[], id?: string) => {
@@ -224,6 +307,18 @@ const EDITOR_CONTENT_MIN_WIDTH = 410;
 const EDITOR_CONTENT_MAX_WIDTH = 1100;
 const CHAT_PANEL_FONT_MIN = 10;
 const CHAT_PANEL_FONT_MAX = 18;
+const TABLE_CELL_MIN_WIDTH = 88;
+const TABLE_EDGE_COMPRESS_MIN_WIDTH = 40;
+const TABLE_CONTROL_SIZE = 24;
+const TABLE_CONTEXT_OFFSET = 12;
+const TABLE_EDGE_HIT_DISTANCE = 14;
+const TABLE_HEADER_STRIP_SIZE = 24;
+const TABLE_TOOLBAR_HEIGHT = 30;
+const TABLE_ROW_MIN_HEIGHT = 36;
+const INFORMIO_SECRET_TAG = "informio-secret";
+const SECRET_ITERATIONS = 210000;
+const SECRET_ALGORITHM = "aes-gcm";
+const SECRET_KDF = "pbkdf2-sha256";
 
 type SidebarMode = "files" | "outline" | "properties";
 
@@ -269,12 +364,6 @@ type AgentSelection = {
   overlayTop?: number;
 };
 
-type ToolbarTranslateState = {
-  status: "idle" | "loading" | "done" | "error";
-  response: string;
-  error?: string;
-};
-
 type ApiCheckState = {
   status: "idle" | "loading" | "done" | "error";
   message?: string;
@@ -287,7 +376,7 @@ const normalizeApiSettings = (api: AppSettings["api"] | undefined) => ({
   models: api?.models ?? defaultApiSettings.models
 });
 
-const samePdfRects = (left: PdfAnnotationRect[] | undefined, right: PdfAnnotationRect[] | undefined) => {
+const sameAnnotationRects = (left: PdfAnnotationRect[] | undefined, right: PdfAnnotationRect[] | undefined) => {
   const leftRects = left ?? [];
   const rightRects = right ?? [];
   if (leftRects.length !== rightRects.length) return false;
@@ -317,7 +406,7 @@ const sameAgentSelection = (left: AgentSelection | null, right: AgentSelection |
     left.page === right.page &&
     left.overlayLeft === right.overlayLeft &&
     left.overlayTop === right.overlayTop &&
-    samePdfRects(left.rects, right.rects)
+    sameAnnotationRects(left.rects, right.rects)
   );
 };
 
@@ -471,6 +560,392 @@ type SplitDirection = "horizontal" | "vertical";
 
 type EditorDropZone = "left" | "right" | "top" | "bottom";
 
+const ResizableTableRow = TableRow.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      rowHeight: {
+        default: null,
+        parseHTML: (element) => {
+          const raw = element.getAttribute("data-rowheight") || element.style.height;
+          const height = raw ? Number.parseInt(raw, 10) : Number.NaN;
+          return Number.isFinite(height) && height > 0 ? height : null;
+        },
+        renderHTML: (attributes) => {
+          const rowHeight = Number(attributes.rowHeight);
+          if (!Number.isFinite(rowHeight) || rowHeight <= 0) return {};
+          return {
+            "data-rowheight": String(rowHeight),
+            style: `height: ${rowHeight}px`
+          };
+        }
+      }
+    };
+  }
+});
+
+type HorizontalCellAlign = "left" | "center" | "right";
+type VerticalCellAlign = "top" | "middle" | "bottom";
+
+const parseHorizontalCellAlign = (element: HTMLElement) => {
+  const raw = (element.getAttribute("align") || element.style.textAlign || "").trim().toLowerCase();
+  return raw === "left" || raw === "right" || raw === "center" ? (raw as HorizontalCellAlign) : "center";
+};
+
+const parseVerticalCellAlign = (element: HTMLElement) => {
+  const raw = (element.getAttribute("valign") || element.style.verticalAlign || "").trim().toLowerCase();
+  if (raw === "top" || raw === "bottom" || raw === "middle") return raw as VerticalCellAlign;
+  return "middle";
+};
+
+const renderCellStyle = (attributes: Record<string, unknown>) => {
+  const align = typeof attributes.align === "string" ? attributes.align : "center";
+  const verticalAlign = typeof attributes.verticalAlign === "string" ? attributes.verticalAlign : "middle";
+  const styles = [`text-align:${align}`, `vertical-align:${verticalAlign}`];
+  return { style: `${styles.join(";")};` };
+};
+
+const AlignableTableCell = TableCell.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      align: {
+        default: "center",
+        parseHTML: (element: HTMLElement) => parseHorizontalCellAlign(element),
+        renderHTML: (attributes: Record<string, unknown>) => renderCellStyle(attributes)
+      },
+      verticalAlign: {
+        default: "middle",
+        parseHTML: (element: HTMLElement) => parseVerticalCellAlign(element),
+        renderHTML: (attributes: Record<string, unknown>) => renderCellStyle(attributes)
+      }
+    };
+  }
+});
+
+const AlignableTableHeader = TableHeader.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      align: {
+        default: "center",
+        parseHTML: (element: HTMLElement) => parseHorizontalCellAlign(element),
+        renderHTML: (attributes: Record<string, unknown>) => renderCellStyle(attributes)
+      },
+      verticalAlign: {
+        default: "middle",
+        parseHTML: (element: HTMLElement) => parseVerticalCellAlign(element),
+        renderHTML: (attributes: Record<string, unknown>) => renderCellStyle(attributes)
+      }
+    };
+  }
+});
+
+const escapeHtml = (value: string) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+
+const normalizeTableText = (value: string) => value.replace(/\s+/g, " ").trim();
+
+const renderImageMarkdown = (attrs: { src?: string | null; alt?: string | null; title?: string | null; width?: number | string | null }) => {
+  const src = attrs.src ?? "";
+  const alt = attrs.alt ?? "";
+  const title = attrs.title ?? "";
+  const width =
+    typeof attrs.width === "number"
+      ? Math.round(attrs.width)
+      : typeof attrs.width === "string" && attrs.width.trim()
+        ? Math.round(Number(attrs.width))
+        : null;
+
+  if (Number.isFinite(width) && width && width > 0) {
+    const attrPairs = [
+      `src="${escapeHtml(src)}"`,
+      alt ? `alt="${escapeHtml(alt)}"` : "",
+      title ? `title="${escapeHtml(title)}"` : "",
+      `width="${width}"`
+    ].filter(Boolean);
+    return `<img ${attrPairs.join(" ")} />`;
+  }
+
+  return title ? `![${alt}](${src} "${title}")` : `![${alt}](${src})`;
+};
+
+const ResizableImage = Image.extend({
+  renderMarkdown(node: { attrs?: { src?: string | null; alt?: string | null; title?: string | null; width?: number | string | null } }) {
+    return renderImageMarkdown(node.attrs ?? {});
+  },
+  addNodeView(this: any) {
+    if (!this.options.resize || !this.options.resize.enabled || typeof document === "undefined") {
+      return null;
+    }
+
+    const { directions, minWidth, minHeight, alwaysPreserveAspectRatio } = this.options.resize;
+
+    return ({ node, getPos, HTMLAttributes, editor }: any) => {
+      const el = document.createElement("img");
+      Object.entries(HTMLAttributes).forEach(([key, value]) => {
+        if (value != null) {
+          switch (key) {
+            case "width":
+            case "height":
+              break;
+            default:
+              el.setAttribute(key, String(value));
+              break;
+          }
+        }
+      });
+
+      el.src = String(HTMLAttributes.src ?? "");
+      el.style.height = "auto";
+
+      const nodeView = new ResizableNodeView({
+        element: el,
+        editor,
+        node,
+        getPos,
+        onResize: (width, height) => {
+          el.style.width = `${width}px`;
+          el.style.height = `${height}px`;
+        },
+        onCommit: (width) => {
+          const pos = getPos();
+          if (pos === undefined) return;
+          const roundedWidth = Math.max(120, Math.round(width));
+          editor.chain().setNodeSelection(pos).updateAttributes(this.name, { width: roundedWidth, height: null }).run();
+          el.style.width = `${roundedWidth}px`;
+          el.style.height = "auto";
+        },
+        onUpdate: (updatedNode: any) => {
+          if (updatedNode.type !== node.type) return false;
+          const nextWidth = updatedNode.attrs.width;
+          el.style.width =
+            typeof nextWidth === "number"
+              ? `${nextWidth}px`
+              : typeof nextWidth === "string" && nextWidth.trim()
+                ? `${nextWidth}px`
+                : "";
+          el.style.height = "auto";
+          return true;
+        },
+        options: {
+          directions,
+          min: {
+            width: minWidth,
+            height: minHeight
+          },
+          preserveAspectRatio: alwaysPreserveAspectRatio === true,
+          className: {
+            container: "informio-image-resize-container",
+            wrapper: "informio-image-resize-wrapper",
+            handle: "informio-image-resize-handle",
+            resizing: "is-resizing-image"
+          }
+        }
+      });
+
+      const dom = nodeView.dom;
+      dom.style.visibility = "hidden";
+      dom.style.pointerEvents = "none";
+      el.onload = () => {
+        dom.style.visibility = "";
+        dom.style.pointerEvents = "";
+      };
+      return nodeView;
+    };
+  }
+} as never);
+
+const renderTableToGfm = (node: JSONContent, h: MarkdownRendererHelpers) => {
+  if (!node.content?.length) return "";
+
+  const rows: Array<Array<{ text: string; isHeader: boolean; align: string | null }>> = [];
+  node.content.forEach((rowNode) => {
+    const cells: Array<{ text: string; isHeader: boolean; align: string | null }> = [];
+    rowNode.content?.forEach((cellNode) => {
+      const raw = cellNode.content ? h.renderChildren(cellNode.content as JSONContent[]) : "";
+      cells.push({
+        text: normalizeTableText(raw),
+        isHeader: cellNode.type === "tableHeader",
+        align: typeof cellNode.attrs?.align === "string" ? cellNode.attrs.align : null
+      });
+    });
+    rows.push(cells);
+  });
+
+  const columnCount = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  if (!columnCount) return "";
+
+  const colWidths = new Array(columnCount).fill(3);
+  rows.forEach((row) => {
+    for (let index = 0; index < columnCount; index += 1) {
+      const text = row[index]?.text ?? "";
+      colWidths[index] = Math.max(colWidths[index], text.length, 3);
+    }
+  });
+
+  const hasHeader = rows[0]?.some((cell) => cell.isHeader) ?? false;
+  const pad = (text: string, width: number) => `${text}${" ".repeat(Math.max(0, width - text.length))}`;
+  const alignments = new Array<string | null>(columnCount).fill(null);
+  rows.forEach((row) => {
+    for (let index = 0; index < columnCount; index += 1) {
+      if (!alignments[index] && row[index]?.align) alignments[index] = row[index].align;
+    }
+  });
+
+  const headerTexts = new Array(columnCount)
+    .fill("")
+    .map((_, index) => (hasHeader ? rows[0]?.[index]?.text ?? "" : ""));
+
+  let output = "\n";
+  output += `| ${headerTexts.map((text, index) => pad(text, colWidths[index])).join(" | ")} |\n`;
+  output += `| ${colWidths
+    .map((width, index) => {
+      const dashes = "-".repeat(Math.max(3, width));
+      if (alignments[index] === "left") return `:${dashes}`;
+      if (alignments[index] === "right") return `${dashes}:`;
+      if (alignments[index] === "center") return `:${dashes}:`;
+      return dashes;
+    })
+    .join(" | ")} |\n`;
+
+  const bodyRows = hasHeader ? rows.slice(1) : rows;
+  bodyRows.forEach((row) => {
+    output += `| ${new Array(columnCount)
+      .fill("")
+      .map((_, index) => pad(row[index]?.text ?? "", colWidths[index]))
+      .join(" | ")} |\n`;
+  });
+
+  return output;
+};
+
+const renderJsonNodeToHtml = (node: JSONContent): string => {
+  if (node.type === "text") {
+    let text = escapeHtml(node.text ?? "");
+    (node.marks ?? []).forEach((mark) => {
+      if (mark.type === "bold") text = `<strong>${text}</strong>`;
+      else if (mark.type === "italic") text = `<em>${text}</em>`;
+      else if (mark.type === "strike") text = `<s>${text}</s>`;
+      else if (mark.type === "code") text = `<code>${text}</code>`;
+      else if (mark.type === "link" && mark.attrs?.href) {
+        text = `<a href="${escapeHtml(String(mark.attrs.href))}">${text}</a>`;
+      }
+    });
+    return text;
+  }
+
+  const children = (node.content ?? []).map(renderJsonNodeToHtml).join("");
+  switch (node.type) {
+    case "paragraph":
+      return `<p>${children}</p>`;
+    case "hardBreak":
+      return "<br />";
+    case "bulletList":
+      return `<ul>${children}</ul>`;
+    case "orderedList":
+      return `<ol>${children}</ol>`;
+    case "listItem":
+      return `<li>${children}</li>`;
+    case "blockquote":
+      return `<blockquote>${children}</blockquote>`;
+    case "heading": {
+      const level = Math.max(1, Math.min(6, Number(node.attrs?.level) || 1));
+      return `<h${level}>${children}</h${level}>`;
+    }
+    case "codeBlock":
+      return `<pre><code>${escapeHtml(node.content?.map((child) => child.text ?? "").join("") ?? "")}</code></pre>`;
+    default:
+      return children;
+  }
+};
+
+const tableJsonUsesRichMarkdown = (node: JSONContent) =>
+  (node.content ?? []).some((row) =>
+    (Number(row.attrs?.rowHeight) || 0) > 0
+    || (row.content ?? []).some((cell) => {
+      const colspan = Number(cell.attrs?.colspan ?? 1);
+      const rowspan = Number(cell.attrs?.rowspan ?? 1);
+      const colwidth = Array.isArray(cell.attrs?.colwidth) ? cell.attrs?.colwidth : null;
+      const verticalAlign = typeof cell.attrs?.verticalAlign === "string" ? cell.attrs.verticalAlign : "middle";
+      return colspan > 1 || rowspan > 1 || verticalAlign !== "middle" || Boolean(colwidth?.some((width) => Number(width) > 0));
+    })
+  );
+
+const renderRichTableToMarkdown = (node: JSONContent) => {
+  const body = (node.content ?? [])
+    .map((row) => {
+      const rowHeight = Number(row.attrs?.rowHeight ?? 0);
+      const rowAttrs = rowHeight > 0 ? ` data-rowheight="${rowHeight}" style="height:${rowHeight}px"` : "";
+      const cells = (row.content ?? [])
+        .map((cell) => {
+          const tag = cell.type === "tableHeader" ? "th" : "td";
+          const attrs: string[] = [];
+          const colspan = Number(cell.attrs?.colspan ?? 1);
+          const rowspan = Number(cell.attrs?.rowspan ?? 1);
+          const align = typeof cell.attrs?.align === "string" ? cell.attrs.align : "";
+          const verticalAlign = typeof cell.attrs?.verticalAlign === "string" ? cell.attrs.verticalAlign : "";
+          const colwidth = Array.isArray(cell.attrs?.colwidth)
+            ? cell.attrs.colwidth.map((width) => Number(width)).filter((width) => Number.isFinite(width) && width > 0)
+            : [];
+          if (colspan > 1) attrs.push(`colspan="${colspan}"`);
+          if (rowspan > 1) attrs.push(`rowspan="${rowspan}"`);
+          if (colwidth.length) attrs.push(`colwidth="${colwidth.join(",")}"`);
+          const styleParts = [
+            align ? `text-align:${align}` : "",
+            verticalAlign ? `vertical-align:${verticalAlign}` : ""
+          ].filter(Boolean);
+          if (styleParts.length) attrs.push(`style="${styleParts.join(";")}"`);
+          return `<${tag}${attrs.length ? ` ${attrs.join(" ")}` : ""}>${(cell.content ?? []).map(renderJsonNodeToHtml).join("") || "<p></p>"}</${tag}>`;
+        })
+        .join("");
+      return `<tr${rowAttrs}>${cells}</tr>`;
+    })
+    .join("");
+
+  return `\n<table data-rich-table="true"><tbody>${body}</tbody></table>\n`;
+};
+
+const RichTable = Table.extend({
+  draggable: true,
+  renderMarkdown(node, h) {
+    const content = node as JSONContent;
+    return tableJsonUsesRichMarkdown(content) ? renderRichTableToMarkdown(content) : renderTableToGfm(content, h);
+  }
+});
+
+const TableStructureKeymap = Extension.create({
+  name: "tableStructureKeymap",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    const deleteStructuredSelection = () => {
+      const selection = this.editor.state.selection;
+      if (selection instanceof CellSelection) {
+        if (selection.isRowSelection()) return this.editor.commands.deleteRow();
+        if (selection.isColSelection()) return this.editor.commands.deleteColumn();
+        return false;
+      }
+      if (selection instanceof NodeSelection && selection.node.type.name === "table") {
+        this.editor.view.dispatch(this.editor.state.tr.deleteSelection().scrollIntoView());
+        return true;
+      }
+      return false;
+    };
+
+    return {
+      Backspace: deleteStructuredSelection,
+      Delete: deleteStructuredSelection,
+      "Mod-Backspace": deleteStructuredSelection,
+      "Mod-Delete": deleteStructuredSelection
+    };
+  }
+});
+
 function normalizeEditorPanes(
   panes: EditorPaneState[],
   isValidDocument: (documentId: string) => boolean = () => true
@@ -536,8 +1011,8 @@ const agentPermissionModes: AgentPermissionMode[] = ["read_only", "default", "fu
 
 const sessionStatusLabel: Record<AgentSessionStatus, string> = {
   idle: "空闲",
-  thinking: "思考中",
-  "tool-executing": "执行工具",
+  thinking: "处理中",
+  "tool-executing": "执行中",
   done: "完成",
   error: "失败"
 };
@@ -706,8 +1181,95 @@ const isSelectionToolbarInteractionActive = () => {
   return activeInsideToolbar || Date.now() < selectionToolbarInteractionLockUntil;
 };
 
+type ToolbarIcon = ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
+
+type SelectionToolbarAction = {
+  id: "bold" | "italic" | "underline" | "strike" | "subscript" | "superscript" | "highlight" | "link";
+  label: string;
+  icon: ToolbarIcon;
+};
+
+type TextColorOption = {
+  label: string;
+  value: string;
+};
+
+type InsertToolbarAction =
+  | {
+      id: string;
+      label: string;
+      icon: ToolbarIcon;
+      kind: "command";
+      command:
+        | "insert:table"
+        | "format:bullet-list"
+        | "format:ordered-list"
+        | "format:task-list"
+        | "format:blockquote"
+        | "format:code-block"
+        | "insert:math"
+        | "insert:chart"
+        | "insert:callout"
+        | "insert:footnote"
+        | "insert:details"
+        | "insert:horizontal-rule";
+    }
+  | {
+      id: string;
+      label: string;
+      icon: ToolbarIcon;
+      kind: "asset";
+      assetKind: "image" | "video" | "audio" | "pdf";
+    };
+
+const selectionToolbarActions: SelectionToolbarAction[] = [
+  { id: "bold", label: "加粗", icon: Bold },
+  { id: "italic", label: "倾斜", icon: Italic },
+  { id: "underline", label: "下划线", icon: UnderlineIcon },
+  { id: "strike", label: "删除线", icon: Strikethrough },
+  { id: "subscript", label: "下标", icon: SubscriptIcon },
+  { id: "superscript", label: "上标", icon: SuperscriptIcon },
+  { id: "highlight", label: "高亮", icon: Highlighter },
+  { id: "link", label: "加链接", icon: Link2 }
+];
+
+const textColorOptions: TextColorOption[] = [
+  { label: "默认颜色", value: "#111827" },
+  { label: "红色", value: "#dc2626" },
+  { label: "橙色", value: "#ea580c" },
+  { label: "金色", value: "#ca8a04" },
+  { label: "绿色", value: "#16a34a" },
+  { label: "青色", value: "#0891b2" },
+  { label: "蓝色", value: "#2563eb" },
+  { label: "紫色", value: "#7c3aed" },
+  { label: "粉色", value: "#db2777" }
+];
+
+const selectionToolbarPresetColors = textColorOptions;
+const defaultTextColorValue = textColorOptions[0]?.value ?? "#111827";
+
+const insertToolbarActions: InsertToolbarAction[] = [
+  { id: "image", label: "插入图片", icon: ImageIcon, kind: "asset", assetKind: "image" },
+  { id: "video", label: "插入视频", icon: Film, kind: "asset", assetKind: "video" },
+  { id: "audio", label: "插入音频", icon: Music, kind: "asset", assetKind: "audio" },
+  { id: "pdf", label: "插入 PDF", icon: FileText, kind: "asset", assetKind: "pdf" },
+  { id: "chart", label: "插入 Mermaid 图表", icon: ChartNoAxesColumnIncreasing, kind: "command", command: "insert:chart" },
+  { id: "table", label: "插入表格", icon: Table2, kind: "command", command: "insert:table" },
+  { id: "bullet-list", label: "插入项目符号列表", icon: LayoutList, kind: "command", command: "format:bullet-list" },
+  { id: "ordered-list", label: "插入编号列表", icon: ListOrdered, kind: "command", command: "format:ordered-list" },
+  { id: "task-list", label: "插入任务列表", icon: ListTodo, kind: "command", command: "format:task-list" },
+  { id: "blockquote", label: "插入 Note", icon: TextQuote, kind: "command", command: "format:blockquote" },
+  { id: "callout", label: "插入 Callout", icon: MessageSquareQuote, kind: "command", command: "insert:callout" },
+  { id: "code", label: "插入代码块", icon: Code2, kind: "command", command: "format:code-block" },
+  { id: "footnote", label: "插入脚注", icon: Text, kind: "command", command: "insert:footnote" },
+  { id: "horizontal-rule", label: "插入水平分隔线", icon: Minus, kind: "command", command: "insert:horizontal-rule" }
+];
+
+type CommandPaletteScope = "system" | "document";
+
 type CommandPaletteItem = {
   id: string;
+  scope: CommandPaletteScope;
   title: string;
   subtitle?: string;
   shortcut?: string;
@@ -715,8 +1277,7 @@ type CommandPaletteItem = {
   run: () => void;
 };
 
-const escapeHtml = (value: string) =>
-  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const shortcutDisplayPlatform = navigator.platform.toLowerCase().includes("mac") ? "mac" : "windows";
 
 const fileUrl = (path: string) => `local-file://${encodeURI(path.replace(/\\/g, "/"))}`;
 
@@ -931,6 +1492,7 @@ const stringifyFrontmatter = (values: Record<string, unknown>) => {
 const composeMarkdownWithFrontmatter = (frontmatter: FrontmatterParseResult, body: string) =>
   frontmatter.hasFrontmatter ? `---\n${frontmatter.raw.trimEnd()}\n---\n${body.replace(/^\n+/, "")}` : body;
 
+const textExtensions = new Set(["md", "markdown", "txt"]);
 const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
 const pdfExtensions = new Set(["pdf"]);
 
@@ -944,6 +1506,19 @@ const isPdfFile = (path?: string) => {
   return pdfExtensions.has(path.split(".").pop()?.toLowerCase() ?? "");
 };
 
+const isWritableTextDocument = (document?: InformioDocument | null) => {
+  if (!document) return false;
+  if (!document.filePath) return true;
+  return textExtensions.has(document.filePath.split(".").pop()?.toLowerCase() ?? "");
+};
+
+const isMarkdownDocument = (document?: InformioDocument | null) => {
+  if (!document) return false;
+  if (!document.filePath) return true;
+  const extension = document.filePath.split(".").pop()?.toLowerCase() ?? "";
+  return extension === "md" || extension === "markdown";
+};
+
 const videoExtensions = new Set(["mp4", "mov", "webm"]);
 const audioExtensions = new Set(["mp3", "wav", "m4a", "ogg"]);
 const lowlight = createLowlight(common);
@@ -955,21 +1530,18 @@ lowlight.registerAlias({
   xml: ["html"]
 });
 
-const codeLanguageOptions = [
-  "plaintext",
-  "markdown",
-  "javascript",
-  "typescript",
-  "tsx",
-  "jsx",
-  "html",
-  "css",
-  "json",
-  "bash",
-  "python",
-  "sql",
-  "yaml"
-] as const;
+const codeLanguageAliases: Record<string, string> = {
+  text: "plaintext",
+  txt: "plaintext",
+  plain: "plaintext",
+  plaintext: "plaintext",
+  js: "javascript",
+  jsx: "jsx",
+  ts: "typescript",
+  py: "python",
+  sh: "bash",
+  yml: "yaml"
+};
 let mermaidInitialized = false;
 
 const isVideoFile = (path?: string) => {
@@ -1002,12 +1574,35 @@ type MarkdownTokenLike = {
   index?: string;
   kind?: string;
   src?: string;
+  base?: string;
+  script?: string;
 };
 
 type MarkdownHelperLike = {
   createTextNode: (text: string) => unknown;
   createNode: (name: string, attrs?: Record<string, unknown>, content?: unknown[]) => unknown;
 };
+
+type SecretKind = "inline" | "block";
+
+type EncryptedSecretAttrs = {
+  kind: SecretKind;
+  version: string;
+  salt: string;
+  iv: string;
+  iterations: number;
+  algorithm: string;
+  kdf: string;
+  cipherText: string;
+};
+
+type SecretDecryptRequest = {
+  pos: number;
+  kind: SecretKind;
+  attrs: EncryptedSecretAttrs;
+};
+
+const documentSecretPassphraseCache = new Map<string, string>();
 
 const plainText = (value: string) =>
   value
@@ -1034,18 +1629,178 @@ const defaultBlockSource = (name: string) => {
   return "> [!NOTE]\n> Important note";
 };
 
+const nodeSourceAttr = (node: { attrs?: Record<string, unknown> }, fallbackType: string) => {
+  const source = node.attrs?.source;
+  return typeof source === "string" ? source : defaultBlockSource(fallbackType);
+};
+
 const sourceText = (node: ReactNodeViewProps["node"]) => {
-  const attrs = node.attrs as { source?: string };
-  return node.textContent || attrs.source || defaultBlockSource(node.type.name);
+  return node.textContent !== "" ? node.textContent : nodeSourceAttr(node as { attrs?: { source?: string } }, node.type.name);
 };
 
 const jsonTextContent = (node?: JSONContent): string =>
   node?.text ?? node?.content?.map((child) => jsonTextContent(child)).join("") ?? "";
 
 const jsonSourceText = (node: JSONContent, fallbackType: string) =>
-  jsonTextContent(node) || (node.attrs as { source?: string } | undefined)?.source || defaultBlockSource(fallbackType);
+  jsonTextContent(node) !== ""
+    ? jsonTextContent(node)
+    : nodeSourceAttr(node as { attrs?: { source?: string } }, fallbackType);
 
 const sourceContent = (source: string, h: MarkdownHelperLike) => [h.createTextNode(source)];
+
+const bytesToBase64 = (bytes: Uint8Array) => {
+  let binary = "";
+  bytes.forEach((value) => {
+    binary += String.fromCharCode(value);
+  });
+  return window.btoa(binary);
+};
+
+const base64ToBytes = (value: string) => Uint8Array.from(window.atob(value), (char) => char.charCodeAt(0));
+const normalizeSecretBytes = (bytes: Uint8Array) => Uint8Array.from(bytes);
+
+const secretAttrsFromElement = (element: HTMLElement, kind: SecretKind): EncryptedSecretAttrs => ({
+  kind,
+  version: element.getAttribute("version") ?? "1",
+  salt: element.getAttribute("salt") ?? "",
+  iv: element.getAttribute("iv") ?? "",
+  iterations: Number.parseInt(element.getAttribute("iterations") ?? "", 10) || SECRET_ITERATIONS,
+  algorithm: element.getAttribute("algorithm") ?? SECRET_ALGORITHM,
+  kdf: element.getAttribute("kdf") ?? SECRET_KDF,
+  cipherText: (element.textContent ?? "").trim()
+});
+
+const secretAttrsAreValid = (attrs: Partial<EncryptedSecretAttrs> | null | undefined): attrs is EncryptedSecretAttrs =>
+  Boolean(
+    attrs
+    && (attrs.kind === "inline" || attrs.kind === "block")
+    && attrs.version === "1"
+    && typeof attrs.salt === "string"
+    && typeof attrs.iv === "string"
+    && typeof attrs.cipherText === "string"
+    && attrs.salt
+    && attrs.iv
+    && attrs.cipherText
+    && Number.isFinite(Number(attrs.iterations))
+    && Number(attrs.iterations) > 0
+    && attrs.algorithm === SECRET_ALGORITHM
+    && attrs.kdf === SECRET_KDF
+  );
+
+const renderSecretMarkdown = (attrs: EncryptedSecretAttrs) => {
+  const serialized = `<${INFORMIO_SECRET_TAG} kind="${attrs.kind}" version="${attrs.version}" salt="${attrs.salt}" iv="${attrs.iv}" iterations="${attrs.iterations}" algorithm="${attrs.algorithm}" kdf="${attrs.kdf}">${attrs.cipherText}</${INFORMIO_SECRET_TAG}>`;
+  return attrs.kind === "block" ? `\n${serialized}\n` : serialized;
+};
+
+const importSecretKeyMaterial = async (passphrase: string) =>
+  window.crypto.subtle.importKey("raw", new TextEncoder().encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+
+const deriveSecretKey = async (passphrase: string, salt: Uint8Array, iterations: number) =>
+  window.crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      hash: "SHA-256",
+      salt: normalizeSecretBytes(salt),
+      iterations
+    },
+    await importSecretKeyMaterial(passphrase),
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+
+const encryptSecretMarkdown = async (markdown: string, passphrase: string, kind: SecretKind): Promise<EncryptedSecretAttrs> => {
+  const salt = normalizeSecretBytes(window.crypto.getRandomValues(new Uint8Array(16)));
+  const iv = normalizeSecretBytes(window.crypto.getRandomValues(new Uint8Array(12)));
+  const key = await deriveSecretKey(passphrase, salt, SECRET_ITERATIONS);
+  const cipherBuffer = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(markdown));
+
+  return {
+    kind,
+    version: "1",
+    salt: bytesToBase64(salt),
+    iv: bytesToBase64(iv),
+    iterations: SECRET_ITERATIONS,
+    algorithm: SECRET_ALGORITHM,
+    kdf: SECRET_KDF,
+    cipherText: bytesToBase64(new Uint8Array(cipherBuffer))
+  };
+};
+
+const decryptSecretMarkdown = async (attrs: EncryptedSecretAttrs, passphrase: string) => {
+  const salt = normalizeSecretBytes(base64ToBytes(attrs.salt));
+  const iv = normalizeSecretBytes(base64ToBytes(attrs.iv));
+  const cipherText = normalizeSecretBytes(base64ToBytes(attrs.cipherText));
+  const key = await deriveSecretKey(passphrase, salt, attrs.iterations);
+  const plainBuffer = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipherText);
+  return new TextDecoder().decode(plainBuffer);
+};
+
+const serializeSelectionFragmentToMarkdown = (editor: Editor, from: number, to: number, kind: SecretKind) => {
+  const fragment = editor.state.doc.slice(from, to).content.toJSON() as JSONContent[];
+  if (!editor.markdown) return editor.state.doc.textBetween(from, to, "\n");
+  if (kind === "inline") {
+    return editor.markdown.serialize({
+      type: "doc",
+      content: [{ type: "paragraph", content: fragment }]
+    } as JSONContent);
+  }
+  return editor.markdown.serialize({ type: "doc", content: fragment } as JSONContent);
+};
+
+const parseInlineMarkdownContent = (editor: Editor, markdown: string): JSONContent[] => {
+  const parsed = editor.markdown?.parse(markdown);
+  if (!parsed?.content?.length) return [{ type: "text", text: markdown }];
+  const first = parsed.content[0];
+  if (first.type === "paragraph" && first.content?.length) return first.content;
+  return [{ type: "text", text: markdown }];
+};
+
+const selectionShouldUseBlockSecret = (editor: Editor) => {
+  const { selection } = editor.state;
+  if (selection.empty) return false;
+  if (!selection.$from.sameParent(selection.$to)) return true;
+  if (!selection.$from.parent.isTextblock) return true;
+  return selection.from <= selection.$from.start() && selection.to >= selection.$to.end();
+};
+
+const selectionContainsSecretNode = (editor: Editor, from: number, to: number) => {
+  let containsSecret = false;
+  editor.state.doc.nodesBetween(from, to, (node) => {
+    if (node.type.name === "encryptedInline" || node.type.name === "encryptedBlock") {
+      containsSecret = true;
+      return false;
+    }
+    return true;
+  });
+  return containsSecret;
+};
+
+const findFirstValidSecretInDocument = (editor: Editor) => {
+  let found: EncryptedSecretAttrs | null = null;
+  editor.state.doc.descendants((node) => {
+    if (node.type.name !== "encryptedInline" && node.type.name !== "encryptedBlock") return true;
+    const attrs = node.attrs as Partial<EncryptedSecretAttrs>;
+    if (secretAttrsAreValid(attrs)) {
+      found = attrs;
+      return false;
+    }
+    return true;
+  });
+  return found;
+};
+
+const documentContainsSecretNode = (editor: Editor) => {
+  let containsSecret = false;
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === "encryptedInline" || node.type.name === "encryptedBlock") {
+      containsSecret = true;
+      return false;
+    }
+    return true;
+  });
+  return containsSecret;
+};
 
 const mathTextFromSource = (source: string) => {
   const trimmed = source.trim();
@@ -1054,6 +1809,12 @@ const mathTextFromSource = (source: string) => {
     trimmed.match(/^\$(?!\$)([^\n$]+?)\$(?!\$)/);
   return (match?.[1] ?? source).trim();
 };
+
+const INLINE_MATH_BOUNDARY = String.raw`(?=$|[\s,.;:!?，。；：！？、)\]）】」』》])`;
+const INLINE_MATH_TOKEN_REGEX = new RegExp(String.raw`^\$(?!\$)([^\n$]+?)\$(?!\$)` + INLINE_MATH_BOUNDARY);
+const INLINE_MATH_AUTO_REGEX = new RegExp(String.raw`(^|[^\$])\$([^\n$]+?)\$(?!\$)` + INLINE_MATH_BOUNDARY, "g");
+const INLINE_MATH_INPUT_WITH_PUNCTUATION_REGEX = /(^|[^\$])\$([^\n$]+?)\$([,.;:!?，。；：！？、)\]）】」』》])$/;
+const isSkippableInlineMathContent = (content: string) => !content || /^\d+(?:\.\d+)?$/.test(content);
 
 const chartTextFromSource = (source: string) => {
   const match = source.trim().match(/^```mermaid[^\n]*\n([\s\S]*?)\n```$/);
@@ -1103,9 +1864,17 @@ const hastToHtml = (node: LowlightNode): string => {
   return `<${tag}${className}>${(node.children ?? []).map(hastToHtml).join("")}</${tag}>`;
 };
 
+const normalizeCodeLanguage = (value: string) => {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return "plaintext";
+  return codeLanguageAliases[normalized] ?? normalized;
+};
+
 const highlightedCodeHtml = (language: string, code: string) => {
+  const normalizedLanguage = normalizeCodeLanguage(language);
+  if (normalizedLanguage === "plaintext") return escapeHtml(code);
   try {
-    const tree = language && language !== "plaintext" ? lowlight.highlight(language, code) : lowlight.highlightAuto(code);
+    const tree = lowlight.highlight(normalizedLanguage, code);
     return tree.children.map((child) => hastToHtml(child as LowlightNode)).join("");
   } catch {
     return escapeHtml(code);
@@ -1163,11 +1932,13 @@ const markdownOffsetForLine = (markdown: string, line: number) => {
 };
 
 function CodeBlockView({ editor, getPos, node, selected, updateAttributes }: ReactNodeViewProps) {
-  const language = String(node.attrs.language || "plaintext");
-  const active = useNodeLivePreviewState(editor, getPos, node, selected);
+  const language = normalizeCodeLanguage(String(node.attrs.language || "plaintext"));
+  const [languageFocused, setLanguageFocused] = useState(false);
+  const sourceActive = useNodeLivePreviewState(editor, getPos, node, selected);
+  const active = sourceActive || languageFocused;
   const previewHtml = highlightedCodeHtml(language, node.textContent);
-  const updateLanguageFromFence = (value: string) => {
-    const nextLanguage = value.replace(/^```/, "").trim() || "plaintext";
+  const updateLanguage = (value: string) => {
+    const nextLanguage = normalizeCodeLanguage(value);
     if (nextLanguage !== language) updateAttributes({ language: nextLanguage });
   };
 
@@ -1181,14 +1952,35 @@ function CodeBlockView({ editor, getPos, node, selected, updateAttributes }: Rea
       }}
     >
       <div className={cn("informio-code-source", !active && "is-hidden-source-content")}>
-        <div
-          className="informio-source-fence"
-          contentEditable={active}
-          suppressContentEditableWarning
-          onInput={(event) => updateLanguageFromFence(event.currentTarget.textContent ?? "")}
-          onBlur={(event) => updateLanguageFromFence(event.currentTarget.textContent ?? "")}
-        >
-          {`${"```"}${language === "plaintext" ? "" : language}`}
+        <div className="informio-source-fence informio-source-fence-header" contentEditable={false}>
+          <span aria-hidden="true">```</span>
+          <input
+            type="text"
+            value={language === "plaintext" ? "" : language}
+            contentEditable={false}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            placeholder="text / python / ts"
+            className="informio-code-language-input"
+            onMouseDown={(event) => {
+              event.stopPropagation();
+              setLanguageFocused(true);
+            }}
+            onFocus={() => setLanguageFocused(true)}
+            onBlur={(event) => {
+              setLanguageFocused(false);
+              updateLanguage(event.currentTarget.value);
+            }}
+            onChange={(event) => updateLanguage(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Enter") {
+                event.preventDefault();
+                focusNodeSource(editor, getPos);
+              }
+            }}
+          />
         </div>
         <NodeViewContent as={"pre" as "div"} className="informio-code-source-content" />
         <div className="informio-source-fence">```</div>
@@ -1213,9 +2005,16 @@ function MathPreview({ source }: { source: string }) {
 
 function MathInlineView({ editor, getPos, node, selected, updateAttributes }: ReactNodeViewProps) {
   const active = useNodeLivePreviewState(editor, getPos, node, selected);
-  const source = sourceText(node) || String((node.attrs as { source?: string }).source || "$x$");
+  const source = sourceText(node);
   const formula = mathTextFromSource(source);
   const moveOutAtSourceEdge = (event: ReactKeyboardEvent) => {
+    if (event.key === "Enter") {
+      const position = getPos();
+      if (typeof position !== "number") return;
+      event.preventDefault();
+      editor.chain().focus().setTextSelection(position + node.nodeSize).run();
+      return;
+    }
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     const selection = window.getSelection();
     if (!selection || !selection.isCollapsed) return;
@@ -1335,6 +2134,7 @@ function StructuredBlockPreview({ name, source }: { name: string; source: string
 
 function EditableSourceBlockView({ editor, getPos, node, selected, updateAttributes }: ReactNodeViewProps) {
   const focusKey = (node.attrs as { focusKey?: string }).focusKey;
+  const savedSource = (node.attrs as { source?: string }).source;
   const active = useNodeLivePreviewState(editor, getPos, node, selected);
   const source = sourceText(node);
 
@@ -1343,6 +2143,22 @@ function EditableSourceBlockView({ editor, getPos, node, selected, updateAttribu
       window.setTimeout(() => focusNodeSource(editor, getPos), 0);
     }
   }, [editor, focusKey, getPos]);
+
+  useEffect(() => {
+    const nextSource = node.textContent;
+    if (nextSource === "") {
+      const position = getPos();
+      if (typeof position !== "number") return;
+      const paragraph = editor.schema.nodes.paragraph?.create();
+      if (!paragraph) return;
+      const tr = editor.state.tr.replaceWith(position, position + node.nodeSize, paragraph);
+      tr.setSelection(TextSelection.create(tr.doc, Math.min(position + 1, tr.doc.content.size)));
+      editor.view.dispatch(tr);
+      return;
+    }
+    if (savedSource === nextSource && !focusKey) return;
+    updateAttributes({ source: nextSource, focusKey: "" });
+  }, [editor, focusKey, getPos, node.nodeSize, node.textContent, savedSource, updateAttributes]);
 
   return (
     <NodeViewWrapper
@@ -1366,6 +2182,223 @@ function EditableSourceBlockView({ editor, getPos, node, selected, updateAttribu
 const editableSourceAttributes = () => ({
   source: { default: "" },
   focusKey: { default: "" }
+});
+
+type EncryptedTextOptions = {
+  onRequestDecrypt: (request: SecretDecryptRequest) => void;
+};
+
+const selectEncryptedNode = (editor: Editor, getPos: NodeViewPositionGetter) => {
+  const position = getPos();
+  if (typeof position !== "number") return;
+  editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, position)));
+  editor.commands.focus();
+};
+
+function EncryptedInlineView({ editor, getPos, node, selected, extension }: ReactNodeViewProps) {
+  const attrs = node.attrs as Partial<EncryptedSecretAttrs>;
+  const valid = secretAttrsAreValid(attrs);
+  const options = extension.options as EncryptedTextOptions;
+
+  return (
+    <NodeViewWrapper
+      as="span"
+      className={cn("informio-secret-inline", selected && "is-selected", !valid && "is-invalid")}
+      contentEditable={false}
+      aria-label={valid ? "已加密内容" : "加密内容损坏"}
+      onMouseDown={(event: ReactMouseEvent) => {
+        event.preventDefault();
+        selectEncryptedNode(editor, getPos);
+      }}
+      onClick={() => {
+        if (!valid) return;
+        const position = getPos();
+        if (typeof position !== "number") return;
+        options.onRequestDecrypt({ pos: position, kind: "inline", attrs });
+      }}
+    >
+      <span className="informio-secret-mask" aria-hidden="true" />
+      {!valid ? <span className="informio-secret-label">损坏</span> : null}
+      {!valid ? <span className="informio-secret-status">请检查源码标签</span> : null}
+    </NodeViewWrapper>
+  );
+}
+
+function EncryptedBlockView({ editor, getPos, node, selected, extension }: ReactNodeViewProps) {
+  const attrs = node.attrs as Partial<EncryptedSecretAttrs>;
+  const valid = secretAttrsAreValid(attrs);
+  const options = extension.options as EncryptedTextOptions;
+
+  return (
+    <NodeViewWrapper
+      className={cn("informio-secret-block", selected && "is-selected", !valid && "is-invalid")}
+      contentEditable={false}
+      aria-label={valid ? "已加密内容" : "加密内容损坏"}
+      onMouseDown={(event: ReactMouseEvent) => {
+        event.preventDefault();
+        selectEncryptedNode(editor, getPos);
+      }}
+      onClick={() => {
+        if (!valid) return;
+        const position = getPos();
+        if (typeof position !== "number") return;
+        options.onRequestDecrypt({ pos: position, kind: "block", attrs });
+      }}
+    >
+      <div className="informio-secret-block-body" aria-hidden="true">
+        <div className="informio-secret-mask is-wide" />
+      </div>
+      {!valid ? <div className="informio-secret-status">标签缺失必要字段，无法安全解密</div> : null}
+    </NodeViewWrapper>
+  );
+}
+
+const EncryptedInline = Node.create<EncryptedTextOptions>({
+  name: "encryptedInline",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  addOptions() {
+    return {
+      onRequestDecrypt: () => undefined
+    };
+  },
+  addAttributes() {
+    return {
+      kind: {
+        default: "inline",
+        parseHTML: () => "inline"
+      },
+      version: {
+        default: "1",
+        parseHTML: (element) => element.getAttribute("version") ?? "1"
+      },
+      salt: {
+        default: "",
+        parseHTML: (element) => element.getAttribute("salt") ?? ""
+      },
+      iv: {
+        default: "",
+        parseHTML: (element) => element.getAttribute("iv") ?? ""
+      },
+      iterations: {
+        default: SECRET_ITERATIONS,
+        parseHTML: (element) => Number.parseInt(element.getAttribute("iterations") ?? "", 10) || SECRET_ITERATIONS
+      },
+      algorithm: {
+        default: SECRET_ALGORITHM,
+        parseHTML: (element) => element.getAttribute("algorithm") ?? SECRET_ALGORITHM
+      },
+      kdf: {
+        default: SECRET_KDF,
+        parseHTML: (element) => element.getAttribute("kdf") ?? SECRET_KDF
+      },
+      cipherText: {
+        default: "",
+        parseHTML: (element) => (element.textContent ?? "").trim()
+      }
+    };
+  },
+  parseHTML() {
+    return [{ tag: `${INFORMIO_SECRET_TAG}[kind="inline"]` }];
+  },
+  renderHTML({ HTMLAttributes, node }) {
+    const attrs = node.attrs as EncryptedSecretAttrs;
+    return [
+      INFORMIO_SECRET_TAG,
+      mergeAttributes(HTMLAttributes, {
+        kind: "inline",
+        version: attrs.version,
+        salt: attrs.salt,
+        iv: attrs.iv,
+        iterations: String(attrs.iterations),
+        algorithm: attrs.algorithm,
+        kdf: attrs.kdf
+      }),
+      attrs.cipherText
+    ];
+  },
+  renderMarkdown(node) {
+    return renderSecretMarkdown(node.attrs as EncryptedSecretAttrs);
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(EncryptedInlineView);
+  }
+});
+
+const EncryptedBlock = Node.create<EncryptedTextOptions>({
+  name: "encryptedBlock",
+  group: "block",
+  atom: true,
+  selectable: true,
+  defining: true,
+  addOptions() {
+    return {
+      onRequestDecrypt: () => undefined
+    };
+  },
+  addAttributes() {
+    return {
+      kind: {
+        default: "block",
+        parseHTML: () => "block"
+      },
+      version: {
+        default: "1",
+        parseHTML: (element) => element.getAttribute("version") ?? "1"
+      },
+      salt: {
+        default: "",
+        parseHTML: (element) => element.getAttribute("salt") ?? ""
+      },
+      iv: {
+        default: "",
+        parseHTML: (element) => element.getAttribute("iv") ?? ""
+      },
+      iterations: {
+        default: SECRET_ITERATIONS,
+        parseHTML: (element) => Number.parseInt(element.getAttribute("iterations") ?? "", 10) || SECRET_ITERATIONS
+      },
+      algorithm: {
+        default: SECRET_ALGORITHM,
+        parseHTML: (element) => element.getAttribute("algorithm") ?? SECRET_ALGORITHM
+      },
+      kdf: {
+        default: SECRET_KDF,
+        parseHTML: (element) => element.getAttribute("kdf") ?? SECRET_KDF
+      },
+      cipherText: {
+        default: "",
+        parseHTML: (element) => (element.textContent ?? "").trim()
+      }
+    };
+  },
+  parseHTML() {
+    return [{ tag: `${INFORMIO_SECRET_TAG}[kind="block"]` }];
+  },
+  renderHTML({ HTMLAttributes, node }) {
+    const attrs = node.attrs as EncryptedSecretAttrs;
+    return [
+      INFORMIO_SECRET_TAG,
+      mergeAttributes(HTMLAttributes, {
+        kind: "block",
+        version: attrs.version,
+        salt: attrs.salt,
+        iv: attrs.iv,
+        iterations: String(attrs.iterations),
+        algorithm: attrs.algorithm,
+        kdf: attrs.kdf
+      }),
+      attrs.cipherText
+    ];
+  },
+  renderMarkdown(node) {
+    return renderSecretMarkdown(node.attrs as EncryptedSecretAttrs);
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(EncryptedBlockView);
+  }
 });
 
 const InformioCodeBlock = CodeBlockLowlight.extend({
@@ -1474,6 +2507,249 @@ const WikiLink = Node.create<WikiLinkOptions>({
   }
 } as never);
 
+const TextColor = Mark.create({
+  name: "textColor",
+  priority: 1000,
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        parseHTML: (element: HTMLElement) => {
+          if (!(element instanceof HTMLElement)) return null;
+          return element.getAttribute("data-text-color") || element.style.color || null;
+        },
+        renderHTML: (attributes: Record<string, unknown>) => {
+          const color = typeof attributes.color === "string" ? attributes.color.trim() : "";
+          return color ? { "data-text-color": color, style: `color: ${color}` } : {};
+        }
+      }
+    };
+  },
+  parseHTML() {
+    return [
+      {
+        tag: "span[data-text-color]",
+        getAttrs: (element: string | HTMLElement) => {
+          if (!(element instanceof HTMLElement)) return false;
+          const color = element.getAttribute("data-text-color") || element.style.color;
+          return color ? { color } : false;
+        }
+      },
+      {
+        style: "color",
+        getAttrs: (value: string) => {
+          if (typeof value !== "string" || !value.trim()) return false;
+          return { color: value };
+        }
+      }
+    ];
+  },
+  renderHTML({ HTMLAttributes }: { HTMLAttributes: Record<string, unknown> }) {
+    return ["span", mergeAttributes(HTMLAttributes), 0];
+  },
+  renderMarkdown(node: JSONContent, helpers: MarkdownRendererHelpers) {
+    const color = typeof node.attrs?.color === "string" ? node.attrs.color.trim() : "";
+    const content = helpers.renderChildren(node.content ?? []);
+    if (!color) return content;
+    const escapedColor = escapeHtml(color);
+    return `<span data-text-color="${escapedColor}" style="color: ${escapedColor}">${content}</span>`;
+  }
+} as never);
+
+const UnderlineMark = UnderlineExtension.extend({
+  addInputRules() {
+    return [
+      new InputRule({
+        find: /\+\+([^+\n](?:[\s\S]*?[^+\n])?)\+\+$/,
+        handler: ({ match, range, chain }) => {
+          const text = match[1] ?? "";
+          if (!text) return;
+          chain()
+            .deleteRange(range)
+            .insertContent({
+              type: "text",
+              text,
+              marks: [{ type: "underline" }]
+            })
+            .run();
+        }
+      })
+    ];
+  }
+} as never);
+
+const MarkdownLink = Link.extend({
+  addInputRules() {
+    return [
+      new InputRule({
+        find: /(^|[^!])\[([^\]\n]+)\]\((\S+?)(?:\s+["'][^"'\n]*["'])?\)$/,
+        handler: ({ match, range, chain }) => {
+          const prefix = match[1] ?? "";
+          const text = match[2]?.trim() ?? "";
+          const href = match[3]?.trim() ?? "";
+          if (!text || !href) return;
+          const from = range.from + prefix.length;
+          chain()
+            .deleteRange({ from, to: range.to })
+            .insertContentAt(from, {
+              type: "text",
+              text,
+              marks: [{ type: "link", attrs: { href } }]
+            })
+            .setTextSelection(from + text.length)
+            .run();
+        }
+      })
+    ];
+  }
+} as never);
+
+const InlineCodeTyping = Extension.create({
+  name: "inlineCodeTyping",
+  addInputRules() {
+    return [
+      new InputRule({
+        find: /(^|[^`])`([^`\n]+)`$/,
+        handler: ({ match, range, chain }) => {
+          const prefix = match[1] ?? "";
+          const text = match[2] ?? "";
+          if (!text) return;
+          const from = range.from + prefix.length;
+          chain()
+            .deleteRange({ from, to: range.to })
+            .insertContentAt(from, { type: "text", text, marks: [{ type: "code" }] })
+            .setTextSelection(from + text.length)
+            .run();
+        }
+      })
+    ];
+  }
+});
+
+const scriptBasePattern = "([A-Za-z0-9)\\]])";
+const scriptValuePattern = "(\\{[^{}\\n]+\\}|\\([^()\\n]+\\)|(?:\\d+|[A-Za-z])(?![A-Za-z0-9]))";
+
+const scriptSyntaxRegex = (marker: "^" | "_", anchored: boolean) => {
+  const escapedMarker = marker === "^" ? "\\^" : "_";
+  return new RegExp(`${anchored ? "^" : ""}${scriptBasePattern}${escapedMarker}${scriptValuePattern}${anchored ? "" : ""}`);
+};
+
+const unwrapScriptValue = (value: string) => {
+  if (
+    (value.startsWith("{") && value.endsWith("}"))
+    || (value.startsWith("(") && value.endsWith(")"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+};
+
+const renderScriptMarkdown = (marker: "^" | "_", value: string) => {
+  const plainValue = value.replace(/\n+/g, " ").trim();
+  if (!plainValue) return "";
+  if (/^\d+$/.test(plainValue) || /^[A-Za-z]$/.test(plainValue)) {
+    return `${marker}${plainValue}`;
+  }
+  return `${marker}{${plainValue}}`;
+};
+
+const extractPlainScriptText = (content: JSONContent[] | undefined) => {
+  if (!content?.length) return "";
+  const plainSegments: string[] = [];
+  for (const child of content) {
+    if (child.type !== "text" || child.marks?.length) return null;
+    plainSegments.push(child.text ?? "");
+  }
+  return plainSegments.join("");
+};
+
+const createScriptExtension = (
+  extension: typeof SubscriptExtension | typeof SuperscriptExtension,
+  options: {
+    name: "subscript" | "superscript";
+    marker: "_" | "^";
+    htmlTag: "sub" | "sup";
+  }
+) =>
+  extension.extend({
+    markdownTokenName: `${options.name}Syntax`,
+    markdownOptions: {
+      htmlReopen: {
+        open: `<${options.htmlTag}>`,
+        close: `</${options.htmlTag}>`
+      }
+    },
+    markdownTokenizer: {
+      name: `${options.name}Syntax`,
+      level: "inline",
+      start(src: string) {
+        return src.match(scriptSyntaxRegex(options.marker, false))?.index ?? -1;
+      },
+      tokenize(src: string) {
+        const match = src.match(scriptSyntaxRegex(options.marker, true));
+        if (!match) return undefined;
+        return {
+          type: `${options.name}Syntax`,
+          raw: match[0],
+          base: match[1],
+          script: unwrapScriptValue(match[2])
+        };
+      }
+    },
+    parseMarkdown(token: MarkdownTokenLike, helpers: MarkdownParseHelpers) {
+      const base = token.base ?? "";
+      const script = token.script ?? "";
+      if (!script) {
+        return helpers.createTextNode(token.raw ?? "");
+      }
+      return [
+        ...(base ? [helpers.createTextNode(base)] : []),
+        helpers.createTextNode(script, [{ type: options.name }])
+      ];
+    },
+    renderMarkdown(node: JSONContent, helpers: MarkdownRendererHelpers) {
+      const plainText = extractPlainScriptText(node.content);
+      if (plainText !== null) {
+        return renderScriptMarkdown(options.marker, plainText);
+      }
+      return `<${options.htmlTag}>${helpers.renderChildren(node.content ?? [])}</${options.htmlTag}>`;
+    },
+    addInputRules() {
+      return [
+        new InputRule({
+          find: new RegExp(`${scriptBasePattern}${options.marker === "^" ? "\\^" : "_"}${scriptValuePattern}$`),
+          handler: ({ match, range, chain }) => {
+            const base = match[1] ?? "";
+            const script = unwrapScriptValue(match[2] ?? "");
+            if (!base || !script) return;
+            const from = range.from + base.length;
+            chain()
+              .deleteRange({ from, to: range.to })
+              .insertContentAt(from, {
+                type: "text",
+                text: script,
+                marks: [{ type: options.name }]
+              })
+              .setTextSelection(from + script.length)
+              .run();
+          }
+        })
+      ];
+    }
+  } as never);
+
+const SubscriptMark = createScriptExtension(SubscriptExtension, {
+  name: "subscript",
+  marker: "_",
+  htmlTag: "sub"
+});
+
+const SuperscriptMark = createScriptExtension(SuperscriptExtension, {
+  name: "superscript",
+  marker: "^",
+  htmlTag: "sup"
+});
+
 const MathInline = Node.create({
   name: "mathInline",
   group: "inline",
@@ -1491,7 +2767,7 @@ const MathInline = Node.create({
       return match ? match.index + match[1].length : -1;
     },
     tokenize(src: string) {
-      const match = src.match(/^\$(?!\$)([^\n$]+?)\$(?!\$)/);
+      const match = src.match(INLINE_MATH_TOKEN_REGEX);
       if (!match) return undefined;
       return { type: "mathInline", raw: match[0], text: match[1].trim() };
     }
@@ -1507,27 +2783,50 @@ const MathInline = Node.create({
     return [
       "span",
       mergeAttributes(HTMLAttributes, { "data-type": "math-inline", class: "informio-math-inline" }),
-      mathTextFromSource(node.textContent || node.attrs.source)
+      mathTextFromSource(node.textContent !== "" ? (node.textContent ?? "") : nodeSourceAttr(node, "mathInline"))
     ];
   },
   renderMarkdown(node: { attrs?: { source?: string } }) {
     return jsonSourceText(node as JSONContent, "mathInline");
   },
   addInputRules() {
+    const applyInlineMath = ({
+      match,
+      range,
+      chain,
+      trailingText = ""
+    }: {
+      match: RegExpMatchArray;
+      range: { from: number; to: number };
+      chain: () => ReturnType<Editor["chain"]>;
+      trailingText?: string;
+    }) => {
+      const prefix = match[1] ?? "";
+      const content = match[2]?.trim() ?? "";
+      if (isSkippableInlineMathContent(content)) return;
+      const source = `$${match[2]}$`;
+      const from = range.from + prefix.length;
+      const insertion = trailingText
+        ? [{ type: "mathInline", attrs: { source }, content: [{ type: "text", text: source }] }, { type: "text", text: trailingText }]
+        : { type: "mathInline", attrs: { source }, content: [{ type: "text", text: source }] };
+      chain()
+        .deleteRange({ from, to: range.to })
+        .insertContent(insertion as never)
+        .setTextSelection(from + source.length + 2 + trailingText.length)
+        .run();
+    };
+
     return [
       new InputRule({
         find: /(^|[^\$])\$([^\n$]+?)\$$/,
         handler: ({ match, range, chain }) => {
-          const prefix = match[1] ?? "";
-          const content = match[2]?.trim() ?? "";
-          if (!content || /^\d+(?:\.\d+)?$/.test(content)) return;
-          const source = `$${match[2]}$`;
-          const from = range.from + prefix.length;
-          chain()
-            .deleteRange({ from, to: range.to })
-            .insertContent({ type: "mathInline", attrs: { source }, content: [{ type: "text", text: source }] })
-            .setTextSelection(from + 1 + source.length)
-            .run();
+          applyInlineMath({ match, range, chain });
+        }
+      }),
+      new InputRule({
+        find: INLINE_MATH_INPUT_WITH_PUNCTUATION_REGEX,
+        handler: ({ match, range, chain }) => {
+          applyInlineMath({ match, range, chain, trailingText: match[3] ?? "" });
         }
       })
     ];
@@ -1567,7 +2866,7 @@ const MathBlock = Node.create({
     return [{ tag: 'div[data-type="math-block"]' }];
   },
   renderHTML({ HTMLAttributes, node }: { HTMLAttributes: Record<string, unknown>; node: { attrs: { text: string }; textContent?: string } }) {
-    const source = node.textContent || (node.attrs as { source?: string }).source || defaultBlockSource("mathBlock");
+    const source = node.textContent !== "" ? (node.textContent ?? "") : nodeSourceAttr(node, "mathBlock");
     return [
       "div",
       mergeAttributes(HTMLAttributes, { "data-type": "math-block", class: "informio-math-block" }),
@@ -1628,7 +2927,7 @@ const ChartBlock = Node.create({
     return [{ tag: 'div[data-type="chart-block"]' }];
   },
   renderHTML({ HTMLAttributes, node }: { HTMLAttributes: Record<string, unknown>; node: { attrs: { text: string }; textContent?: string } }) {
-    const source = node.textContent || (node.attrs as { source?: string }).source || defaultBlockSource("chartBlock");
+    const source = node.textContent !== "" ? (node.textContent ?? "") : nodeSourceAttr(node, "chartBlock");
     const diagram = chartTextFromSource(source);
     const labels = chartLabels(diagram);
     const flow =
@@ -1702,12 +3001,16 @@ const MediaBlock = Node.create({
     node: { attrs: { kind: string; src: string; title: string } };
   }) {
     const kind = node.attrs.kind === "audio" ? "audio" : "video";
+    const wrapperClassName = `informio-media-block is-${kind}`;
+    const captionClassName = `informio-media-caption is-${kind}`;
+    const mediaClassName = `informio-media is-${kind}`;
+    const title = node.attrs.title || "Media";
 
     return [
       "figure",
-      mergeAttributes(HTMLAttributes, { "data-type": "media-block", class: "informio-media-block" }),
-      [kind, { controls: "", src: node.attrs.src || "", class: "informio-media" }],
-      ["figcaption", {}, node.attrs.title || "Media"]
+      mergeAttributes(HTMLAttributes, { "data-type": "media-block", class: wrapperClassName }),
+      [kind, { controls: "", src: node.attrs.src || "", class: mediaClassName }],
+      ["figcaption", { class: captionClassName }, title]
     ];
   },
   addNodeView() {
@@ -1715,18 +3018,24 @@ const MediaBlock = Node.create({
       const kind = node.attrs.kind === "audio" ? "audio" : "video";
       const wrapper = document.createElement("figure");
       wrapper.setAttribute("data-type", "media-block");
-      wrapper.className = "informio-media-block";
+      wrapper.className = `informio-media-block is-${kind}`;
       wrapper.contentEditable = "false";
+
+      const title = node.attrs.title || "Media";
+      const appendCaption = () => {
+        const caption = document.createElement("figcaption");
+        caption.className = `informio-media-caption is-${kind}`;
+        caption.textContent = title;
+        wrapper.appendChild(caption);
+      };
 
       const media = document.createElement(kind);
       media.setAttribute("controls", "");
       media.setAttribute("src", node.attrs.src || "");
-      media.className = "informio-media";
+      media.className = `informio-media is-${kind}`;
       wrapper.appendChild(media);
 
-      const caption = document.createElement("figcaption");
-      caption.textContent = node.attrs.title || "Media";
-      wrapper.appendChild(caption);
+      appendCaption();
 
       return { dom: wrapper };
     };
@@ -1738,592 +3047,6 @@ const MediaBlock = Node.create({
     return `\n<${kind} controls src="${src}" title="${title}"></${kind}>\n`;
   }
 } as never);
-
-type PdfSelectionState = PdfAnnotationSelection & {
-  left: number;
-  top: number;
-};
-
-type PdfEditorContextValue = {
-  document: InformioDocument;
-  settings: AppSettings;
-  markdownTarget: PdfMarkdownTarget | null;
-  focusAnnotationId: string | null;
-  toolbarEnabled: boolean;
-  toolbarTranslate: ToolbarTranslateState;
-  onPdfSelection: (selection: PdfSelectionState | null) => void;
-  onTranslateSelection: (selection: AgentSelection) => void;
-  onClearToolbarTranslate: () => void;
-  onRegisterPdfAnnotation: (annotation: PdfAnnotation) => void;
-  onDeletePdfAnnotation: (annotationId: string) => void;
-  onInsertPdfBacklink: (annotation: PdfAnnotation) => void;
-  onOpenMarkdownTarget: (target: PdfMarkdownTarget) => void;
-};
-
-type PdfAnnotationMenuState = {
-  annotation: PdfAnnotation;
-  left: number;
-  top: number;
-};
-
-const pdfAnnotationColors = ["#fde047", "#86efac", "#93c5fd", "#f9a8d4", "#fdba74"];
-
-const PdfEditorContext = createContext<PdfEditorContextValue | null>(null);
-
-const usePdfEditorContext = () => useContext(PdfEditorContext);
-
-const fingerprintForPdf = (pdf: PDFDocumentProxy | null, fallback: string) => {
-  const fingerprints = (pdf as (PDFDocumentProxy & { fingerprints?: string[] }) | null)?.fingerprints;
-  return fingerprints?.[0] || fallback;
-};
-
-const rectStyle = (rect: PdfAnnotationRect): React.CSSProperties => ({
-  left: `${rect.x * 100}%`,
-  top: `${rect.y * 100}%`,
-  width: `${rect.width * 100}%`,
-  height: `${rect.height * 100}%`
-});
-
-function PdfPageCanvas({
-  pdf,
-  pageNumber,
-  frameWidth,
-  zoom,
-  annotations
-}: {
-  pdf: PDFDocumentProxy;
-  pageNumber: number;
-  frameWidth: number;
-  zoom: number;
-  annotations: PdfAnnotation[];
-}) {
-  const pdfContext = usePdfEditorContext();
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const textLayerRef = useRef<HTMLDivElement | null>(null);
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const renderTaskRef = useRef<RenderTask | null>(null);
-  const textLayerTaskRef = useRef<{ cancel: () => void } | null>(null);
-  const [rendered, setRendered] = useState(false);
-  const [pdfPage, setPdfPage] = useState<PDFPageProxy | null>(null);
-  const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!rendered) return;
-    let cancelled = false;
-    setPdfPage(null);
-    setError(null);
-    pdf
-      .getPage(pageNumber)
-      .then((page) => {
-        if (!cancelled) setPdfPage(page);
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [pdf, pageNumber, rendered]);
-
-  useEffect(() => {
-    const el = wrapperRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) setRendered(true);
-      },
-      { rootMargin: "640px 0px" }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!rendered || !pdfPage || !canvasRef.current) return;
-    let cancelled = false;
-    const canvas = canvasRef.current;
-    const textLayer = textLayerRef.current;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-
-    renderTaskRef.current?.cancel();
-    renderTaskRef.current = null;
-    textLayerTaskRef.current?.cancel();
-    textLayerTaskRef.current = null;
-    if (textLayer) textLayer.replaceChildren();
-    setError(null);
-
-    const baseViewport = pdfPage.getViewport({ scale: 1 });
-    const fitScale = frameWidth ? clamp((frameWidth - 32) / baseViewport.width, 0.35, 3) : 1;
-    const targetScale = clamp(fitScale * zoom, 0.35, 4);
-    const viewport = pdfPage.getViewport({ scale: targetScale });
-    const outputScale = window.devicePixelRatio || 1;
-
-    canvas.width = Math.floor(viewport.width * outputScale);
-    canvas.height = Math.floor(viewport.height * outputScale);
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-    setPageSize({ width: viewport.width, height: viewport.height });
-    context.clearRect(0, 0, canvas.width, canvas.height);
-
-    const task = pdfPage.render({
-      canvas,
-      canvasContext: context,
-      viewport,
-      transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0]
-    });
-    renderTaskRef.current = task;
-    if (textLayer) {
-      textLayer.style.width = `${viewport.width}px`;
-      textLayer.style.height = `${viewport.height}px`;
-      const TextLayer = (pdfjsLib as typeof pdfjsLib & {
-        TextLayer: new (options: { textContentSource: ReadableStream | Awaited<ReturnType<PDFPageProxy["getTextContent"]>>; container: HTMLElement; viewport: ReturnType<PDFPageProxy["getViewport"]> }) => {
-          render: () => Promise<unknown>;
-          cancel: () => void;
-        };
-      }).TextLayer;
-      const layer = new TextLayer({
-        textContentSource: pdfPage.streamTextContent(),
-        container: textLayer,
-        viewport
-      });
-      textLayerTaskRef.current = layer;
-      void layer.render().catch((reason: unknown) => {
-        if (!cancelled && !(reason instanceof Error && reason.name === "AbortException")) {
-          setError(reason instanceof Error ? reason.message : String(reason));
-        }
-      });
-    }
-    task.promise
-      .catch((reason: unknown) => {
-        if (!cancelled && !(reason instanceof Error && reason.name === "RenderingCancelledException")) {
-          setError(reason instanceof Error ? reason.message : String(reason));
-        }
-      })
-      .finally(() => {
-        if (renderTaskRef.current === task) renderTaskRef.current = null;
-      });
-
-    return () => {
-      cancelled = true;
-      try {
-        renderTaskRef.current?.cancel();
-        textLayerTaskRef.current?.cancel();
-      } catch {
-        // PDF.js may already have completed or cancelled the task while switching documents.
-      }
-    };
-  }, [frameWidth, pdfPage, rendered, zoom]);
-
-  return (
-    <div
-      ref={wrapperRef}
-      className="informio-pdf-page"
-      data-page-number={pageNumber}
-      style={pageSize ? { width: pageSize.width, height: pageSize.height } : undefined}
-    >
-      {error ? <div className="informio-pdf-message is-error">{error}</div> : null}
-      {rendered ? (
-        <>
-          <canvas ref={canvasRef} className="informio-pdf-canvas" />
-          <div ref={textLayerRef} className="textLayer informio-pdf-text-layer" />
-          <div className="informio-pdf-annotation-layer">
-            {annotations.map((annotation) =>
-              annotation.rects.map((rect, index) => (
-                <span
-                  key={`${annotation.id}-${index}`}
-                  data-annotation-id={annotation.id}
-                  className={cn("informio-pdf-annotation", `is-${annotation.type}`)}
-                  style={{ ...rectStyle(rect), "--annotation-color": annotation.color } as React.CSSProperties}
-                  title={annotation.comment || annotation.text}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    if (annotation.markdownTarget) {
-                      pdfContext?.onOpenMarkdownTarget(annotation.markdownTarget);
-                      return;
-                    }
-                    if (annotation.comment) window.alert(annotation.comment);
-                  }}
-                />
-              ))
-            )}
-          </div>
-        </>
-      ) : (
-        <div className="informio-pdf-page-placeholder" />
-      )}
-    </div>
-  );
-}
-
-function PdfBlockView({ node }: ReactNodeViewProps) {
-  const src = String((node.attrs as { src?: string }).src ?? "");
-  const title = String((node.attrs as { title?: string }).title ?? "PDF");
-  const pdfContext = usePdfEditorContext();
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
-  const [zoom, setZoom] = useState(1);
-  const [frameWidth, setFrameWidth] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
-  const [selection, setSelection] = useState<PdfSelectionState | null>(null);
-  const [annotationMenu, setAnnotationMenu] = useState<PdfAnnotationMenuState | null>(null);
-  const [selectedColor, setSelectedColor] = useState(pdfAnnotationColors[0]);
-  const [notice, setNotice] = useState<string | null>(null);
-  const pdfPath = localFilePathFromUrl(src);
-  const fingerprint = fingerprintForPdf(pdf, src);
-
-  useEffect(() => {
-    const element = frameRef.current;
-    if (!element) return;
-    const resizeObserver = new ResizeObserver((entries) => {
-      setFrameWidth(entries[0]?.contentRect.width ?? 0);
-    });
-    resizeObserver.observe(element);
-    return () => resizeObserver.disconnect();
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let loadedDocument: PDFDocumentProxy | null = null;
-    setPdf(null);
-    setZoom(1);
-    setLoading(true);
-    setError(null);
-
-    const loadingTask = pdfjsLib.getDocument(src);
-    loadingTask.promise
-      .then((document) => {
-        loadedDocument = document;
-        if (cancelled) {
-          void document.destroy();
-          return;
-        }
-        setPdf(document);
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-      void loadingTask.destroy().catch(() => undefined);
-      if (loadedDocument) void loadedDocument.destroy().catch(() => undefined);
-    };
-  }, [src]);
-
-  useEffect(() => {
-    if (!pdf) return;
-    let cancelled = false;
-    window.informio
-      .loadPdfAnnotations({ pdfPath, fingerprint })
-      .then((items) => {
-        if (!cancelled) {
-          setAnnotations(items);
-          items.forEach((annotation) => pdfContext?.onRegisterPdfAnnotation(annotation));
-        }
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled) setNotice(reason instanceof Error ? reason.message : String(reason));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fingerprint, pdf, pdfContext, pdfPath]);
-
-  useEffect(() => {
-    if (!pdfContext?.focusAnnotationId) return;
-    const element = frameRef.current?.querySelector(`[data-annotation-id="${CSS.escape(pdfContext.focusAnnotationId)}"]`);
-    if (element) {
-      element.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
-      (element as HTMLElement).classList.add("is-focused");
-      window.setTimeout(() => (element as HTMLElement).classList.remove("is-focused"), 1400);
-    }
-  }, [annotations, pdfContext?.focusAnnotationId]);
-
-  const pageCount = pdf?.numPages ?? 0;
-  const clearPdfSelection = () => {
-    setSelection(null);
-    pdfContext?.onPdfSelection(null);
-    pdfContext?.onClearToolbarTranslate();
-  };
-  const translatePdfSelection = () => {
-    if (!selection || !pdfContext) return;
-    pdfContext.onTranslateSelection({
-      kind: "pdf",
-      documentId: pdfContext.document.id,
-      from: -1,
-      to: -1,
-      text: selection.text,
-      markdown: `PDF: ${title}\nPage: ${selection.page}\n\n${selection.text}`,
-      title,
-      filePath: pdfPath,
-      page: selection.page,
-      rects: selection.rects,
-      overlayLeft: selection.left,
-      overlayTop: selection.top - 54
-    });
-  };
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    const delta = event.deltaY < 0 ? 0.08 : -0.08;
-    setZoom((value) => clamp(value + delta, 0.45, 3));
-  };
-
-  const captureSelection = () => {
-    const frame = frameRef.current;
-    if (!frame || !pdf) return;
-    const browserSelection = window.getSelection();
-    const text = browserSelection?.toString().trim() ?? "";
-    if (!browserSelection || !text || browserSelection.rangeCount === 0) {
-      if (isSelectionToolbarInteractionActive()) return;
-      clearPdfSelection();
-      return;
-    }
-    const anchorNode = browserSelection.anchorNode;
-    if (!anchorNode || !frame.contains(anchorNode)) return;
-    const range = browserSelection.getRangeAt(0);
-    const firstPage = (range.startContainer.parentElement ?? range.commonAncestorContainer.parentElement)?.closest?.(".informio-pdf-page") as HTMLElement | null;
-    if (!firstPage) return;
-    const page = Number(firstPage.dataset.pageNumber || "1");
-    const pageRect = firstPage.getBoundingClientRect();
-    const rects = Array.from(range.getClientRects())
-      .map((rect) => {
-        const left = Math.max(rect.left, pageRect.left);
-        const right = Math.min(rect.right, pageRect.right);
-        const top = Math.max(rect.top, pageRect.top);
-        const bottom = Math.min(rect.bottom, pageRect.bottom);
-        if (right <= left || bottom <= top) return null;
-        return {
-          x: clamp((left - pageRect.left) / pageRect.width, 0, 1),
-          y: clamp((top - pageRect.top) / pageRect.height, 0, 1),
-          width: clamp((right - left) / pageRect.width, 0, 1),
-          height: clamp((bottom - top) / pageRect.height, 0, 1)
-        };
-      })
-      .filter((rect): rect is PdfAnnotationRect => Boolean(rect));
-    if (!rects.length) return;
-    const frameRect = frame.getBoundingClientRect();
-    const lastRect = range.getBoundingClientRect();
-    const nextSelection: PdfSelectionState = {
-      pdfPath,
-      fingerprint,
-      title,
-      page,
-      text,
-      rects,
-      left: clamp(lastRect.left - frameRect.left + frame.scrollLeft, 8, Math.max(8, frame.scrollLeft + frameRect.width - 260)),
-      top: Math.max(8, lastRect.top - frameRect.top + frame.scrollTop - 42)
-    };
-    setSelection(nextSelection);
-    setAnnotationMenu(null);
-    pdfContext?.onPdfSelection(nextSelection);
-  };
-
-  const openAnnotationMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
-    const frame = frameRef.current;
-    if (!frame || window.getSelection()?.toString().trim()) return;
-    if ((event.target as HTMLElement).closest(".informio-pdf-selection-popover, .informio-pdf-annotation-menu")) return;
-    const pageElement = (event.target as HTMLElement).closest(".informio-pdf-page") as HTMLElement | null;
-    if (!pageElement) {
-      setAnnotationMenu(null);
-      return;
-    }
-    const page = Number(pageElement.dataset.pageNumber || "1");
-    const rect = pageElement.getBoundingClientRect();
-    const x = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    const y = clamp((event.clientY - rect.top) / rect.height, 0, 1);
-    const hit = annotations
-      .filter((annotation) => annotation.page === page)
-      .filter((annotation) =>
-        annotation.rects.some((annotationRect) => {
-          const padding = 0.006;
-          return (
-            x >= annotationRect.x - padding &&
-            x <= annotationRect.x + annotationRect.width + padding &&
-            y >= annotationRect.y - padding &&
-            y <= annotationRect.y + annotationRect.height + padding
-          );
-        })
-      )
-      .sort((a, b) => {
-        const area = (annotation: PdfAnnotation) =>
-          annotation.rects.reduce((sum, item) => sum + item.width * item.height, 0);
-        return area(a) - area(b);
-      })[0];
-    if (!hit) {
-      setAnnotationMenu(null);
-      return;
-    }
-    const frameRect = frame.getBoundingClientRect();
-    clearPdfSelection();
-    setAnnotationMenu({
-      annotation: hit,
-      left: clamp(event.clientX - frameRect.left + frame.scrollLeft, 8, Math.max(8, frame.scrollLeft + frameRect.width - 260)),
-      top: Math.max(8, event.clientY - frameRect.top + frame.scrollTop - 42)
-    });
-  };
-
-  const saveAnnotation = async (type: PdfAnnotation["type"]) => {
-    if (!selection || !pdfContext) return;
-    const now = new Date().toISOString();
-    const markdownTarget = type === "link" ? pdfContext.markdownTarget ?? undefined : undefined;
-    const comment = type === "comment" ? window.prompt("批注", "")?.trim() : undefined;
-    if (type === "comment" && !comment) return;
-    const annotation: PdfAnnotation = {
-      id: `pdf-annotation-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      pdfPath,
-      fingerprint,
-      page: selection.page,
-      type,
-      color: selectedColor,
-      rects: selection.rects,
-      text: selection.text,
-      comment,
-      markdownTarget,
-      createdAt: now,
-      updatedAt: now
-    };
-    const result = await window.informio.savePdfAnnotation({
-      annotation,
-      writeToSource: pdfContext.settings.editor.writePdfAnnotationsToSource
-    });
-    setAnnotations((items) => [...items.filter((item) => item.id !== result.annotation.id), result.annotation]);
-    pdfContext.onRegisterPdfAnnotation(result.annotation);
-    if (type === "link") pdfContext.onInsertPdfBacklink(result.annotation);
-    if (result.sourceWrite?.attempted && !result.sourceWrite.ok) setNotice(result.sourceWrite.message ?? "源 PDF 写回失败，已保存在本地标注数据。");
-    clearPdfSelection();
-    setAnnotationMenu(null);
-    window.getSelection()?.removeAllRanges();
-  };
-
-  const deleteAnnotation = async (annotation: PdfAnnotation) => {
-    const result = await window.informio.deletePdfAnnotation({
-      pdfPath,
-      fingerprint,
-      annotationId: annotation.id
-    });
-    setAnnotations((items) => items.filter((item) => item.id !== annotation.id));
-    pdfContext?.onDeletePdfAnnotation(annotation.id);
-    setAnnotationMenu(null);
-    if (result.sourceWrite?.attempted && !result.sourceWrite.ok) {
-      setNotice(result.sourceWrite.message ?? "已删除本地标注数据；源 PDF 中已写入的视觉痕迹无法自动擦除。");
-    }
-  };
-
-  const pageAnnotations = useMemo(() => {
-    const byPage = new Map<number, PdfAnnotation[]>();
-    annotations.forEach((annotation) => {
-      byPage.set(annotation.page, [...(byPage.get(annotation.page) ?? []), annotation]);
-    });
-    return byPage;
-  }, [annotations]);
-
-  return (
-    <NodeViewWrapper className="informio-pdf-block" contentEditable={false}>
-      <div
-        ref={frameRef}
-        className="informio-pdf-frame"
-        aria-label={title}
-        onWheel={handleWheel}
-        onClick={openAnnotationMenu}
-      onMouseUp={(event) => {
-        if ((event.target as HTMLElement).closest(selectionToolbarSafeAreaSelector)) return;
-        window.setTimeout(captureSelection, 0);
-      }}
-      onKeyUp={() => window.setTimeout(captureSelection, 0)}
-      >
-        {loading ? <div className="informio-pdf-message">Loading PDF...</div> : null}
-        {error ? <div className="informio-pdf-message is-error">{error}</div> : null}
-        {notice ? (
-          <button type="button" className="informio-pdf-notice" onClick={() => setNotice(null)}>
-            {notice}
-          </button>
-        ) : null}
-        {pdf && pageCount
-          ? Array.from({ length: pageCount }, (_, index) => (
-              <PdfPageCanvas
-                key={`${src}:${index + 1}`}
-                pdf={pdf}
-                pageNumber={index + 1}
-                frameWidth={frameWidth}
-                zoom={zoom}
-                annotations={pageAnnotations.get(index + 1) ?? []}
-              />
-            ))
-          : null}
-        {selection ? (
-          <div
-            className="informio-pdf-selection-popover"
-            style={{ left: selection.left, top: selection.top }}
-            data-selection-toolbar-safe-area="true"
-            onMouseDownCapture={markSelectionToolbarInteraction}
-          >
-            <div className="informio-pdf-color-row">
-              {pdfAnnotationColors.map((color) => (
-                <button
-                  key={color}
-                  type="button"
-                  aria-label={`颜色 ${color}`}
-                  className={cn("informio-pdf-color", color === selectedColor && "is-selected")}
-                  style={{ backgroundColor: color }}
-                  onClick={() => setSelectedColor(color)}
-                />
-              ))}
-            </div>
-            <button type="button" onClick={() => saveAnnotation("highlight")}>高亮</button>
-            <button type="button" onClick={() => saveAnnotation("underline")}>下划线</button>
-            <button type="button" onClick={() => saveAnnotation("comment")}>批注</button>
-            <button type="button" onClick={() => saveAnnotation("link")} disabled={!pdfContext?.markdownTarget}>
-              链接
-            </button>
-            <SelectionTranslateSection
-              variant="pdf"
-              enabled={Boolean(pdfContext?.toolbarEnabled)}
-              busy={pdfContext?.toolbarTranslate.status === "loading"}
-              response={pdfContext?.toolbarTranslate.response ?? ""}
-              error={pdfContext?.toolbarTranslate.error}
-              onTranslate={translatePdfSelection}
-            />
-          </div>
-        ) : null}
-        {annotationMenu ? (
-          <div className="informio-pdf-annotation-menu" style={{ left: annotationMenu.left, top: annotationMenu.top }}>
-            <div className="informio-pdf-annotation-menu-title">
-              {annotationMenu.annotation.type === "highlight"
-                ? "高亮"
-                : annotationMenu.annotation.type === "underline"
-                  ? "下划线"
-                  : annotationMenu.annotation.type === "comment"
-                    ? "批注"
-                    : "链接"}
-            </div>
-            {annotationMenu.annotation.comment ? <div className="informio-pdf-annotation-menu-comment">{annotationMenu.annotation.comment}</div> : null}
-            {annotationMenu.annotation.markdownTarget ? (
-              <button type="button" onClick={() => pdfContext?.onOpenMarkdownTarget(annotationMenu.annotation.markdownTarget!)}>
-                打开 Markdown
-              </button>
-            ) : null}
-            <button type="button" className="is-danger" onClick={() => deleteAnnotation(annotationMenu.annotation)}>
-              删除
-            </button>
-          </div>
-        ) : null}
-      </div>
-    </NodeViewWrapper>
-  );
-}
 
 const PdfBlock = Node.create({
   name: "pdfBlock",
@@ -2376,7 +3099,7 @@ const PdfBlock = Node.create({
     return `\n<iframe data-type="pdf" src="${src}" title="${title}"></iframe>\n`;
   },
   addNodeView() {
-    return ReactNodeViewRenderer(PdfBlockView);
+    return ReactNodeViewRenderer(UnifiedPdfBlockView);
   }
 } as never);
 
@@ -2420,7 +3143,7 @@ const DetailsBlock = Node.create({
     HTMLAttributes: Record<string, unknown>;
     node: { attrs: { summary: string; text: string }; textContent?: string };
   }) {
-    const source = node.textContent || (node.attrs as { source?: string }).source || defaultBlockSource("detailsBlock");
+    const source = node.textContent !== "" ? (node.textContent ?? "") : nodeSourceAttr(node, "detailsBlock");
     const details = detailsFromSource(source);
     return [
       "details",
@@ -2486,7 +3209,7 @@ const CalloutBlock = Node.create({
     HTMLAttributes: Record<string, unknown>;
     node: { attrs: { title: string; text: string }; textContent?: string };
   }) {
-    const source = node.textContent || (node.attrs as { source?: string }).source || defaultBlockSource("calloutBlock");
+    const source = node.textContent !== "" ? (node.textContent ?? "") : nodeSourceAttr(node, "calloutBlock");
     const callout = calloutFromSource(source);
     return [
       "aside",
@@ -2543,7 +3266,7 @@ const FootnoteBlock = Node.create({
     HTMLAttributes: Record<string, unknown>;
     node: { attrs: { index: string; text: string }; textContent?: string };
   }) {
-    const source = node.textContent || (node.attrs as { source?: string }).source || defaultBlockSource("footnoteBlock");
+    const source = node.textContent !== "" ? (node.textContent ?? "") : nodeSourceAttr(node, "footnoteBlock");
     const footnote = footnoteFromSource(source);
     return [
       "section",
@@ -2565,6 +3288,7 @@ type MarkdownAutoBlockMatch = {
   to: number;
   node: ProseMirrorNodeLike;
   selectionOffset?: number;
+  selectAfterNode?: boolean;
 };
 
 type ProseMirrorNodeLike = {
@@ -2643,22 +3367,11 @@ const isPlainParagraph = (block: MarkdownTextBlock) => block.node.type.name === 
 const topLevelTextBlocks = (doc: ProseMirrorNodeLike): MarkdownTextBlock[] => {
   const blocks: MarkdownTextBlock[] = [];
   doc.forEach((node, offset) => {
-    if (node.isTextblock || node.type.name === "blockquote") {
+    if (node.isTextblock) {
       blocks.push({ node, pos: offset, text: node.textContent });
     }
   });
   return blocks;
-};
-
-const calloutSourceFromBlockquote = (node: ProseMirrorNodeLike) => {
-  const lines: string[] = [];
-  node.forEach((child) => {
-    if (child.isTextblock) lines.push(`> ${child.textContent}`);
-  });
-  const source = lines.join("\n").trim();
-  const match = source.match(/^>\s*\[!([A-Za-z0-9_-]+)]/);
-  const title = normalizeCalloutTitle(match?.[1] ?? "NOTE");
-  return calloutTypes.has(title) && source ? { source, title } : null;
 };
 
 const markdownAutoBlockMatch = (schema: ProseMirrorSchemaLike, doc: ProseMirrorNodeLike): MarkdownAutoBlockMatch | null => {
@@ -2668,19 +3381,6 @@ const markdownAutoBlockMatch = (schema: ProseMirrorSchemaLike, doc: ProseMirrorN
     const block = blocks[index];
     const text = block.text.trim();
     if (!text) continue;
-
-    if (block.node.type.name === "blockquote") {
-      const callout = calloutSourceFromBlockquote(block.node);
-      if (callout) {
-        return {
-          from: block.pos,
-          to: block.pos + block.node.nodeSize,
-          node: sourceBackedNode(schema, "calloutBlock", callout.source, { title: callout.title, text: calloutFromSource(callout.source).text }),
-          selectionOffset: callout.source.length
-        };
-      }
-      continue;
-    }
 
     if (!isPlainParagraph(block)) continue;
 
@@ -2700,17 +3400,6 @@ const markdownAutoBlockMatch = (schema: ProseMirrorSchemaLike, doc: ProseMirrorN
         from: block.pos,
         to: block.pos + block.node.nodeSize,
         node: sourceBackedNode(schema, "footnoteBlock", text, { index: footnote[1], text: footnote[2].trim() }),
-        selectionOffset: text.length
-      };
-    }
-
-    const callout = text.match(/^>\s*\[!([A-Za-z0-9_-]+)]/);
-    const calloutTitle = normalizeCalloutTitle(callout?.[1] ?? "");
-    if (callout && calloutTypes.has(calloutTitle)) {
-      return {
-        from: block.pos,
-        to: block.pos + block.node.nodeSize,
-        node: sourceBackedNode(schema, "calloutBlock", text, { title: calloutTitle, text: calloutFromSource(text).text }),
         selectionOffset: text.length
       };
     }
@@ -2808,10 +3497,10 @@ const markdownAutoInlineMathMatch = (schema: ProseMirrorSchemaLike, doc: ProseMi
     const parentName = parent?.type.name ?? "";
     if (!["paragraph", "heading", "listItem", "tableCell", "tableHeader"].includes(parentName)) return;
 
-    const matches = Array.from(node.text.matchAll(/(^|[^\$])\$([^\n$]+?)\$(?!\$)/g));
+    const matches = Array.from(node.text.matchAll(INLINE_MATH_AUTO_REGEX));
     for (const match of matches) {
       const content = match[2]?.trim() ?? "";
-      if (!content || /^\d+(?:\.\d+)?$/.test(content)) continue;
+      if (isSkippableInlineMathContent(content)) continue;
       const prefix = match[1] ?? "";
       const source = `$${match[2]}$`;
       const from = pos + (match.index ?? 0) + prefix.length;
@@ -2819,7 +3508,7 @@ const markdownAutoInlineMathMatch = (schema: ProseMirrorSchemaLike, doc: ProseMi
         from,
         to: from + source.length,
         node: schema.nodes.mathInline.create({ source }, textContentNode(schema, source)),
-        selectionOffset: source.length
+        selectAfterNode: true
       };
       return false;
     }
@@ -2838,8 +3527,14 @@ const applyMarkdownAutoBlock = (editor: Editor) => {
   editor.view.dispatch(transaction);
 
   const insertedTo = match.from + match.node.nodeSize;
-  const wantedSelection = match.selectionOffset === undefined ? insertedTo : match.from + 1 + match.selectionOffset;
-  const selectionPosition = clamp(wantedSelection, match.from + 1, Math.max(match.from + 1, insertedTo - 1));
+  const wantedSelection = match.selectAfterNode
+    ? insertedTo
+    : match.selectionOffset === undefined
+      ? insertedTo
+      : match.from + 1 + match.selectionOffset;
+  const selectionPosition = match.selectAfterNode
+    ? insertedTo
+    : clamp(wantedSelection, match.from + 1, Math.max(match.from + 1, insertedTo - 1));
   window.setTimeout(() => {
     if (!editor.isDestroyed) editor.commands.setTextSelection(selectionPosition);
   }, 0);
@@ -2956,6 +3651,144 @@ function IconButton({
   );
 }
 
+function ToolbarGlyphButton({
+  label,
+  icon: Icon,
+  onClick,
+  onMouseDown,
+  pressed,
+  disabled,
+  className,
+  iconClassName,
+  iconSize = 14,
+  tooltipSide = "top",
+  ariaHasPopup,
+  badgeColor
+}: {
+  label: string;
+  icon: ToolbarIcon;
+  onClick?: () => void;
+  onMouseDown?: (event: ReactMouseEvent<HTMLButtonElement>) => void;
+  pressed?: boolean;
+  disabled?: boolean;
+  className?: string;
+  iconClassName?: string;
+  iconSize?: number;
+  tooltipSide?: "top" | "right" | "bottom" | "left";
+  ariaHasPopup?: "menu" | "listbox" | "tree" | "grid" | "dialog" | true;
+  badgeColor?: string | null;
+}) {
+  return (
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          aria-pressed={pressed}
+          aria-haspopup={ariaHasPopup}
+          disabled={disabled}
+          onMouseDown={onMouseDown}
+          onClick={onClick}
+          className={cn("relative", className)}
+        >
+          <Icon size={iconSize} strokeWidth={1.9} className={iconClassName} />
+          {badgeColor ? (
+            <span
+              aria-hidden="true"
+              className="absolute bottom-[4px] right-[4px] h-[6px] w-[6px] rounded-full shadow-[0_0_0_1px_rgba(255,255,255,0.92)]"
+              style={{ backgroundColor: badgeColor }}
+            />
+          ) : null}
+        </button>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content side={tooltipSide} className="z-50 rounded-md bg-slate-950 px-2.5 py-1.5 text-xs font-medium text-white shadow-xl">
+          {label}
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
+}
+
+function InsertToolbar({
+  onAction,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  propertiesOpen,
+  onToggleProperties
+}: {
+  onAction: (action: InsertToolbarAction) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  propertiesOpen?: boolean;
+  onToggleProperties?: () => void;
+}) {
+  const showHistoryControls = Boolean(onUndo && onRedo);
+  const showPropertiesToggle = Boolean(onToggleProperties);
+  const showHistoryDivider = showHistoryControls && insertToolbarActions.length > 0;
+  const showPropertiesDivider = showPropertiesToggle && insertToolbarActions.length > 0;
+
+  return (
+    <section className="informio-insert-toolbar" data-selection-toolbar-safe-area="true" onMouseDownCapture={markSelectionToolbarInteraction}>
+      <div className="informio-insert-toolbar-row">
+        <div className="informio-insert-toolbar-group">
+          {showHistoryControls ? (
+            <>
+              <ToolbarGlyphButton
+                label="撤销"
+                icon={Undo2}
+                disabled={!canUndo}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={onUndo}
+                className="informio-insert-toolbar-button"
+                iconClassName="text-[var(--text-muted)]"
+              />
+              <ToolbarGlyphButton
+                label="重做"
+                icon={Redo2}
+                disabled={!canRedo}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={onRedo}
+                className="informio-insert-toolbar-button"
+                iconClassName="text-[var(--text-muted)]"
+              />
+            </>
+          ) : null}
+          {showHistoryDivider ? <div className="informio-insert-toolbar-divider" aria-hidden="true" /> : null}
+          {insertToolbarActions.map((action) => (
+            <ToolbarGlyphButton
+              key={action.id}
+              label={action.label}
+              icon={action.icon}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onAction(action)}
+              className="informio-insert-toolbar-button"
+              iconClassName="text-[var(--text-muted)]"
+            />
+          ))}
+          {showPropertiesDivider ? <div className="informio-insert-toolbar-divider" aria-hidden="true" /> : null}
+          {showPropertiesToggle ? (
+            <ToolbarGlyphButton
+              label={propertiesOpen ? "隐藏属性" : "显示属性"}
+              icon={Bookmark}
+              pressed={propertiesOpen}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={onToggleProperties}
+              className={cn("informio-insert-toolbar-button", propertiesOpen && "is-open")}
+              iconClassName="text-[var(--text-muted)]"
+            />
+          ) : null}
+        </div>
+      </div>
+      <div className="informio-insert-toolbar-rule" aria-hidden="true" />
+    </section>
+  );
+}
+
 function PanelResizeHandle({
   label,
   onPointerDown
@@ -3019,15 +3852,76 @@ type TreeDropTarget = {
   depth: number;
 };
 
-type RenameRequest =
-  | (FileSystemOperationInput & { currentName: string; kind?: "filesystem" })
-  | { kind: "project"; path: string; currentName: string };
-
 type LinkRequest = {
   from: number;
   to: number;
   text: string;
   url: string;
+};
+
+type PendingPdfBacklinkState =
+  | {
+      step: "select-document";
+      annotation: PdfAnnotation;
+      sourcePaneId: EditorPaneState["id"];
+    }
+  | {
+      step: "choose-position" | "saving";
+      annotation: PdfAnnotation;
+      sourcePaneId: EditorPaneState["id"];
+      targetDocumentId: string;
+      targetPaneId: EditorPaneState["id"];
+    };
+
+type EditorTextSearchIndex = {
+  text: string;
+  positions: number[];
+};
+
+type FindMatch = {
+  start: number;
+  end: number;
+  from: number;
+  to: number;
+};
+
+const buildEditorTextSearchIndex = (doc: ProseMirrorNode): EditorTextSearchIndex => {
+  const chars: string[] = [];
+  const positions: number[] = [];
+  let firstBlock = true;
+
+  doc.descendants((node, pos) => {
+    if (!node.isTextblock) return true;
+    if (!firstBlock) {
+      chars.push("\n");
+      positions.push(Math.max(0, pos));
+    }
+    firstBlock = false;
+    node.descendants((child, childPos) => {
+      const absolutePos = pos + 1 + childPos;
+      if (child.isText) {
+        Array.from(child.text ?? "").forEach((char, index) => {
+          chars.push(char);
+          positions.push(absolutePos + index);
+        });
+      } else if (child.type.name === "hardBreak") {
+        chars.push("\n");
+        positions.push(absolutePos);
+      }
+      return true;
+    });
+    return false;
+  });
+
+  return { text: chars.join(""), positions };
+};
+
+const findNextTextMatch = (text: string, query: string, fromIndex: number) => {
+  if (!query) return null;
+  const firstIndex = text.indexOf(query, Math.max(0, fromIndex));
+  if (firstIndex >= 0) return { start: firstIndex, end: firstIndex + query.length };
+  const wrappedIndex = text.indexOf(query, 0);
+  return wrappedIndex >= 0 ? { start: wrappedIndex, end: wrappedIndex + query.length } : null;
 };
 
 const fallbackFolder = (path: string): InformioFolder => ({
@@ -3444,7 +4338,7 @@ function FileList({
   onCreate: (folderPath?: string) => void;
   onCreateFolder: (folderPath?: string) => void;
   onFileAction: (input: FileSystemOperationInput) => void;
-  onRenameProject: (path: string, title: string) => void;
+  onRenameProject: (path: string, title: string) => void | Promise<void>;
   onToggleProjectPinned: (path: string) => void;
   onRemoveProject: (path: string) => void;
   onDocumentDragStart: (documentId: string, event: ReactDragEvent<HTMLElement>) => void;
@@ -3573,7 +4467,7 @@ function FileList({
     const request = inlineRename;
     setInlineRename(null);
     if (request.type === "project") {
-      onRenameProject(request.path, nextName);
+      await onRenameProject(request.path, nextName);
       return;
     }
     onFileAction({
@@ -3775,7 +4669,7 @@ function FileList({
                           inlineRename,
                           "min-w-0 flex-1 rounded-md bg-white px-2 py-1 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-2 ring-emerald-500/45"
                         )
-                      : <span className="min-w-0 truncate text-[13px] font-bold text-[var(--text-main)]">{doc.title}</span>}
+                      : <span className="min-w-0 truncate text-[13px] font-normal text-[var(--text-main)]">{doc.title}</span>}
                   </div>
                 </button>
               );
@@ -3905,75 +4799,6 @@ function FileList({
   );
 }
 
-function RenameDialog({
-  request,
-  onClose,
-  onConfirm
-}: {
-  request: RenameRequest | null;
-  onClose: () => void;
-  onConfirm: (name: string) => void;
-}) {
-  const [name, setName] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!request) return;
-    setName(request.currentName);
-    window.setTimeout(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }, 0);
-  }, [request]);
-
-  const trimmedName = name.trim();
-  const canSubmit = Boolean(trimmedName) && trimmedName !== request?.currentName;
-
-  return (
-    <Dialog.Root open={Boolean(request)} onOpenChange={(open) => (!open ? onClose() : undefined)}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/18" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-4 text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
-          <Dialog.Title className="text-[14px] font-extrabold">
-            {request?.kind === "project" ? "重命名项目" : request?.targetType === "folder" ? "重命名文件夹" : "重命名文件"}
-          </Dialog.Title>
-          <Dialog.Description className="sr-only">输入新名称，确认后重命名磁盘上的项目。</Dialog.Description>
-          <form
-            className="mt-4 space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (canSubmit) onConfirm(trimmedName);
-            }}
-          >
-            <input
-              ref={inputRef}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-[var(--divider)] focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                className="h-8 rounded-md px-3 text-[12px] font-bold text-slate-600 transition-[background-color,transform] hover:bg-slate-100 active:scale-[0.99]"
-                onClick={onClose}
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                disabled={!canSubmit}
-                className="h-8 rounded-md bg-emerald-600 px-3 text-[12px] font-bold text-white transition-[background-color,opacity,transform] hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-45"
-              >
-                确认
-              </button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
 function LinkDialog({
   request,
   onClose,
@@ -4056,6 +4881,211 @@ function LinkDialog({
   );
 }
 
+function PdfBacklinkDocumentDialog({
+  request,
+  documents,
+  onClose,
+  onSelect
+}: {
+  request: Extract<PendingPdfBacklinkState, { step: "select-document" }> | null;
+  documents: InformioDocument[];
+  onClose: () => void;
+  onSelect: (documentId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const queryInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!request) return;
+    setQuery("");
+    window.setTimeout(() => queryInputRef.current?.focus(), 0);
+  }, [request]);
+
+  const filteredDocuments = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const sorted = [...documents].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    if (!normalizedQuery) return sorted;
+    return sorted.filter((document) => {
+      const haystacks = [document.title, document.filePath ?? ""].map((value) => value.toLowerCase());
+      return haystacks.some((value) => value.includes(normalizedQuery));
+    });
+  }, [documents, query]);
+
+  return (
+    <Dialog.Root open={Boolean(request)} onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/18" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(520px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-4 text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
+          <Dialog.Title className="text-[14px] font-extrabold">选择回链文档</Dialog.Title>
+          <Dialog.Description className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+            选一个现有 Markdown 文档。打开后你可以在另一栏里手动放置插入位置，再确认写入 PDF 回链。
+          </Dialog.Description>
+          <div className="mt-4 grid gap-3">
+            <input
+              ref={queryInputRef}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索文档标题或路径"
+              className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-[var(--divider)] focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
+            />
+            <div className="max-h-[320px] overflow-y-auto rounded-lg ring-1 ring-[var(--divider)]">
+              {filteredDocuments.length ? (
+                filteredDocuments.map((document) => (
+                  <button
+                    key={document.id}
+                    type="button"
+                    className="flex w-full flex-col items-start gap-1 border-b border-[var(--divider)]/70 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-slate-50"
+                    onClick={() => onSelect(document.id)}
+                  >
+                    <span className="w-full truncate text-[13px] font-semibold text-[var(--text-main)]">{document.title}</span>
+                    <span className="w-full truncate text-[11px] text-[var(--text-muted)]">{document.filePath ?? "未保存文档"}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">没有匹配的 Markdown 文档。</div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                className="h-8 rounded-md px-3 text-[12px] font-bold text-slate-600 transition-[background-color,transform] hover:bg-slate-100 active:scale-[0.99]"
+                onClick={onClose}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+type SecretPromptRequest =
+  | {
+      mode: "set-passphrase";
+      error?: string;
+    }
+  | {
+      mode: "unlock-passphrase";
+      intent: "encrypt" | "decrypt";
+      error?: string;
+    };
+
+type PendingSecretAction =
+  | {
+      type: "encrypt";
+      from: number;
+      to: number;
+      kind: SecretKind;
+      verifyAttrs?: EncryptedSecretAttrs | null;
+    }
+  | {
+      type: "decrypt";
+      request: SecretDecryptRequest;
+    };
+
+function SecretPassphraseDialog({
+  request,
+  onClose,
+  onConfirm
+}: {
+  request: SecretPromptRequest | null;
+  onClose: () => void;
+  onConfirm: (input: { passphrase: string; confirmPassphrase?: string }) => void;
+}) {
+  const [passphrase, setPassphrase] = useState("");
+  const [confirmPassphrase, setConfirmPassphrase] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!request) return;
+    setPassphrase("");
+    setConfirmPassphrase("");
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 0);
+  }, [request]);
+
+  const trimmedPassphrase = passphrase.trim();
+  const trimmedConfirmPassphrase = confirmPassphrase.trim();
+  const needsConfirmation = request?.mode === "set-passphrase";
+  const canSubmit = needsConfirmation
+    ? Boolean(trimmedPassphrase && trimmedConfirmPassphrase)
+    : Boolean(trimmedPassphrase);
+
+  return (
+    <Dialog.Root open={Boolean(request)} onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/18" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-4 text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
+          <Dialog.Title className="text-[14px] font-extrabold">
+            {request?.mode === "set-passphrase" ? "设置文档加密口令" : "输入文档加密口令"}
+          </Dialog.Title>
+          <Dialog.Description className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+            {request?.mode === "set-passphrase"
+              ? "首次加密这篇文档时需要先设置口令。后续同文档的所有加密片段都会共用它。"
+              : request?.intent === "decrypt"
+                ? "请输入这篇文档的加密口令。每次点击密文解密前都需要再次验证口令。"
+                : "请输入这篇文档的加密口令。验证通过后才能继续新增加密内容。"}
+          </Dialog.Description>
+          <form
+            className="mt-4 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!canSubmit) return;
+              onConfirm({
+                passphrase: trimmedPassphrase,
+                confirmPassphrase: needsConfirmation ? trimmedConfirmPassphrase : undefined
+              });
+            }}
+          >
+            <label className="grid gap-1.5">
+              <span className="text-[12px] font-bold text-[var(--text-muted)]">口令</span>
+              <input
+                ref={inputRef}
+                type="password"
+                value={passphrase}
+                onChange={(event) => setPassphrase(event.target.value)}
+                className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-[var(--divider)] focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
+              />
+            </label>
+            {needsConfirmation ? (
+              <label className="grid gap-1.5">
+                <span className="text-[12px] font-bold text-[var(--text-muted)]">确认口令</span>
+                <input
+                  type="password"
+                  value={confirmPassphrase}
+                  onChange={(event) => setConfirmPassphrase(event.target.value)}
+                  className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-[var(--divider)] focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
+                />
+              </label>
+            ) : null}
+            {request?.error ? <div className="rounded-md bg-red-50 px-3 py-2 text-[12px] font-semibold leading-5 text-red-700">{request.error}</div> : null}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                className="h-8 rounded-md px-3 text-[12px] font-bold text-slate-600 transition-[background-color,transform] hover:bg-slate-100 active:scale-[0.99]"
+                onClick={onClose}
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                disabled={!canSubmit}
+                className="h-8 rounded-md bg-emerald-600 px-3 text-[12px] font-bold text-white transition-[background-color,opacity,transform] hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-45"
+              >
+                确认
+              </button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 function OutlineList({
   document,
   width,
@@ -4094,11 +5124,7 @@ function OutlineList({
               </div>
             </button>
           ))
-        ) : (
-          <div className="rounded-lg bg-white px-4 py-3 text-sm leading-6 text-slate-500 shadow-[0_1px_3px_rgba(15,23,42,0.08)]">
-            当前文档还没有标题。使用 Markdown 标题后会自动生成大纲。
-          </div>
-        )}
+        ) : null}
       </div>
     </aside>
   );
@@ -4272,11 +5298,7 @@ function PropertiesList({
               </div>
             );
           })
-        ) : (
-          <div className="rounded-lg bg-white px-4 py-3 text-sm leading-6 text-slate-500 shadow-[0_1px_3px_rgba(15,23,42,0.08)]">
-            当前工作区还没有可展示的 Property。只有带有效 frontmatter 的文档会出现在这里。
-          </div>
-        )}
+        ) : null}
       </div>
     </aside>
   );
@@ -4298,7 +5320,6 @@ function PropertiesPanel({
   frontmatter: FrontmatterParseResult;
   onChange: (nextRaw: string) => void;
 }) {
-  const [isCollapsed, setIsCollapsed] = useState(true);
   const [newKey, setNewKey] = useState("");
   const entries = editableFrontmatterEntries(frontmatter.values);
   const rawOnly = Boolean(frontmatter.error) || hasRawOnlyFrontmatter(frontmatter.values);
@@ -4314,20 +5335,8 @@ function PropertiesPanel({
 
   return (
     <section className="informio-properties">
-      <div className="informio-properties-header">
-        <button
-          type="button"
-          className="informio-properties-toggle"
-          aria-expanded={!isCollapsed}
-          aria-label={isCollapsed ? "Expand properties" : "Collapse properties"}
-          onClick={() => setIsCollapsed((current) => !current)}
-        >
-          <span>Properties</span>
-          <ChevronDown size={13} className={cn("informio-properties-toggle-icon", isCollapsed && "is-collapsed")} />
-        </button>
-        {frontmatter.error ? <strong>{frontmatter.error}</strong> : null}
-      </div>
-      {isCollapsed ? null : rawOnly ? (
+      {frontmatter.error ? <div className="informio-properties-error">{frontmatter.error}</div> : null}
+      {rawOnly ? (
         <textarea
           className="informio-properties-raw"
           value={frontmatter.raw}
@@ -4378,6 +5387,7 @@ function PropertiesPanel({
 }
 
 function EditorPane({
+  paneId,
   document,
   documents,
   settings,
@@ -4390,6 +5400,12 @@ function EditorPane({
   onSelection,
   markdownTarget,
   focusPdfAnnotationId,
+  annotationRefreshToken,
+  pendingPdfBacklink,
+  onRequestPdfBacklink,
+  onConfirmPendingPdfBacklink,
+  onCancelPendingPdfBacklink,
+  onPdfAnnotationStoreChanged,
   onRegisterPdfAnnotation,
   onDeletePdfAnnotation,
   onInsertPdfBacklink,
@@ -4401,6 +5417,7 @@ function EditorPane({
   onTranslateSelection,
   onClearToolbarTranslate
 }: {
+  paneId: EditorPaneState["id"];
   document: InformioDocument;
   documents: InformioDocument[];
   settings: AppSettings;
@@ -4408,19 +5425,25 @@ function EditorPane({
   outlineJumpRequest: OutlineJumpRequest | null;
   onOutlineJumpHandled: (request: OutlineJumpRequest) => void;
   onChange: (documentId: string, markdown: string, options?: { composing?: boolean }) => void;
-  onOpenInternalLink: (documentId: string) => void;
+  onOpenInternalLink: (documentId: string, sourcePaneId: EditorPaneState["id"]) => void;
   onCreateInternalLink: (title: string) => void;
   onSelection: (selection: AgentSelection | null) => void;
   markdownTarget: PdfMarkdownTarget | null;
   focusPdfAnnotationId: string | null;
+  annotationRefreshToken: number;
+  pendingPdfBacklink: Extract<PendingPdfBacklinkState, { step: "choose-position" | "saving" }> | null;
+  onRequestPdfBacklink: (annotation: PdfAnnotation, sourcePaneId: EditorPaneState["id"]) => void;
+  onConfirmPendingPdfBacklink: (target: PdfMarkdownTarget) => Promise<boolean>;
+  onCancelPendingPdfBacklink: () => void;
+  onPdfAnnotationStoreChanged: () => void;
   onRegisterPdfAnnotation: (annotation: PdfAnnotation) => void;
   onDeletePdfAnnotation: (annotationId: string) => void;
   onInsertPdfBacklink: (annotation: PdfAnnotation) => void;
-  onOpenPdfAnnotation: (annotationId: string) => void;
-  onOpenMarkdownTarget: (target: PdfMarkdownTarget) => void;
+  onOpenPdfAnnotation: (annotationId: string, sourcePaneId: EditorPaneState["id"]) => void;
+  onOpenMarkdownTarget: (target: PdfMarkdownTarget, sourcePaneId: EditorPaneState["id"]) => void;
   onCompositionChange: (documentId: string, composing: boolean) => void;
   toolbarEnabled: boolean;
-  toolbarTranslate: ToolbarTranslateState;
+  toolbarTranslate: UnifiedToolbarTranslateState;
   onTranslateSelection: (selection: AgentSelection) => void;
   onClearToolbarTranslate: () => void;
 }) {
@@ -4429,22 +5452,170 @@ function EditorPane({
   const markdownAutoBlockTimerRef = useRef<number | null>(null);
   const editorInstanceRef = useRef<Editor | null>(null);
   const sourceTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const findQueryInputRef = useRef<HTMLInputElement | null>(null);
   const shellRef = useRef<HTMLElement | null>(null);
+  const contentColumnRef = useRef<HTMLDivElement | null>(null);
   const syncedDocumentIdRef = useRef<string | null>(null);
   const markdownToolbarRef = useRef<AgentSelection | null>(null);
+  const pendingSecretActionRef = useRef<PendingSecretAction | null>(null);
+  const requestDecryptSecretRef = useRef<(request: SecretDecryptRequest) => void>(() => undefined);
   const [linkRequest, setLinkRequest] = useState<LinkRequest | null>(null);
+  const [secretPromptRequest, setSecretPromptRequest] = useState<SecretPromptRequest | null>(null);
   const [markdownToolbar, setMarkdownToolbar] = useState<AgentSelection | null>(null);
+  const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [wikiSuggest, setWikiSuggest] = useState<{ query: string; from: number; to: number; left: number; top: number } | null>(null);
   const [wikiIndex, setWikiIndex] = useState(0);
+  const [findOpen, setFindOpen] = useState(false);
+  const [showReplace, setShowReplace] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [replaceQuery, setReplaceQuery] = useState("");
+  const [findMatch, setFindMatch] = useState<FindMatch | null>(null);
+  const [findStatus, setFindStatus] = useState<string | null>(null);
   const frontmatter = useMemo(() => parseFrontmatter(document.markdown), [document.markdown]);
   const editorMarkdown = frontmatter.body;
   const isReadOnlyDocument = isPdfFile(document.filePath ?? document.title);
   const isSourceMode = !isReadOnlyDocument && viewMode === "source";
+  const pendingBacklinkForDocument = pendingPdfBacklink?.targetDocumentId === document.id ? pendingPdfBacklink : null;
   const documentLookupIndex = useMemo(() => buildDocumentLookupIndex(documents, document.id), [document.id, documents]);
   const documentLinkIndexKey = useMemo(
     () => documents.map((doc) => `${doc.id}:${doc.title}:${doc.filePath ?? ""}`).join("|"),
     [documents]
   );
+  const closeSecretPrompt = () => {
+    pendingSecretActionRef.current = null;
+    setSecretPromptRequest(null);
+  };
+  const cachedSecretPassphrase = () => documentSecretPassphraseCache.get(document.id) ?? null;
+  const cacheSecretPassphrase = (passphrase: string) => {
+    documentSecretPassphraseCache.set(document.id, passphrase);
+  };
+  const clearSecretPassphrase = () => {
+    documentSecretPassphraseCache.delete(document.id);
+  };
+  const applyEncryptedSelection = async (currentEditor: Editor, action: Extract<PendingSecretAction, { type: "encrypt" }>, passphrase: string) => {
+    if (selectionContainsSecretNode(currentEditor, action.from, action.to)) {
+      window.alert("当前选区包含已加密内容，请先解密这些片段，再重新执行加密。");
+      return;
+    }
+
+    const markdown = serializeSelectionFragmentToMarkdown(currentEditor, action.from, action.to, action.kind);
+    const attrs = await encryptSecretMarkdown(markdown, passphrase, action.kind);
+    currentEditor
+      .chain()
+      .focus()
+      .insertContentAt(
+        { from: action.from, to: action.to },
+        action.kind === "inline"
+          ? { type: "encryptedInline", attrs }
+          : { type: "encryptedBlock", attrs }
+      )
+      .run();
+  };
+  const applyDecryptedSecret = async (currentEditor: Editor, request: SecretDecryptRequest, passphrase: string) => {
+    const node = currentEditor.state.doc.nodeAt(request.pos);
+    if (!node) return;
+    const range = { from: request.pos, to: request.pos + node.nodeSize };
+    const markdown = await decryptSecretMarkdown(request.attrs, passphrase);
+
+    if (request.kind === "inline") {
+      currentEditor.chain().focus().insertContentAt(range, parseInlineMarkdownContent(currentEditor, markdown)).run();
+      return;
+    }
+
+    currentEditor.chain().focus().insertContentAt(range, markdown, { contentType: "markdown" }).run();
+  };
+  const beginEncryptSelection = async () => {
+    const currentEditor = editorInstanceRef.current;
+    if (!currentEditor || currentEditor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
+    const { from, to, empty } = currentEditor.state.selection;
+    if (empty) return;
+    if (selectionContainsSecretNode(currentEditor, from, to)) {
+      window.alert("当前选区包含已加密内容，请先解密这些片段，再重新执行加密。");
+      return;
+    }
+
+    const action: Extract<PendingSecretAction, { type: "encrypt" }> = {
+      type: "encrypt",
+      from,
+      to,
+      kind: selectionShouldUseBlockSecret(currentEditor) ? "block" : "inline"
+    };
+
+    const cachedPassphrase = cachedSecretPassphrase();
+    if (cachedPassphrase) {
+      await applyEncryptedSelection(currentEditor, action, cachedPassphrase);
+      return;
+    }
+
+    if (documentContainsSecretNode(currentEditor)) {
+      const verifyAttrs = findFirstValidSecretInDocument(currentEditor);
+      if (!verifyAttrs) {
+        window.alert("这篇文档里已有损坏的加密片段。请先修复或删除损坏片段，再继续新增加密内容。");
+        return;
+      }
+      pendingSecretActionRef.current = { ...action, verifyAttrs };
+      setSecretPromptRequest({ mode: "unlock-passphrase", intent: "encrypt" });
+      return;
+    }
+
+    pendingSecretActionRef.current = action;
+    setSecretPromptRequest({ mode: "set-passphrase" });
+  };
+  const beginDecryptSecret = async (request: SecretDecryptRequest) => {
+    const currentEditor = editorInstanceRef.current;
+    if (!currentEditor || currentEditor.isDestroyed || !secretAttrsAreValid(request.attrs)) return;
+    pendingSecretActionRef.current = { type: "decrypt", request };
+    setSecretPromptRequest({ mode: "unlock-passphrase", intent: "decrypt" });
+  };
+  requestDecryptSecretRef.current = (request) => {
+    void beginDecryptSecret(request);
+  };
+  const confirmSecretPrompt = async ({ passphrase, confirmPassphrase }: { passphrase: string; confirmPassphrase?: string }) => {
+    const currentEditor = editorInstanceRef.current;
+    const pendingAction = pendingSecretActionRef.current;
+    if (!currentEditor || currentEditor.isDestroyed || !pendingAction) {
+      closeSecretPrompt();
+      return;
+    }
+
+    if (secretPromptRequest?.mode === "set-passphrase") {
+      if (!confirmPassphrase || passphrase !== confirmPassphrase) {
+        setSecretPromptRequest({ mode: "set-passphrase", error: "两次输入的口令不一致，请重新确认。" });
+        return;
+      }
+      try {
+        cacheSecretPassphrase(passphrase);
+        await applyEncryptedSelection(currentEditor, pendingAction as Extract<PendingSecretAction, { type: "encrypt" }>, passphrase);
+        closeSecretPrompt();
+      } catch (error) {
+        clearSecretPassphrase();
+        setSecretPromptRequest({ mode: "set-passphrase", error: error instanceof Error ? error.message : "加密失败，请重试。" });
+      }
+      return;
+    }
+
+    if (pendingAction.type === "encrypt") {
+      try {
+        if (pendingAction.verifyAttrs) await decryptSecretMarkdown(pendingAction.verifyAttrs, passphrase);
+        cacheSecretPassphrase(passphrase);
+        await applyEncryptedSelection(currentEditor, pendingAction, passphrase);
+        closeSecretPrompt();
+      } catch {
+        clearSecretPassphrase();
+        setSecretPromptRequest({ mode: "unlock-passphrase", intent: "encrypt", error: "口令不正确，无法验证这篇文档已有的加密内容。" });
+      }
+      return;
+    }
+
+    try {
+      cacheSecretPassphrase(passphrase);
+      await applyDecryptedSecret(currentEditor, pendingAction.request, passphrase);
+      closeSecretPrompt();
+    } catch {
+      clearSecretPassphrase();
+      setSecretPromptRequest({ mode: "unlock-passphrase", intent: "decrypt", error: "口令不正确，或当前加密片段已损坏。" });
+    }
+  };
   const updateWikiSuggestion = (currentEditor: Editor) => {
     const { from, to } = currentEditor.state.selection;
     if (from !== to) {
@@ -4527,33 +5698,46 @@ function EditorPane({
         tabSize: settings.markdown.tabSize
       }),
       Highlight,
-      Image.configure({ HTMLAttributes: { class: "informio-image" } }),
-      Link.configure({
+      InlineCodeTyping,
+      TextColor,
+      ResizableImage.configure({
+        HTMLAttributes: { class: "informio-image" },
+        resize: {
+          enabled: true,
+          directions: ["bottom-right"],
+          minWidth: 120,
+          minHeight: 80,
+          alwaysPreserveAspectRatio: true
+        }
+      }),
+      MarkdownLink.configure({
         autolink: true,
         defaultProtocol: "https",
         enableClickSelection: true,
         openOnClick: false
       }),
-      Table.configure({
-        resizable: true,
+      EncryptedInline.configure({ onRequestDecrypt: (request) => requestDecryptSecretRef.current(request) }),
+      EncryptedBlock.configure({ onRequestDecrypt: (request) => requestDecryptSecretRef.current(request) }),
+      RichTable.configure({
+        resizable: false,
         renderWrapper: true,
-        handleWidth: 8,
-        cellMinWidth: 88,
-        lastColumnResizable: false,
+        cellMinWidth: TABLE_CELL_MIN_WIDTH,
+        allowTableNodeSelection: true,
         HTMLAttributes: { class: "informio-table" }
       }),
-      TableRow,
-      TableHeader,
-      TableCell,
+      ResizableTableRow,
+      AlignableTableHeader,
+      AlignableTableCell,
+      TableStructureKeymap,
       TaskList,
       TaskItem.configure({ nested: true }),
-      Subscript,
-      Superscript,
-      Underline,
+      SubscriptMark,
+      SuperscriptMark,
+      UnderlineMark,
       WikiLink.configure({
         documentLookupIndex,
         currentDocument: document,
-        onOpen: onOpenInternalLink,
+        onOpen: (documentId: string) => onOpenInternalLink(documentId, paneId),
         onCreate: onCreateInternalLink
       }),
       MathInline,
@@ -4567,7 +5751,7 @@ function EditorPane({
       Markdown.configure({ indentation: { style: "space", size: settings.markdown.tabSize } }),
       Placeholder.configure({ placeholder: "开始写。需要 AI 时选中一段，或直接问右侧 Agent。" })
     ],
-    [document, documentLookupIndex, onCreateInternalLink, onOpenInternalLink, settings.markdown.tabSize]
+    [document, documentLookupIndex, onCreateInternalLink, onOpenInternalLink, paneId, settings.markdown.tabSize]
   );
   const editor = useEditor(
     {
@@ -4576,6 +5760,7 @@ function EditorPane({
       contentType: "markdown",
       editable: !isReadOnlyDocument,
       editorProps: {
+        clipboardTextSerializer: (slice) => slice.content.textBetween(0, slice.content.size, "\n"),
         attributes: {
           class: "informio-editor prose prose-slate max-w-none focus:outline-none",
           spellcheck: String(settings.editor.spellcheck)
@@ -4592,6 +5777,13 @@ function EditorPane({
             event.preventDefault();
             event.stopPropagation();
             return true;
+          },
+          mouseup: () => {
+            if (isReadOnlyDocument) return false;
+            const instance = editorInstanceRef.current;
+            if (!instance || instance.isDestroyed) return false;
+            scheduleMarkdownSelectionCapture(instance);
+            return false;
           },
           keydown: (view, event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return false;
@@ -4654,19 +5846,12 @@ function EditorPane({
               event.preventDefault();
               const href = anchor.getAttribute("href");
               if (href?.startsWith("informio://pdf-annotation/")) {
-                onOpenPdfAnnotation(decodeURIComponent(href.slice("informio://pdf-annotation/".length)));
+                return true;
               } else if (href) {
                 window.informio.openExternal(href);
               }
               return true;
             }
-            return false;
-          },
-          mouseup: () => {
-            if (isReadOnlyDocument) return false;
-            const instance = editorInstanceRef.current;
-            if (!instance || instance.isDestroyed) return false;
-            scheduleMarkdownSelectionCapture(instance);
             return false;
           },
           keyup: () => {
@@ -4675,8 +5860,7 @@ function EditorPane({
             if (!instance || instance.isDestroyed) return false;
             scheduleMarkdownSelectionCapture(instance);
             return false;
-          },
-          blur: () => false
+          }
         }
       },
       onUpdate: ({ editor }) => {
@@ -4703,7 +5887,6 @@ function EditorPane({
           onSelection(null);
           return;
         }
-        scheduleMarkdownSelectionCapture(editor);
       }
     },
     [document.id, documentLinkIndexKey, isReadOnlyDocument, settings.markdown.tabSize]
@@ -4714,6 +5897,193 @@ function EditorPane({
       if (editorInstanceRef.current === editor) editorInstanceRef.current = null;
     };
   }, [editor]);
+
+  useEffect(() => {
+    if (!editor || isReadOnlyDocument || isSourceMode) return;
+
+    let frameId = 0;
+    const fitTableWithinContentWidth = (table: HTMLTableElement) => {
+      const wrapper = table.closest(".tableWrapper");
+      if (!(wrapper instanceof HTMLElement)) return;
+      const contentColumn = contentColumnRef.current;
+      if (!contentColumn) return;
+
+      const tablePos = tablePosFromDom(editor, table);
+      if (tablePos === null) return;
+
+      const columns = Array.from(table.querySelectorAll("colgroup col"));
+      if (!columns.length) return;
+
+      const contentColumnStyle = window.getComputedStyle(contentColumn);
+      const contentColumnWidth =
+        contentColumn.clientWidth
+        - Number.parseFloat(contentColumnStyle.paddingLeft || "0")
+        - Number.parseFloat(contentColumnStyle.paddingRight || "0");
+      const wrapperStyle = window.getComputedStyle(wrapper);
+      const availableWidth =
+        Math.min(wrapper.clientWidth, contentColumnWidth)
+        - Number.parseFloat(wrapperStyle.paddingLeft || "0")
+        - Number.parseFloat(wrapperStyle.paddingRight || "0");
+      if (!Number.isFinite(availableWidth) || availableWidth <= 0) return;
+
+      const baseWidths = tableColumnWidthInfo(editor, table, tablePos);
+      if (baseWidths.length !== columns.length) return;
+
+      const adjustedWidths = baseWidths.map((item) => item.width);
+      let overflow = adjustedWidths.reduce((total, width) => total + width, 0) - availableWidth;
+      if (overflow > 0) {
+        for (let index = adjustedWidths.length - 1; index >= 0 && overflow > 0; index -= 1) {
+          const minWidth = index === adjustedWidths.length - 1 ? TABLE_EDGE_COMPRESS_MIN_WIDTH : TABLE_CELL_MIN_WIDTH;
+          const reducible = Math.max(0, adjustedWidths[index] - minWidth);
+          if (reducible <= 0) continue;
+          const reduction = Math.min(reducible, overflow);
+          adjustedWidths[index] -= reduction;
+          overflow -= reduction;
+        }
+      }
+
+      const clamped = overflow > 0 || adjustedWidths.some((width, index) => width < baseWidths[index].width);
+      table.dataset.inlineFit = clamped ? "true" : "false";
+      table.style.width = clamped ? `${availableWidth}px` : "";
+
+      columns.forEach((column, index) => {
+        const nextWidth = Math.max(0, adjustedWidths[index]);
+        if (clamped || baseWidths[index].fixed) {
+          (column as HTMLElement).style.width = `${nextWidth}px`;
+        } else {
+          (column as HTMLElement).style.width = "";
+        }
+      });
+    };
+
+    const fitAllTables = () => {
+      frameId = 0;
+      const root = editor.view.dom as HTMLElement;
+      root.querySelectorAll("table").forEach((table) => fitTableWithinContentWidth(table as HTMLTableElement));
+    };
+
+    const scheduleFit = () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(fitAllTables);
+    };
+
+    const resizeObserver = new ResizeObserver(() => scheduleFit());
+    if (shellRef.current) resizeObserver.observe(shellRef.current);
+    if (contentColumnRef.current) resizeObserver.observe(contentColumnRef.current);
+
+    editor.on("update", scheduleFit);
+    scheduleFit();
+
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      resizeObserver.disconnect();
+      editor.off("update", scheduleFit);
+    };
+  }, [editor, isReadOnlyDocument, isSourceMode, settings.editor.contentWidth]);
+
+  const focusFindInput = () => {
+    window.requestAnimationFrame(() => {
+      findQueryInputRef.current?.focus();
+      findQueryInputRef.current?.select();
+    });
+  };
+
+  const selectRichTextFindMatch = (match: { start: number; end: number }) => {
+    const currentEditor = editorInstanceRef.current;
+    if (!currentEditor || currentEditor.isDestroyed) return null;
+    const index = buildEditorTextSearchIndex(currentEditor.state.doc);
+    const from = index.positions[match.start];
+    const to = index.positions[match.end - 1];
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    currentEditor.chain().focus().setTextSelection({ from, to: to + 1 }).run();
+    currentEditor.view.dispatch(currentEditor.state.tr.scrollIntoView());
+    const next = { ...match, from, to: to + 1 };
+    setFindMatch(next);
+    setFindStatus(null);
+    return next;
+  };
+
+  const findNextInRichText = (query: string, fromIndex?: number) => {
+    const currentEditor = editorInstanceRef.current;
+    if (!currentEditor || currentEditor.isDestroyed) return null;
+    const index = buildEditorTextSearchIndex(currentEditor.state.doc);
+    const currentSelectionBoundary = Math.max(0, currentEditor.state.selection.to);
+    const selectionIndex = index.positions.findIndex((position) => position >= currentSelectionBoundary);
+    const startIndex = fromIndex ?? Math.max(0, selectionIndex + 1);
+    const match = findNextTextMatch(index.text, query, startIndex);
+    if (!match) return null;
+    return selectRichTextFindMatch(match);
+  };
+
+  const findNextInSource = (query: string, fromIndex?: number) => {
+    const textarea = sourceTextareaRef.current;
+    if (!textarea || !query) return null;
+    const startIndex = fromIndex ?? textarea.selectionEnd;
+    const match = findNextTextMatch(document.markdown, query, startIndex);
+    if (!match) return null;
+    textarea.focus();
+    textarea.setSelectionRange(match.start, match.end);
+    textarea.scrollTop = Math.max(0, textarea.scrollHeight * (match.start / Math.max(1, textarea.value.length)) - textarea.clientHeight / 2);
+    const next = { ...match, from: match.start, to: match.end };
+    setFindMatch(next);
+    setFindStatus(null);
+    return next;
+  };
+
+  const runFindNext = (query = findQuery, options?: { fromIndex?: number }) => {
+    if (!query.trim()) {
+      setFindStatus("先输入要查找的文本。");
+      return null;
+    }
+    const match = isSourceMode ? findNextInSource(query, options?.fromIndex) : findNextInRichText(query, options?.fromIndex);
+    if (!match) {
+      setFindMatch(null);
+      setFindStatus("当前文档里没有找到匹配结果。");
+      return null;
+    }
+    return match;
+  };
+
+  const openFindPanel = (seed?: string) => {
+    const nextQuery = seed?.trim() ? seed : findQuery;
+    setFindOpen(true);
+    setFindStatus(null);
+    if (seed?.trim()) setFindQuery(seed.trim());
+    focusFindInput();
+    if (nextQuery.trim()) {
+      window.setTimeout(() => {
+        runFindNext(nextQuery, { fromIndex: 0 });
+      }, 0);
+    }
+  };
+
+  const replaceCurrentFindMatch = () => {
+    if (!findQuery.trim() || !findMatch) {
+      setFindStatus("先找到一个匹配结果，再执行替换。");
+      return;
+    }
+
+    if (isSourceMode) {
+      const textarea = sourceTextareaRef.current;
+      if (!textarea) return;
+      const nextMarkdown = `${document.markdown.slice(0, findMatch.start)}${replaceQuery}${document.markdown.slice(findMatch.end)}`;
+      onChange(document.id, nextMarkdown);
+      window.setTimeout(() => {
+        const nextStart = findMatch.start;
+        textarea.focus();
+        textarea.setSelectionRange(nextStart, nextStart + replaceQuery.length);
+      }, 0);
+      setFindStatus(null);
+      setFindMatch(null);
+      return;
+    }
+
+    const currentEditor = editorInstanceRef.current;
+    if (!currentEditor || currentEditor.isDestroyed) return;
+    currentEditor.chain().focus().insertContentAt({ from: findMatch.from, to: findMatch.to }, replaceQuery).run();
+    setFindStatus(null);
+    setFindMatch(null);
+  };
 
   useEffect(() => {
     if (!outlineJumpRequest || outlineJumpRequest.documentId !== document.id) return;
@@ -4824,15 +6194,24 @@ function EditorPane({
     setMarkdownToolbar(null);
     onClearToolbarTranslate();
     onSelection(null);
+    setFindMatch(null);
+    setFindStatus(null);
+    setShowReplace(false);
   }, [document.id]);
 
   useEffect(() => {
     setWikiSuggest(null);
     setLinkRequest(null);
+    setFindMatch(null);
+    setFindStatus(null);
     if (isSourceMode) {
       clearMarkdownToolbarState();
     }
   }, [isSourceMode]);
+
+  useEffect(() => {
+    if (findOpen) focusFindInput();
+  }, [findOpen]);
 
   useEffect(() => {
     if (!wikiSuggest) return;
@@ -4859,6 +6238,19 @@ function EditorPane({
   }, [wikiIndex, wikiSuggest, wikiSuggestions]);
 
   useEffect(() => {
+    if (!findOpen) return;
+    if (!findQuery.trim()) {
+      setFindMatch(null);
+      setFindStatus(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      runFindNext(findQuery, { fromIndex: 0 });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [findOpen, findQuery, document.markdown, isSourceMode]);
+
+  useEffect(() => {
     if (!editor) return;
     if (editor.isDestroyed) return;
     editor.setEditable(!isReadOnlyDocument);
@@ -4875,10 +6267,19 @@ function EditorPane({
     if (editor.isDestroyed) return;
 
     const selectedText = () => {
+      if (isSourceMode) {
+        const textarea = sourceTextareaRef.current;
+        if (!textarea) return "";
+        return textarea.value.slice(textarea.selectionStart, textarea.selectionEnd);
+      }
       const { from, to } = editor.state.selection;
       return from === to ? "" : editor.state.doc.textBetween(from, to, "\n");
     };
     const selectedRange = () => {
+      if (isSourceMode) {
+        const textarea = sourceTextareaRef.current;
+        return { from: textarea?.selectionStart ?? 0, to: textarea?.selectionEnd ?? 0 };
+      }
       const { from, to } = editor.state.selection;
       return { from, to };
     };
@@ -4886,9 +6287,6 @@ function EditorPane({
     const wrapSelection = (before: string, after: string, placeholder: string) => {
       const text = selectedText() || placeholder;
       insertText(`${before}${text}${after}`);
-    };
-    const findInWindow = (text: string) => {
-      (window as Window & { find?: (value: string) => boolean }).find?.(text);
     };
     const transformSelection = (transform: (text: string) => string) => {
       const text = selectedText();
@@ -4928,15 +6326,17 @@ function EditorPane({
     };
 
     const runEditorCommand = (command: MenuCommand, payload?: unknown) => {
-      if (isReadOnlyDocument && command !== "edit:find-selection" && command !== "edit:find-next") return;
+      if (isReadOnlyDocument && command !== "edit:find" && command !== "edit:find-next") return;
       switch (command) {
-        case "edit:find-selection": {
-          const text = selectedText();
-          if (text) findInWindow(text);
+        case "edit:find":
+          openFindPanel(selectedText() || findQuery);
           return;
-        }
         case "edit:find-next":
-          if (selectedText()) findInWindow(selectedText());
+          if (!findOpen || !findQuery.trim()) {
+            openFindPanel(selectedText() || findQuery);
+            return;
+          }
+          runFindNext();
           return;
         case "edit:select-block": {
           const range = currentBlockRange();
@@ -4996,6 +6396,9 @@ function EditorPane({
         case "format:highlight":
           editor.chain().focus().toggleHighlight().run();
           return;
+        case "format:encrypt-text":
+          void beginEncryptSelection();
+          return;
         case "format:subscript":
           toggleExclusiveScript("subscript");
           return;
@@ -5036,7 +6439,7 @@ function EditorPane({
           if (!selectedText() && !currentBlockText()) {
             replaceCurrentEmptyBlock({
               type: "blockquote",
-              content: [{ type: "paragraph", content: [{ type: "text", text: "Quote" }] }]
+              content: [{ type: "paragraph" }]
             });
             return;
           }
@@ -5220,7 +6623,7 @@ function EditorPane({
       removeMenuListener();
       window.removeEventListener("informio:command", onLocalCommand);
     };
-  }, [document.title, editor, isReadOnlyDocument]);
+  }, [document.title, editor, isReadOnlyDocument, isSourceMode]);
 
   const normalizeLinkHref = (value: string) => (/^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`);
 
@@ -5244,13 +6647,322 @@ function EditorPane({
   const closeMarkdownToolbar = () => {
     clearMarkdownToolbarState();
   };
+  const canUndo = Boolean(editor?.can().chain().focus().undo().run());
+  const canRedo = Boolean(editor?.can().chain().focus().redo().run());
+  const handleUndo = () => {
+    if (!editor || editor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
+    editor.chain().focus().undo().run();
+  };
+  const handleRedo = () => {
+    if (!editor || editor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
+    editor.chain().focus().redo().run();
+  };
+  const openLinkDialogFromSelection = () => {
+    if (!editor || editor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
+    const { from, to } = editor.state.selection;
+    setLinkRequest({
+      from,
+      to,
+      text: from === to ? "" : editor.state.doc.textBetween(from, to, "\n"),
+      url: String(editor.getAttributes("link").href ?? "")
+    });
+  };
+  const confirmPendingPdfBacklink = async () => {
+    if (!pendingBacklinkForDocument || isReadOnlyDocument) return;
+    const markdownLink = `[PDF 标注](informio://pdf-annotation/${encodeURIComponent(pendingBacklinkForDocument.annotation.id)})`;
 
-  const pdfContext = useMemo<PdfEditorContextValue>(
+    if (isSourceMode) {
+      const textarea = sourceTextareaRef.current;
+      if (!textarea) return;
+      const selectionStart = textarea.selectionStart ?? 0;
+      const selectionEnd = textarea.selectionEnd ?? selectionStart;
+      const selectedText = selectionStart === selectionEnd ? "" : textarea.value.slice(selectionStart, selectionEnd).trim();
+      const target: PdfMarkdownTarget = {
+        documentId: document.id,
+        title: document.title,
+        filePath: document.filePath,
+        text: selectedText || undefined
+      };
+      const saved = await onConfirmPendingPdfBacklink(target);
+      if (!saved) return;
+      const insertion = selectionStart === selectionEnd ? markdownLink : `\n\n${markdownLink}\n`;
+      const insertAt = selectionEnd;
+      const nextMarkdown = `${textarea.value.slice(0, insertAt)}${insertion}${textarea.value.slice(insertAt)}`;
+      onChange(document.id, nextMarkdown);
+      window.setTimeout(() => {
+        textarea.focus();
+        const cursor = insertAt + insertion.length;
+        textarea.setSelectionRange(cursor, cursor);
+      }, 0);
+      onCancelPendingPdfBacklink();
+      return;
+    }
+
+    const currentEditor = editorInstanceRef.current;
+    if (!currentEditor || currentEditor.isDestroyed) return;
+    const { from, to } = currentEditor.state.selection;
+    const selectedText = from === to ? "" : currentEditor.state.doc.textBetween(from, to, "\n").trim();
+    const target: PdfMarkdownTarget = {
+      documentId: document.id,
+      title: document.title,
+      filePath: document.filePath,
+      text: selectedText || undefined
+    };
+    const saved = await onConfirmPendingPdfBacklink(target);
+    if (!saved) return;
+    const insertion = from === to ? markdownLink : `\n\n${markdownLink}\n`;
+    currentEditor
+      .chain()
+      .focus()
+      .insertContentAt({ from: to, to }, insertion, { contentType: "markdown" })
+      .run();
+    onCancelPendingPdfBacklink();
+  };
+  const runSelectionToolbarAction = (actionId: SelectionToolbarAction["id"]) => {
+    if (!editor || editor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
+    switch (actionId) {
+      case "bold":
+        editor.chain().focus().toggleBold().run();
+        return;
+      case "italic":
+        editor.chain().focus().toggleItalic().run();
+        return;
+      case "underline":
+        editor.chain().focus().toggleUnderline().run();
+        return;
+      case "strike":
+        editor.chain().focus().toggleStrike().run();
+        return;
+      case "subscript":
+        editor.chain().focus().unsetSuperscript().toggleSubscript().run();
+        return;
+      case "superscript":
+        editor.chain().focus().unsetSubscript().toggleSuperscript().run();
+        return;
+      case "highlight":
+        editor.chain().focus().toggleHighlight().run();
+        return;
+      case "link":
+        if (editor.isActive("link")) {
+          editor.chain().focus().unsetLink().run();
+          return;
+        }
+        openLinkDialogFromSelection();
+        return;
+    }
+  };
+  const isSelectionToolbarActionActive = (actionId: SelectionToolbarAction["id"]) => {
+    if (!editor) return false;
+    switch (actionId) {
+      case "bold":
+        return editor.isActive("bold");
+      case "italic":
+        return editor.isActive("italic");
+      case "underline":
+        return editor.isActive("underline");
+      case "strike":
+        return editor.isActive("strike");
+      case "subscript":
+        return editor.isActive("subscript");
+      case "superscript":
+        return editor.isActive("superscript");
+      case "highlight":
+        return editor.isActive("highlight");
+      case "link":
+        return editor.isActive("link");
+      default:
+        return false;
+    }
+  };
+  const selectionToolbarFormatItems = selectionToolbarActions.map((action) => ({
+    ...action,
+    pressed: isSelectionToolbarActionActive(action.id),
+    label: action.id === "link" && editor?.isActive("link") ? "去链接" : action.label,
+    onClick: () => runSelectionToolbarAction(action.id)
+  }));
+  const currentTextColor = (() => {
+    const color = editor?.getAttributes("textColor").color;
+    return typeof color === "string" && color.trim() ? color : null;
+  })();
+  const applySelectionTextColor = (color: string) => {
+    if (!editor || editor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
+    if (color === textColorOptions[0]?.value) {
+      editor.chain().focus().unsetMark("textColor").run();
+      return;
+    }
+    editor.chain().focus().setMark("textColor", { color }).run();
+  };
+  const selectedText = () => {
+    if (!editor || editor.isDestroyed) return "";
+    const { from, to } = editor.state.selection;
+    return from === to ? "" : editor.state.doc.textBetween(from, to, "\n");
+  };
+  const currentBlockRange = () => {
+    if (!editor || editor.isDestroyed) return { from: 0, to: 0 };
+    const { $from } = editor.state.selection;
+    const depth = Math.max(1, $from.depth);
+    return { from: $from.start(depth), to: $from.end(depth) };
+  };
+  const currentBlockText = () => {
+    if (!editor || editor.isDestroyed) return "";
+    const range = currentBlockRange();
+    return editor.state.doc.textBetween(range.from, range.to, "\n").trim();
+  };
+  const replaceCurrentEmptyBlock = (content: Record<string, unknown>) => {
+    if (!editor || editor.isDestroyed) return;
+    const range = currentBlockRange();
+    editor.chain().focus().deleteRange(range).insertContent(content).run();
+  };
+  const runInsertToolbarCommand = (
+    command:
+      | "insert:table"
+      | "format:bullet-list"
+      | "format:ordered-list"
+      | "format:task-list"
+      | "format:blockquote"
+      | "format:code-block"
+      | "insert:math"
+      | "insert:chart"
+      | "insert:callout"
+      | "insert:footnote"
+      | "insert:details"
+      | "insert:horizontal-rule"
+  ) => {
+    if (!editor || editor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
+    switch (command) {
+      case "insert:table":
+        editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+        return;
+      case "format:bullet-list":
+        if (!selectedText() && !currentBlockText()) {
+          replaceCurrentEmptyBlock({
+            type: "bulletList",
+            content: [
+              {
+                type: "listItem",
+                content: [{ type: "paragraph", content: [{ type: "text", text: "List item" }] }]
+              }
+            ]
+          });
+          return;
+        }
+        editor.chain().focus().toggleBulletList().run();
+        return;
+      case "format:ordered-list":
+        if (!selectedText() && !currentBlockText()) {
+          replaceCurrentEmptyBlock({
+            type: "orderedList",
+            content: [
+              {
+                type: "listItem",
+                content: [{ type: "paragraph", content: [{ type: "text", text: "List item" }] }]
+              }
+            ]
+          });
+          return;
+        }
+        editor.chain().focus().toggleOrderedList().run();
+        return;
+      case "format:task-list":
+        if (!selectedText() && !currentBlockText()) {
+          replaceCurrentEmptyBlock({
+            type: "taskList",
+            content: [
+              {
+                type: "taskItem",
+                attrs: { checked: false },
+                content: [{ type: "paragraph" }]
+              }
+            ]
+          });
+          return;
+        }
+        editor.chain().focus().toggleTaskList().run();
+        return;
+      case "format:blockquote":
+        if (!selectedText() && !currentBlockText()) {
+          replaceCurrentEmptyBlock({
+            type: "blockquote",
+            content: [{ type: "paragraph" }]
+          });
+          return;
+        }
+        editor.chain().focus().toggleBlockquote().run();
+        return;
+      case "format:code-block":
+        editor.chain().focus().toggleCodeBlock({ language: "plaintext" }).run();
+        return;
+      case "insert:math": {
+        const source = defaultBlockSource("mathBlock");
+        editor
+          .chain()
+          .focus()
+          .insertContent({ type: "mathBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+          .createParagraphNear()
+          .run();
+        return;
+      }
+      case "insert:chart": {
+        const source = defaultBlockSource("chartBlock");
+        editor
+          .chain()
+          .focus()
+          .insertContent({ type: "chartBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+          .createParagraphNear()
+          .run();
+        return;
+      }
+      case "insert:callout": {
+        const source = defaultBlockSource("calloutBlock");
+        editor
+          .chain()
+          .focus()
+          .insertContent({ type: "calloutBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+          .createParagraphNear()
+          .run();
+        return;
+      }
+      case "insert:footnote": {
+        const source = defaultBlockSource("footnoteBlock");
+        editor
+          .chain()
+          .focus()
+          .insertContent({ type: "footnoteBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+          .createParagraphNear()
+          .run();
+        return;
+      }
+      case "insert:details": {
+        const source = defaultBlockSource("detailsBlock");
+        editor
+          .chain()
+          .focus()
+          .insertContent({ type: "detailsBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+          .createParagraphNear()
+          .run();
+        return;
+      }
+      case "insert:horizontal-rule":
+        editor.chain().focus().setHorizontalRule().run();
+        return;
+    }
+  };
+  const handleInsertToolbarAction = (action: InsertToolbarAction) => {
+    if (action.kind === "asset") {
+      void window.informio.insertAsset(action.assetKind);
+      return;
+    }
+    runInsertToolbarCommand(action.command);
+  };
+
+  const pdfContext = useMemo<UnifiedPdfEditorContextValue>(
     () => ({
+      paneId,
       document,
       settings,
       markdownTarget,
       focusAnnotationId: focusPdfAnnotationId,
+      annotationRefreshToken,
       toolbarEnabled,
       toolbarTranslate,
       onPdfSelection: (selection) => {
@@ -5275,55 +6987,87 @@ function EditorPane({
       },
       onTranslateSelection,
       onClearToolbarTranslate,
+      onRequestPdfBacklink: (annotation) => onRequestPdfBacklink(annotation, paneId),
+      onPdfAnnotationStoreChanged,
       onRegisterPdfAnnotation,
       onDeletePdfAnnotation,
       onInsertPdfBacklink,
-      onOpenMarkdownTarget
+      onOpenMarkdownTarget: (target) => onOpenMarkdownTarget(target, paneId)
     }),
     [
+      annotationRefreshToken,
       document,
       focusPdfAnnotationId,
       markdownTarget,
       onClearToolbarTranslate,
       onDeletePdfAnnotation,
+      onPdfAnnotationStoreChanged,
       onInsertPdfBacklink,
       onOpenMarkdownTarget,
+      onRequestPdfBacklink,
       onRegisterPdfAnnotation,
       onSelection,
       onTranslateSelection,
+      paneId,
       settings,
       toolbarEnabled,
       toolbarTranslate
     ]
   );
+  const editorContentMaxWidth = isReadOnlyDocument ? undefined : clamp(settings.editor.contentWidth, EDITOR_CONTENT_MIN_WIDTH, EDITOR_CONTENT_MAX_WIDTH);
+  const showPinnedInsertToolbar = !isReadOnlyDocument && !isSourceMode;
 
   return (
-    <main
-      ref={shellRef}
-      className={cn(
-        "informio-editor-shell relative flex min-w-0 flex-1 justify-center",
-        isReadOnlyDocument ? "is-pdf-document overflow-y-auto overflow-x-hidden" : "overflow-y-auto"
-      )}
-      onMouseUp={(event) => {
-        if ((event.target as HTMLElement).closest(selectionToolbarSafeAreaSelector)) return;
-        if (editor && !isReadOnlyDocument && !isSourceMode) scheduleMarkdownSelectionCapture(editor);
-      }}
-      onKeyUp={() => {
-        if (editor && !isReadOnlyDocument && !isSourceMode) scheduleMarkdownSelectionCapture(editor);
-      }}
-      style={
-        {
-          "--editor-font-size": `${settings.editor.fontSize}px`,
-          "--editor-line-height": String(settings.editor.lineHeight)
-        } as React.CSSProperties
-      }
-    >
-      <div
-        className={cn("w-full", isReadOnlyDocument ? "h-full" : "px-12 pb-24 pt-12 max-[780px]:px-5")}
-        style={isReadOnlyDocument ? undefined : { maxWidth: clamp(settings.editor.contentWidth, EDITOR_CONTENT_MIN_WIDTH, EDITOR_CONTENT_MAX_WIDTH) }}
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {showPinnedInsertToolbar ? (
+        <div className="informio-insert-toolbar-header flex shrink-0 justify-center">
+          <div className="w-full" style={editorContentMaxWidth ? { maxWidth: editorContentMaxWidth } : undefined}>
+            <div className="informio-insert-toolbar-shell px-12 pt-2 max-[780px]:px-5 max-[780px]:pt-2">
+              <InsertToolbar
+                onAction={handleInsertToolbarAction}
+                onUndo={handleUndo}
+                onRedo={handleRedo}
+                canUndo={canUndo}
+                canRedo={canRedo}
+                propertiesOpen={propertiesOpen}
+                onToggleProperties={() => setPropertiesOpen((current) => !current)}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <main
+        ref={shellRef}
+        className={cn(
+          "informio-editor-shell relative flex min-w-0 flex-1 justify-center",
+          isReadOnlyDocument ? "is-pdf-document overflow-y-auto overflow-x-hidden" : "overflow-y-auto"
+        )}
+        onMouseUp={(event) => {
+          if ((event.target as HTMLElement).closest(selectionToolbarSafeAreaSelector)) return;
+          if (editor && !isReadOnlyDocument && !isSourceMode) scheduleMarkdownSelectionCapture(editor);
+        }}
+        onKeyUp={() => {
+          if (editor && !isReadOnlyDocument && !isSourceMode) scheduleMarkdownSelectionCapture(editor);
+        }}
+        style={
+          {
+            "--editor-font-size": `${settings.editor.fontSize}px`,
+            "--editor-line-height": String(settings.editor.lineHeight)
+          } as React.CSSProperties
+        }
       >
-        {isReadOnlyDocument || isSourceMode ? null : <PropertiesPanel frontmatter={frontmatter} onChange={updateFrontmatterRaw} />}
-        <PdfEditorContext.Provider value={pdfContext}>
+        <div className="w-full" style={editorContentMaxWidth ? { maxWidth: editorContentMaxWidth } : undefined}>
+        <div
+          ref={contentColumnRef}
+          className={cn(
+            "w-full",
+            isReadOnlyDocument ? "h-full" : "px-12 pb-24 max-[780px]:px-5",
+            showPinnedInsertToolbar ? "informio-content-under-toolbar" : undefined,
+            isSourceMode ? "pt-2 max-[780px]:pt-2" : undefined
+          )}
+        >
+        {isReadOnlyDocument || isSourceMode || !propertiesOpen ? null : <PropertiesPanel frontmatter={frontmatter} onChange={updateFrontmatterRaw} />}
+        <UnifiedPdfEditorContext.Provider value={pdfContext}>
           {isSourceMode ? (
             <textarea
               ref={sourceTextareaRef}
@@ -5332,13 +7076,145 @@ function EditorPane({
               onChange={(event) => onChange(document.id, event.target.value)}
               className="informio-editor informio-editor-source w-full resize-none border-0 bg-transparent p-0"
             />
+          ) : isReadOnlyDocument ? (
+            <UnifiedPdfViewerSurface />
           ) : (
             <EditorContent editor={editor} className={isReadOnlyDocument ? "h-full" : undefined} />
           )}
-        </PdfEditorContext.Provider>
+        </UnifiedPdfEditorContext.Provider>
+        </div>
       </div>
+      {!isReadOnlyDocument && findOpen ? (
+        <div className="pointer-events-auto absolute right-5 top-4 z-40 w-[340px] rounded-xl border border-slate-200/80 bg-white/95 p-3 text-[13px] shadow-[0_20px_45px_rgba(15,23,42,0.16)] backdrop-blur" data-selection-toolbar-safe-area="true">
+          <div className="grid gap-2">
+            <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-2">
+              <button
+                type="button"
+                aria-label={showReplace ? "收起替换" : "展开替换"}
+                onClick={() => setShowReplace((current) => !current)}
+                className="grid h-8 w-8 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+              >
+                {showReplace ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+              <input
+                ref={findQueryInputRef}
+                value={findQuery}
+                onChange={(event) => setFindQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    runFindNext();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setFindOpen(false);
+                  }
+                }}
+                placeholder="查找文本"
+                className="h-8 rounded-md border-0 bg-slate-50 px-3 text-[13px] text-[var(--text-main)] outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-emerald-500/45"
+              />
+              <button
+                type="button"
+                aria-label="查找下一个"
+                onClick={() => runFindNext()}
+                className="grid h-8 w-8 place-items-center rounded-md bg-slate-950 text-white transition-transform active:scale-95"
+              >
+                <Search size={14} />
+              </button>
+              <button
+                type="button"
+                aria-label="关闭查找"
+                onClick={() => setFindOpen(false)}
+                className="grid h-8 w-8 place-items-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            {showReplace ? (
+              <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
+                <div className="h-8 w-8" />
+                <input
+                  value={replaceQuery}
+                  onChange={(event) => setReplaceQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      replaceCurrentFindMatch();
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setFindOpen(false);
+                    }
+                  }}
+                  placeholder="替换文本"
+                  className="h-8 rounded-md border-0 bg-slate-50 px-3 text-[13px] text-[var(--text-main)] outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-emerald-500/45"
+                />
+                <button
+                  type="button"
+                  aria-label="替换当前"
+                  onClick={replaceCurrentFindMatch}
+                  className="grid h-8 w-8 place-items-center rounded-md bg-emerald-50 text-emerald-700 transition-colors hover:bg-emerald-100"
+                >
+                  <Replace size={14} />
+                </button>
+              </div>
+            ) : null}
+          </div>
+          {findStatus || findMatch ? (
+            <div className="mt-2 min-h-[18px] pl-10 text-[13px] text-[var(--text-muted)]">{findStatus ?? "已定位当前匹配。"}</div>
+          ) : null}
+        </div>
+      ) : null}
       {isReadOnlyDocument || isSourceMode ? null : <TableControls editor={editor} containerRef={shellRef} />}
       {isReadOnlyDocument || isSourceMode ? null : <LinkDialog request={linkRequest} onClose={() => setLinkRequest(null)} onConfirm={applyLink} />}
+      {isReadOnlyDocument || isSourceMode ? null : (
+        <SecretPassphraseDialog
+          request={secretPromptRequest}
+          onClose={closeSecretPrompt}
+          onConfirm={(input) => {
+            void confirmSecretPrompt(input);
+          }}
+        />
+      )}
+      {pendingBacklinkForDocument ? (
+        <div
+          className="pointer-events-auto absolute right-5 top-4 z-40 w-[min(360px,calc(100vw-32px))] rounded-xl border border-emerald-200/90 bg-white/96 p-3 text-[13px] shadow-[0_20px_45px_rgba(15,23,42,0.16)] backdrop-blur"
+          data-selection-toolbar-safe-area="true"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 rounded-full bg-emerald-50 p-1 text-emerald-600">
+              <Link2 size={14} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-[var(--text-main)]">放置 PDF 回链位置</div>
+              <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                先在这里点击光标，或选中一段文字作为参考位置，然后确认插入。
+              </div>
+              <div className="mt-3 flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="h-8 rounded-md px-3 text-[12px] font-bold text-slate-600 transition-[background-color,transform] hover:bg-slate-100 active:scale-[0.99]"
+                  onClick={onCancelPendingPdfBacklink}
+                  disabled={pendingBacklinkForDocument.step === "saving"}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-emerald-600 px-3 text-[12px] font-bold text-white transition-[background-color,opacity,transform] hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-45"
+                  onClick={() => {
+                    void confirmPendingPdfBacklink();
+                  }}
+                  disabled={pendingBacklinkForDocument.step === "saving"}
+                >
+                  {pendingBacklinkForDocument.step === "saving" ? <Loader2 size={13} className="animate-spin" /> : null}
+                  <span>{pendingBacklinkForDocument.step === "saving" ? "保存中" : "确认插入"}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {!isReadOnlyDocument && !isSourceMode && wikiSuggest ? (
         <div className="informio-wiki-suggest no-drag fixed z-50 max-h-72 w-72 overflow-hidden rounded-md bg-white py-1 text-[13px] shadow-[0_18px_45px_rgba(15,23,42,0.18),0_0_0_1px_rgba(15,23,42,0.08)]" style={{ left: wikiSuggest.left, top: wikiSuggest.top }}>
           {wikiSuggestions.length ? (
@@ -5380,8 +7256,14 @@ function EditorPane({
           busy={toolbarTranslate.status === "loading"}
           left={markdownToolbar?.overlayLeft ?? 0}
           top={markdownToolbar?.overlayTop ?? 0}
+          currentTextColor={currentTextColor}
+          formatActions={selectionToolbarFormatItems}
           response={toolbarTranslate.response}
           error={toolbarTranslate.error}
+          onApplyTextColor={applySelectionTextColor}
+          onEncrypt={() => {
+            void beginEncryptSelection();
+          }}
           onTranslate={() => {
             if (!markdownToolbar) return;
             onTranslateSelection(markdownToolbar);
@@ -5389,7 +7271,8 @@ function EditorPane({
           onClose={closeMarkdownToolbar}
         />
       ) : null}
-    </main>
+      </main>
+    </div>
   );
 }
 
@@ -5532,7 +7415,7 @@ function CommandPalette({ open, commands, onClose }: { open: boolean; commands: 
       <div className="command-palette" onMouseDown={(event) => event.stopPropagation()}>
         <div className="command-palette-input">
           <Search size={16} />
-          <input ref={inputRef} value={query} placeholder="输入命令或打开文档" onChange={(event) => { setQuery(event.target.value); setIndex(0); }} />
+          <input ref={inputRef} value={query} placeholder="搜索系统命令或文档" onChange={(event) => { setQuery(event.target.value); setIndex(0); }} />
           <kbd>Esc</kbd>
         </div>
         <div ref={listRef} className="command-palette-list">
@@ -5566,75 +7449,277 @@ function CommandPalette({ open, commands, onClose }: { open: boolean; commands: 
 
 type TableOverlayState = {
   table: HTMLTableElement;
+  tablePos: number;
   rect: { top: number; left: number; width: number; height: number };
   rows: Array<{ top: number; height: number }>;
   columns: Array<{ left: number; width: number }>;
-  merged: boolean;
 };
 
-type TableDragState = { type: "row" | "column"; from: number } | null;
-
-const tableHasMergedCells = (table: HTMLTableElement) =>
-  Array.from(table.rows).some((row) =>
-    Array.from(row.cells).some((cell) => Number(cell.getAttribute("colspan") ?? "1") > 1 || Number(cell.getAttribute("rowspan") ?? "1") > 1)
-  );
-
-const moveArrayItem = <T,>(items: T[], from: number, to: number) => {
-  const next = [...items];
-  const [item] = next.splice(from, 1);
-  next.splice(to, 0, item);
-  return next;
+type TableSelectionShape = {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+  rowSelection: boolean;
+  columnSelection: boolean;
+  fullTable: boolean;
 };
 
-const serializeCellAttributes = (cell: HTMLTableCellElement) =>
-  Array.from(cell.attributes)
-    .filter((attribute) => attribute.name !== "class" && attribute.name !== "style")
-    .filter((attribute) => !attribute.name.startsWith("data-") || attribute.name === "data-colwidth")
-    .map((attribute) => ` ${attribute.name}="${escapeHtml(attribute.value)}"`)
-    .join("");
+type TableColumnWidthInfo = {
+  width: number;
+  fixed: boolean;
+};
 
-const tableToHtml = (rows: HTMLTableCellElement[][]) =>
-  `<table><tbody>${rows
-    .map((row) => `<tr>${row.map((cell) => `<${cell.tagName.toLowerCase()}${serializeCellAttributes(cell)}>${cell.innerHTML}</${cell.tagName.toLowerCase()}>`).join("")}</tr>`)
-    .join("")}</tbody></table>`;
-
-const findTableRange = (editor: Editor, table: HTMLTableElement) => {
-  let range: { from: number; to: number } | null = null;
-  editor.state.doc.descendants((node, pos) => {
-    if (node.type.name !== "table") return true;
-    const dom = editor.view.nodeDOM(pos);
-    if (dom instanceof Element && (dom === table || dom.contains(table))) {
-      range = { from: pos, to: pos + node.nodeSize };
-      return false;
+type TableHoverTarget =
+  | {
+      axis: "row" | "column";
+      index: number;
     }
-    return true;
-  });
-  return range;
+  | null;
+
+const tablePosFromDom = (editor: Editor, table: HTMLTableElement) => {
+  const firstCell = table.querySelector("th, td");
+  if (firstCell instanceof HTMLTableCellElement) {
+    let cellPos: number | null = null;
+    try {
+      const contentPos = editor.view.posAtDOM(firstCell, 0);
+      const nextCellPos = Math.max(0, contentPos - 1);
+      const node = editor.state.doc.nodeAt(nextCellPos);
+      if (node?.type.name === "tableCell" || node?.type.name === "tableHeader") cellPos = nextCellPos;
+    } catch {
+      cellPos = null;
+    }
+    if (cellPos !== null) {
+      const $cell = editor.state.doc.resolve(cellPos);
+      for (let depth = $cell.depth; depth > 0; depth -= 1) {
+        if ($cell.node(depth).type.name === "table") return $cell.before(depth);
+      }
+    }
+  }
+  return null;
 };
 
 const selectCellForTableCommand = (editor: Editor, table: HTMLTableElement, rowIndex: number, columnIndex: number) => {
   const row = table.rows.item(rowIndex);
   const cell = row?.cells.item(columnIndex);
   if (!cell) return false;
-  const pos = editor.view.posAtDOM(cell, 0) + 1;
+  const pos = editor.view.posAtDOM(cell, 0);
   editor.chain().focus().setTextSelection(pos).run();
   return true;
 };
 
+const selectionTableFromEditor = (editor: Editor) => {
+  const domAtSelection = editor.view.domAtPos(editor.state.selection.from);
+  const target =
+    domAtSelection.node instanceof Element ? domAtSelection.node : domAtSelection.node.parentElement;
+  return target?.closest("table") as HTMLTableElement | null;
+};
+
+const tableCellPosAt = (table: ProseMirrorNode, tablePos: number, rowIndex: number, columnIndex: number) => {
+  const map = TableMap.get(table);
+  if (rowIndex < 0 || rowIndex >= map.height || columnIndex < 0 || columnIndex >= map.width) return null;
+  const offset = map.map[rowIndex * map.width + columnIndex];
+  return tablePos + 1 + offset;
+};
+
+const tableRowPosAt = (table: ProseMirrorNode, tablePos: number, rowIndex: number) => {
+  if (rowIndex < 0 || rowIndex >= table.childCount) return null;
+  let pos = tablePos + 1;
+  for (let index = 0; index < rowIndex; index += 1) {
+    pos += table.child(index).nodeSize;
+  }
+  return pos;
+};
+
+const tableSelectionShapeFromSelection = (selection: Editor["state"]["selection"], table: ProseMirrorNode, tablePos: number): TableSelectionShape | null => {
+  if (selection instanceof CellSelection) {
+    const map = TableMap.get(table);
+    const tableStart = tablePos + 1;
+    const rect = map.rectBetween(selection.$anchorCell.pos - tableStart, selection.$headCell.pos - tableStart);
+    return {
+      top: rect.top,
+      bottom: rect.bottom,
+      left: rect.left,
+      right: rect.right,
+      rowSelection: selection.isRowSelection(),
+      columnSelection: selection.isColSelection(),
+      fullTable: rect.top === 0 && rect.left === 0 && rect.bottom === map.height && rect.right === map.width
+    };
+  }
+
+  if (selection instanceof NodeSelection && selection.node.type.name === "table" && selection.from === tablePos) {
+    const map = TableMap.get(table);
+    return {
+      top: 0,
+      bottom: map.height,
+      left: 0,
+      right: map.width,
+      rowSelection: false,
+      columnSelection: false,
+      fullTable: true
+    };
+  }
+
+  const { $from } = selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    const node = $from.node(depth);
+    if (node.type.name !== "tableCell" && node.type.name !== "tableHeader") continue;
+    const cellPos = $from.before(depth);
+    const map = TableMap.get(table);
+    const tableStart = tablePos + 1;
+    const rect = map.findCell(cellPos - tableStart);
+    return {
+      top: rect.top,
+      bottom: rect.bottom,
+      left: rect.left,
+      right: rect.right,
+      rowSelection: false,
+      columnSelection: false,
+      fullTable: false
+    };
+  }
+
+  return null;
+};
+
+const activeTableCellNodeFromSelection = (selection: Editor["state"]["selection"]) => {
+  if (selection instanceof CellSelection) {
+    return selection.$anchorCell.nodeAfter;
+  }
+  if (selection instanceof NodeSelection && (selection.node.type.name === "tableCell" || selection.node.type.name === "tableHeader")) {
+    return selection.node;
+  }
+  const { $from } = selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    const node = $from.node(depth);
+    if (node.type.name === "tableCell" || node.type.name === "tableHeader") return node;
+  }
+  return null;
+};
+
+const tableColumnLabel = (index: number) => {
+  let value = index;
+  let label = "";
+  do {
+    label = String.fromCharCode(65 + (value % 26)) + label;
+    value = Math.floor(value / 26) - 1;
+  } while (value >= 0);
+  return label;
+};
+
+const tableColumnWidthInfo = (editor: Editor, table: HTMLTableElement, tablePos: number): TableColumnWidthInfo[] => {
+  const tableNode = editor.state.doc.nodeAt(tablePos);
+  if (tableNode?.type.name !== "table") return [];
+
+  const map = TableMap.get(tableNode);
+  const fallbackWidths = Array.from(table.querySelectorAll("colgroup col")).map((column) => {
+    const width = Number.parseFloat(window.getComputedStyle(column).width);
+    return Number.isFinite(width) && width > 0 ? width : TABLE_CELL_MIN_WIDTH;
+  });
+
+  const widths = Array.from({ length: map.width }, (_, index) => ({
+    width: fallbackWidths[index] ?? TABLE_CELL_MIN_WIDTH,
+    fixed: false
+  }));
+
+  const tableStart = tablePos + 1;
+  for (let rowIndex = 0; rowIndex < map.height; rowIndex += 1) {
+    for (let columnIndex = 0; columnIndex < map.width; columnIndex += 1) {
+      if (widths[columnIndex].fixed) continue;
+      const cellPos = tableCellPosAt(tableNode, tablePos, rowIndex, columnIndex);
+      if (cellPos === null) continue;
+
+      const cellNode = editor.state.doc.nodeAt(cellPos);
+      if (!cellNode) continue;
+
+      const rect = map.findCell(cellPos - tableStart);
+      const colwidth = Array.isArray(cellNode.attrs.colwidth) ? cellNode.attrs.colwidth : [];
+      const width = Number(colwidth[columnIndex - rect.left] ?? 0);
+      if (!Number.isFinite(width) || width <= 0) continue;
+
+      widths[columnIndex] = { width, fixed: true };
+    }
+  }
+
+  return widths;
+};
+
+const nearestTableHoverTarget = (overlay: TableOverlayState, clientX: number, clientY: number): TableHoverTarget => {
+  const tableRect = overlay.table.getBoundingClientRect();
+  const relativeX = clientX - tableRect.left;
+  const relativeY = clientY - tableRect.top;
+  const columnLines = [0, ...overlay.columns.map((column) => column.left + column.width)];
+  const rowLines = [0, ...overlay.rows.map((row) => row.top + row.height)];
+  const nearestColumn = columnLines.reduce(
+    (best, line, index) => {
+      const distance = Math.abs(relativeX - line);
+      return distance < best.distance ? { index, distance } : best;
+    },
+    { index: -1, distance: Number.POSITIVE_INFINITY }
+  );
+  const nearestRow = rowLines.reduce(
+    (best, line, index) => {
+      const distance = Math.abs(relativeY - line);
+      return distance < best.distance ? { index, distance } : best;
+    },
+    { index: -1, distance: Number.POSITIVE_INFINITY }
+  );
+  const insideColumnBand = relativeY >= -TABLE_EDGE_HIT_DISTANCE && relativeY <= overlay.rect.height + TABLE_EDGE_HIT_DISTANCE;
+  const insideRowBand = relativeX >= -TABLE_EDGE_HIT_DISTANCE && relativeX <= overlay.rect.width + TABLE_EDGE_HIT_DISTANCE;
+  const columnTarget =
+    insideColumnBand && nearestColumn.distance <= TABLE_EDGE_HIT_DISTANCE
+      ? ({ axis: "column", index: nearestColumn.index } as const)
+      : null;
+  const rowTarget =
+    insideRowBand && nearestRow.distance <= TABLE_EDGE_HIT_DISTANCE
+      ? ({ axis: "row", index: nearestRow.index } as const)
+      : null;
+  if (columnTarget && rowTarget) return nearestColumn.distance <= nearestRow.distance ? columnTarget : rowTarget;
+  return columnTarget ?? rowTarget;
+};
+
 function TableControls({ editor, containerRef }: { editor: Editor | null; containerRef: React.RefObject<HTMLElement | null> }) {
   const [overlay, setOverlay] = useState<TableOverlayState | null>(null);
-  const [dragState, setDragState] = useState<TableDragState>(null);
-  const [dropTarget, setDropTarget] = useState<number | null>(null);
+  const [hoverTarget, setHoverTarget] = useState<TableHoverTarget>(null);
+  const selectionTableRef = useRef<HTMLTableElement | null>(null);
 
   const measureTable = (table: HTMLTableElement): TableOverlayState | null => {
     const container = containerRef.current;
     if (!container) return null;
+    const tablePos = tablePosFromDom(editor!, table);
+    if (tablePos === null) return null;
     const containerRect = container.getBoundingClientRect();
     const tableRect = table.getBoundingClientRect();
     const firstRow = table.rows.item(0);
     if (!firstRow) return null;
+    const tableNode = editor?.state.doc.nodeAt(tablePos);
+    if (tableNode?.type.name !== "table") return null;
+    const map = TableMap.get(tableNode);
+    const colGroupColumns = Array.from(table.querySelectorAll("colgroup col"))
+      .map((column) => Number.parseFloat(window.getComputedStyle(column).width))
+      .filter((width) => Number.isFinite(width) && width > 0);
+    const columns =
+      colGroupColumns.length === map.width
+        ? (() => {
+            let accumulatedLeft = 0;
+            return colGroupColumns.map((width) => {
+              const column = { left: accumulatedLeft, width };
+              accumulatedLeft += width;
+              return column;
+            });
+          })()
+        : Array.from(firstRow.cells).flatMap((cell) => {
+            const rect = cell.getBoundingClientRect();
+            const colspan = Math.max(1, cell.colSpan || 1);
+            const logicalWidth = rect.width / colspan;
+            return Array.from({ length: colspan }, (_, columnIndex) => ({
+              left: rect.left - tableRect.left + logicalWidth * columnIndex,
+              width: logicalWidth
+            }));
+          }).slice(0, map.width);
     return {
       table,
+      tablePos,
       rect: {
         top: tableRect.top - containerRect.top + container.scrollTop,
         left: tableRect.left - containerRect.left + container.scrollLeft,
@@ -5645,11 +7730,7 @@ function TableControls({ editor, containerRef }: { editor: Editor | null; contai
         const rect = row.getBoundingClientRect();
         return { top: rect.top - tableRect.top, height: rect.height };
       }),
-      columns: Array.from(firstRow.cells).map((cell) => {
-        const rect = cell.getBoundingClientRect();
-        return { left: rect.left - tableRect.left, width: rect.width };
-      }),
-      merged: tableHasMergedCells(table)
+      columns
     };
   };
 
@@ -5668,22 +7749,36 @@ function TableControls({ editor, containerRef }: { editor: Editor | null; contai
 
     const onPointerMove = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("[data-table-controls]")) return;
       const table =
         (target?.closest("table") as HTMLTableElement | null) ??
         (target?.closest(".tableWrapper")?.querySelector("table") as HTMLTableElement | null);
-      if (table) refreshOverlay(table);
+      if (!table) {
+        setHoverTarget(null);
+        if (selectionTableRef.current) refreshOverlay(selectionTableRef.current);
+        else setOverlay(null);
+        return;
+      }
+      const measured = measureTable(table);
+      setOverlay(measured);
+      setHoverTarget(measured ? nearestTableHoverTarget(measured, event.clientX, event.clientY) : null);
+    };
+    const onPointerLeave = () => {
+      setHoverTarget(null);
+      if (selectionTableRef.current) refreshOverlay(selectionTableRef.current);
+      else setOverlay(null);
     };
     const updateFromSelection = () => {
-      const domAtSelection = editor.view.domAtPos(editor.state.selection.from);
-      const target =
-        domAtSelection.node instanceof Element ? domAtSelection.node : domAtSelection.node.parentElement;
-      const table = target?.closest("table") as HTMLTableElement | null;
+      const table = selectionTableFromEditor(editor);
+      selectionTableRef.current = table;
       if (table) refreshOverlay(table);
+      else if (!hoverTarget) setOverlay(null);
     };
     const onScroll = () => refreshOverlay();
     const onResize = () => refreshOverlay();
 
     container.addEventListener("pointermove", onPointerMove);
+    container.addEventListener("pointerleave", onPointerLeave);
     container.addEventListener("scroll", onScroll);
     window.addEventListener("resize", onResize);
     editor.on("selectionUpdate", updateFromSelection);
@@ -5691,122 +7786,471 @@ function TableControls({ editor, containerRef }: { editor: Editor | null; contai
     updateFromSelection();
     return () => {
       container.removeEventListener("pointermove", onPointerMove);
+      container.removeEventListener("pointerleave", onPointerLeave);
       container.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onResize);
       editor.off("selectionUpdate", updateFromSelection);
       editor.off("update", updateFromSelection);
     };
-  }, [containerRef, editor, overlay?.table]);
+  }, [containerRef, editor, hoverTarget, overlay?.table]);
 
   if (!editor || !overlay) return null;
 
-  const runTableCommand = (side: "top" | "right" | "bottom" | "left") => {
-    const rowIndex = side === "bottom" ? overlay.rows.length - 1 : 0;
-    const columnIndex = side === "right" ? overlay.columns.length - 1 : 0;
-    if (!selectCellForTableCommand(editor, overlay.table, rowIndex, columnIndex)) return;
-    if (side === "top") editor.chain().focus().addRowBefore().run();
-    if (side === "bottom") editor.chain().focus().addRowAfter().run();
-    if (side === "left") editor.chain().focus().addColumnBefore().run();
-    if (side === "right") editor.chain().focus().addColumnAfter().run();
+  const selectionInOverlayTable = selectionTableRef.current === overlay.table;
+  const tableNode = editor.state.doc.nodeAt(overlay.tablePos);
+  if (tableNode?.type.name !== "table") return null;
+
+  const hasCellSelection = selectionInOverlayTable && editor.state.selection instanceof CellSelection;
+  const selectionShape = selectionInOverlayTable ? tableSelectionShapeFromSelection(editor.state.selection, tableNode, overlay.tablePos) : null;
+  const activeCellNode = selectionInOverlayTable ? activeTableCellNodeFromSelection(editor.state.selection) : null;
+  const currentHorizontalAlign = (activeCellNode?.attrs.align as HorizontalCellAlign | undefined) ?? "center";
+  const currentVerticalAlign = (activeCellNode?.attrs.verticalAlign as VerticalCellAlign | undefined) ?? "middle";
+  const canMergeCells = hasCellSelection && editor.can().chain().focus().mergeCells().run();
+  const canSplitCell = selectionInOverlayTable && editor.can().chain().focus().splitCell().run();
+  const canDeleteRow = selectionInOverlayTable && editor.can().chain().focus().deleteRow().run();
+  const canDeleteColumn = selectionInOverlayTable && editor.can().chain().focus().deleteColumn().run();
+  const canDeleteTable = selectionInOverlayTable && editor.can().chain().focus().deleteTable().run();
+
+  const applyCellAttribute = (name: "align" | "verticalAlign", value: HorizontalCellAlign | VerticalCellAlign) => {
+    if (!selectionInOverlayTable) return;
+    editor.chain().focus().setCellAttribute(name, value).run();
     window.setTimeout(() => refreshOverlay(), 0);
   };
 
-  const reorderTable = (type: "row" | "column", from: number, to: number) => {
-    if (overlay.merged || from === to) return;
-    const range = findTableRange(editor, overlay.table);
-    if (!range) return;
-    const rows = Array.from(overlay.table.rows).map((row) => Array.from(row.cells));
-    const reordered = type === "row" ? moveArrayItem(rows, from, to) : rows.map((row) => moveArrayItem(row, from, to));
-    editor.chain().focus().insertContentAt(range, tableToHtml(reordered)).run();
-    setDragState(null);
-    setDropTarget(null);
-    window.setTimeout(() => {
-      const nextTable = editor.view.dom.querySelector("table") as HTMLTableElement | null;
-      if (nextTable) refreshOverlay(nextTable);
-    }, 0);
+  const setSelectionAndFocus = (selection: CellSelection) => {
+    editor.view.dispatch(editor.state.tr.setSelection(selection).scrollIntoView());
+    editor.view.focus();
+    window.setTimeout(() => refreshOverlay(), 0);
   };
 
-  const startDrag = (type: "row" | "column", from: number, event: React.DragEvent<HTMLButtonElement>) => {
-    if (overlay.merged) {
-      event.preventDefault();
+  const selectTableRowAt = (rowIndex: number) => {
+    const map = TableMap.get(tableNode);
+    const anchor = tableCellPosAt(tableNode, overlay.tablePos, rowIndex, 0);
+    const head = tableCellPosAt(tableNode, overlay.tablePos, rowIndex, map.width - 1);
+    if (anchor === null || head === null) return;
+    setSelectionAndFocus(CellSelection.rowSelection(editor.state.doc.resolve(anchor), editor.state.doc.resolve(head)));
+  };
+
+  const selectTableColumnAt = (columnIndex: number) => {
+    const map = TableMap.get(tableNode);
+    const anchor = tableCellPosAt(tableNode, overlay.tablePos, 0, columnIndex);
+    const head = tableCellPosAt(tableNode, overlay.tablePos, map.height - 1, columnIndex);
+    if (anchor === null || head === null) return;
+    setSelectionAndFocus(CellSelection.colSelection(editor.state.doc.resolve(anchor), editor.state.doc.resolve(head)));
+  };
+
+  const selectWholeTable = () => {
+    const map = TableMap.get(tableNode);
+    const anchor = tableCellPosAt(tableNode, overlay.tablePos, 0, 0);
+    const head = tableCellPosAt(tableNode, overlay.tablePos, map.height - 1, map.width - 1);
+    if (anchor === null || head === null) return;
+    setSelectionAndFocus(CellSelection.create(editor.state.doc, anchor, head));
+  };
+
+  const updateRowHeight = (rowIndex: number, nextHeight: number) => {
+    const rowPos = tableRowPosAt(tableNode, overlay.tablePos, rowIndex);
+    if (rowPos === null) return;
+    const rowNode = tableNode.child(rowIndex);
+    const rowHeight = Math.max(TABLE_ROW_MIN_HEIGHT, Math.round(nextHeight));
+    const tr = editor.state.tr.setNodeMarkup(rowPos, undefined, { ...rowNode.attrs, rowHeight });
+    editor.view.dispatch(tr);
+  };
+
+  const updateColumnWidth = (columnIndex: number, nextWidth: number) => {
+    const map = TableMap.get(tableNode);
+    const tableStart = overlay.tablePos + 1;
+    const columnWidth = Math.max(TABLE_CELL_MIN_WIDTH, Math.round(nextWidth));
+    const seenOffsets = new Set<number>();
+    let tr = editor.state.tr;
+
+    for (let rowIndex = 0; rowIndex < map.height; rowIndex += 1) {
+      const offset = map.map[rowIndex * map.width + columnIndex];
+      if (seenOffsets.has(offset)) continue;
+      seenOffsets.add(offset);
+
+      const cellPos = tableStart + offset;
+      const cellNode = tr.doc.nodeAt(cellPos);
+      if (!cellNode) continue;
+
+      const rect = map.findCell(offset);
+      const colspan = Math.max(1, Number(cellNode.attrs.colspan ?? 1));
+      const currentColwidth = Array.isArray(cellNode.attrs.colwidth) ? [...cellNode.attrs.colwidth] : [];
+      const nextColwidth = Array.from({ length: colspan }, (_, widthIndex) => {
+        const currentWidth = Number(currentColwidth[widthIndex] ?? 0);
+        return widthIndex === columnIndex - rect.left
+          ? columnWidth
+          : Number.isFinite(currentWidth) && currentWidth > 0
+            ? currentWidth
+            : 0;
+      });
+
+      tr = tr.setNodeMarkup(cellPos, undefined, { ...cellNode.attrs, colwidth: nextColwidth });
+    }
+
+    editor.view.dispatch(tr);
+  };
+
+  const startRowResize = (rowIndex: number, event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const baseHeight = overlay.rows[rowIndex]?.height ?? TABLE_ROW_MIN_HEIGHT;
+    const startY = event.clientY;
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      updateRowHeight(rowIndex, baseHeight + (moveEvent.clientY - startY));
+      refreshOverlay();
+    };
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      refreshOverlay();
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
+  };
+
+  const startColumnResize = (columnIndex: number, event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const baseWidth = overlay.columns[columnIndex]?.width ?? TABLE_CELL_MIN_WIDTH;
+    const startX = event.clientX;
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      updateColumnWidth(columnIndex, baseWidth + (moveEvent.clientX - startX));
+      refreshOverlay();
+    };
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      refreshOverlay();
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
+  };
+
+  const runTableTool = (
+    action:
+      | "merge-cells"
+      | "split-cell"
+      | "delete-row"
+      | "delete-column"
+      | "delete-table"
+  ) => {
+    if (!selectionInOverlayTable) return;
+    if (action === "merge-cells") {
+      if (!canMergeCells) return;
+      editor.chain().focus().mergeCells().run();
+    } else if (action === "split-cell") {
+      if (!canSplitCell) return;
+      editor.chain().focus().splitCell().run();
+    } else if (action === "delete-row") {
+      if (!canDeleteRow) return;
+      editor.chain().focus().deleteRow().run();
+    } else if (action === "delete-column") {
+      if (!canDeleteColumn) return;
+      editor.chain().focus().deleteColumn().run();
+    } else if (action === "delete-table") {
+      if (!canDeleteTable) return;
+      editor.chain().focus().deleteTable().run();
+      setHoverTarget(null);
+      setOverlay(null);
+      selectionTableRef.current = null;
       return;
     }
-    setDragState({ type, from });
-    event.dataTransfer.effectAllowed = "move";
+    window.setTimeout(() => refreshOverlay(), 0);
   };
 
-  const handleDrop = (type: "row" | "column", to: number, event: React.DragEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    if (dragState?.type !== type) return;
-    reorderTable(type, dragState.from, to);
+  const contextAddButtonPosition = hoverTarget
+    ? hoverTarget.axis === "column"
+      ? {
+          top: overlay.rect.top - TABLE_CONTEXT_OFFSET,
+          left:
+            overlay.rect.left +
+            (hoverTarget.index <= 0
+              ? 0
+              : hoverTarget.index >= overlay.columns.length
+                ? overlay.rect.width
+                : overlay.columns[hoverTarget.index].left) -
+            TABLE_CONTROL_SIZE / 2
+        }
+      : {
+          top:
+            overlay.rect.top +
+            (hoverTarget.index <= 0
+              ? 0
+              : hoverTarget.index >= overlay.rows.length
+                ? overlay.rect.height
+                : overlay.rows[hoverTarget.index].top) -
+            TABLE_CONTROL_SIZE / 2,
+          left: overlay.rect.left - TABLE_CONTEXT_OFFSET
+        }
+    : null;
+
+  const runContextAdd = () => {
+    if (!hoverTarget) return;
+    if (hoverTarget.axis === "column") {
+      if (hoverTarget.index <= 0) {
+        if (!selectCellForTableCommand(editor, overlay.table, 0, 0)) return;
+        editor.chain().focus().addColumnBefore().run();
+      } else if (hoverTarget.index >= overlay.columns.length) {
+        if (!selectCellForTableCommand(editor, overlay.table, 0, Math.max(0, overlay.columns.length - 1))) return;
+        editor.chain().focus().addColumnAfter().run();
+      }
+      else {
+        if (!selectCellForTableCommand(editor, overlay.table, 0, hoverTarget.index)) return;
+        editor.chain().focus().addColumnBefore().run();
+      }
+      window.setTimeout(() => refreshOverlay(), 0);
+      return;
+    }
+
+    if (hoverTarget.index <= 0) {
+      if (!selectCellForTableCommand(editor, overlay.table, 0, 0)) return;
+      editor.chain().focus().addRowBefore().run();
+    } else if (hoverTarget.index >= overlay.rows.length) {
+      if (!selectCellForTableCommand(editor, overlay.table, Math.max(0, overlay.rows.length - 1), 0)) return;
+      editor.chain().focus().addRowAfter().run();
+    }
+    else {
+      if (!selectCellForTableCommand(editor, overlay.table, hoverTarget.index, 0)) return;
+      editor.chain().focus().addRowBefore().run();
+    }
+    window.setTimeout(() => refreshOverlay(), 0);
   };
 
   return (
-    <div className="informio-table-controls" contentEditable={false}>
-      {(["top", "right", "bottom", "left"] as const).map((side) => (
+    <div className="informio-table-controls" data-table-controls="true" contentEditable={false}>
+      {contextAddButtonPosition ? (
         <button
-          key={side}
           type="button"
-          aria-label={`Add ${side === "top" || side === "bottom" ? "row" : "column"} ${side}`}
-          className={cn("informio-table-add", `is-${side}`)}
-          style={{
-            top: side === "top" ? overlay.rect.top - 13 : side === "bottom" ? overlay.rect.top + overlay.rect.height - 13 : overlay.rect.top + overlay.rect.height / 2 - 13,
-            left: side === "left" ? overlay.rect.left - 13 : side === "right" ? overlay.rect.left + overlay.rect.width - 13 : overlay.rect.left + overlay.rect.width / 2 - 13
-          }}
+          className="informio-table-context-add"
+          style={contextAddButtonPosition}
+          aria-label={hoverTarget?.axis === "column" ? "添加列" : "添加行"}
+          title={hoverTarget?.axis === "column" ? "添加列" : "添加行"}
           onMouseDown={(event) => event.preventDefault()}
-          onClick={() => runTableCommand(side)}
+          onClick={runContextAdd}
         >
-          <Plus size={13} />
+          <Plus size={12} />
         </button>
-      ))}
-
-      {overlay.columns.map((column, index) => (
-        <button
-          key={`column-${index}`}
-          type="button"
-          draggable={!overlay.merged}
-          aria-label={`Move column ${index + 1}`}
-          className={cn("informio-table-handle is-column", dropTarget === index && dragState?.type === "column" && "is-drop-target")}
-          style={{ top: overlay.rect.top - 24, left: overlay.rect.left + column.left + column.width / 2 - 12 }}
-          onDragStart={(event) => startDrag("column", index, event)}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDropTarget(index);
-          }}
-          onDrop={(event) => handleDrop("column", index, event)}
-          onDragEnd={() => {
-            setDragState(null);
-            setDropTarget(null);
-          }}
-        />
-      ))}
-
-      {overlay.rows.map((row, index) => (
-        <button
-          key={`row-${index}`}
-          type="button"
-          draggable={!overlay.merged}
-          aria-label={`Move row ${index + 1}`}
-          className={cn("informio-table-handle is-row", dropTarget === index && dragState?.type === "row" && "is-drop-target")}
-          style={{ top: overlay.rect.top + row.top + row.height / 2 - 12, left: overlay.rect.left - 24 }}
-          onDragStart={(event) => startDrag("row", index, event)}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDropTarget(index);
-          }}
-          onDrop={(event) => handleDrop("row", index, event)}
-          onDragEnd={() => {
-            setDragState(null);
-            setDropTarget(null);
-          }}
-        />
-      ))}
-
-      {overlay.merged ? (
-        <div className="informio-table-merged-note" style={{ top: overlay.rect.top - 28, left: overlay.rect.left }}>
-          合并单元格表格暂不支持拖动排序
-        </div>
       ) : null}
+
+      <div
+        className="informio-table-toolbar"
+        style={{
+          top: overlay.rect.top - TABLE_HEADER_STRIP_SIZE - TABLE_TOOLBAR_HEIGHT - 6,
+          left: overlay.rect.left + TABLE_HEADER_STRIP_SIZE
+        }}
+      >
+        <button
+          type="button"
+          className={cn("informio-table-toolbutton", currentHorizontalAlign === "left" && "is-active")}
+          aria-label="水平左对齐"
+          title="水平左对齐"
+          disabled={!selectionInOverlayTable}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => applyCellAttribute("align", "left")}
+        >
+          <AlignHorizontalJustifyStart size={13} />
+        </button>
+        <button
+          type="button"
+          className={cn("informio-table-toolbutton", currentHorizontalAlign === "center" && "is-active")}
+          aria-label="水平居中"
+          title="水平居中"
+          disabled={!selectionInOverlayTable}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => applyCellAttribute("align", "center")}
+        >
+          <AlignHorizontalJustifyCenter size={13} />
+        </button>
+        <button
+          type="button"
+          className={cn("informio-table-toolbutton", currentHorizontalAlign === "right" && "is-active")}
+          aria-label="水平右对齐"
+          title="水平右对齐"
+          disabled={!selectionInOverlayTable}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => applyCellAttribute("align", "right")}
+        >
+          <AlignHorizontalJustifyEnd size={13} />
+        </button>
+        <div className="informio-table-toolbar-divider" aria-hidden="true" />
+        <button
+          type="button"
+          className={cn("informio-table-toolbutton", currentVerticalAlign === "top" && "is-active")}
+          aria-label="垂直顶对齐"
+          title="垂直顶对齐"
+          disabled={!selectionInOverlayTable}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => applyCellAttribute("verticalAlign", "top")}
+        >
+          <AlignVerticalJustifyStart size={13} />
+        </button>
+        <button
+          type="button"
+          className={cn("informio-table-toolbutton", currentVerticalAlign === "middle" && "is-active")}
+          aria-label="垂直居中"
+          title="垂直居中"
+          disabled={!selectionInOverlayTable}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => applyCellAttribute("verticalAlign", "middle")}
+        >
+          <AlignVerticalJustifyCenter size={13} />
+        </button>
+        <button
+          type="button"
+          className={cn("informio-table-toolbutton", currentVerticalAlign === "bottom" && "is-active")}
+          aria-label="垂直底对齐"
+          title="垂直底对齐"
+          disabled={!selectionInOverlayTable}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => applyCellAttribute("verticalAlign", "bottom")}
+        >
+          <AlignVerticalJustifyEnd size={13} />
+        </button>
+        <div className="informio-table-toolbar-divider" aria-hidden="true" />
+        <button
+          type="button"
+          className="informio-table-toolbutton"
+          aria-label="合并单元格"
+          title="合并单元格"
+          disabled={!canMergeCells}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => runTableTool("merge-cells")}
+        >
+          <Merge size={13} />
+        </button>
+        <button
+          type="button"
+          className="informio-table-toolbutton"
+          aria-label="拆分单元格"
+          title="拆分单元格"
+          disabled={!canSplitCell}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => runTableTool("split-cell")}
+        >
+          <Split size={13} />
+        </button>
+        <div className="informio-table-toolbar-divider" aria-hidden="true" />
+        <button
+          type="button"
+          className="informio-table-toolbutton is-danger"
+          aria-label="删除行"
+          title="删除行"
+          disabled={!canDeleteRow}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => runTableTool("delete-row")}
+        >
+          <Rows3 size={13} />
+        </button>
+        <button
+          type="button"
+          className="informio-table-toolbutton is-danger"
+          aria-label="删除列"
+          title="删除列"
+          disabled={!canDeleteColumn}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => runTableTool("delete-column")}
+        >
+          <Columns3 size={13} />
+        </button>
+        <button
+          type="button"
+          className="informio-table-toolbutton is-danger"
+          aria-label="删除表格"
+          title="删除表格"
+          disabled={!canDeleteTable}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => runTableTool("delete-table")}
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+
+      <button
+        type="button"
+        className={cn("informio-table-corner-button", selectionShape?.fullTable && "is-active")}
+        style={{
+          top: overlay.rect.top - TABLE_HEADER_STRIP_SIZE,
+          left: overlay.rect.left - TABLE_HEADER_STRIP_SIZE,
+          width: TABLE_HEADER_STRIP_SIZE,
+          height: TABLE_HEADER_STRIP_SIZE
+        }}
+        aria-label="选中整个表格"
+        title="选中整个表格"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={selectWholeTable}
+      >
+        <AlignCenter size={12} />
+      </button>
+
+      {overlay.columns.map((column, columnIndex) => (
+        <div
+          key={`column-header-${columnIndex}`}
+          className="informio-table-column-header"
+          style={{
+            top: overlay.rect.top - TABLE_HEADER_STRIP_SIZE,
+            left: overlay.rect.left + column.left,
+            width: column.width,
+            height: TABLE_HEADER_STRIP_SIZE
+          }}
+        >
+          <button
+            type="button"
+            className={cn(
+              "informio-table-header-button is-column",
+              selectionShape && columnIndex >= selectionShape.left && columnIndex < selectionShape.right && "is-active"
+            )}
+            style={{ width: column.width, height: TABLE_HEADER_STRIP_SIZE }}
+            aria-label={`选中第 ${columnIndex + 1} 列`}
+            title={`选中第 ${columnIndex + 1} 列`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => selectTableColumnAt(columnIndex)}
+          >
+            <span>{tableColumnLabel(columnIndex)}</span>
+          </button>
+          <button
+            type="button"
+            className="informio-table-column-resize-handle"
+            aria-label={`调整第 ${columnIndex + 1} 列宽度`}
+            title={`调整第 ${columnIndex + 1} 列宽度`}
+            onMouseDown={(event) => startColumnResize(columnIndex, event)}
+          />
+        </div>
+      ))}
+
+      {overlay.rows.map((row, rowIndex) => (
+        <div
+          key={`row-header-${rowIndex}`}
+          className="informio-table-row-header"
+          style={{
+            top: overlay.rect.top + row.top,
+            left: overlay.rect.left - TABLE_HEADER_STRIP_SIZE,
+            width: TABLE_HEADER_STRIP_SIZE,
+            height: row.height
+          }}
+        >
+          <button
+            type="button"
+            className={cn(
+              "informio-table-header-button is-row",
+              selectionShape && rowIndex >= selectionShape.top && rowIndex < selectionShape.bottom && "is-active"
+            )}
+            style={{ width: TABLE_HEADER_STRIP_SIZE, height: row.height }}
+            aria-label={`选中第 ${rowIndex + 1} 行`}
+            title={`选中第 ${rowIndex + 1} 行`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => selectTableRowAt(rowIndex)}
+          >
+            <span>{rowIndex + 1}</span>
+          </button>
+          <button
+            type="button"
+            className="informio-table-row-resize-handle"
+            aria-label={`调整第 ${rowIndex + 1} 行高度`}
+            title={`调整第 ${rowIndex + 1} 行高度`}
+            onMouseDown={(event) => startRowResize(rowIndex, event)}
+          />
+        </div>
+      ))}
     </div>
   );
 }
@@ -5937,6 +8381,9 @@ const latestVisibleAction = (actions: AgentSessionAction[]) => {
   return visible.at(-1);
 };
 
+const hasVisibleActionError = (actions: AgentSessionAction[]) =>
+  actions.some((action) => classifyAgentAction(action) !== "system" && action.status === "error");
+
 const actionShortLabel = (action?: AgentSessionAction) => {
   if (!action) return "";
   return (action.label || action.tool || "").replace(/\s+/g, " ").trim();
@@ -5947,7 +8394,7 @@ const isVerificationAction = (action: AgentSessionAction) => {
   return /test|typecheck|build|lint|verify|check|pytest|cargo test|pnpm build|tsc/.test(haystack);
 };
 
-const firstReasoningLine = (reasoning: string) => reasoning.trim().split("\n").find(Boolean) ?? "";
+const firstProcessLine = (processText: string) => processText.trim().split("\n").find(Boolean) ?? "";
 
 const providerExecutionRenderer = (providerId: string) => {
   if (providerId === "opencode") return OpenCodeExecutionFlow;
@@ -6095,7 +8542,7 @@ function GenericExecutionFlow(props: ProviderExecutionFlowProps) {
           <div className="pb-2 pl-5">
             {message.reasoning.trim() ? (
               <div className="mb-3 text-[var(--text-muted)]" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
-                <div className="font-semibold text-slate-700">过程摘要</div>
+                <div className="font-semibold text-slate-700">可见过程</div>
                 <div className="mt-1 whitespace-pre-wrap">{message.reasoning}</div>
               </div>
             ) : null}
@@ -6137,6 +8584,7 @@ function OpenCodeExecutionFlow(props: ProviderExecutionFlowProps) {
   const visibleActions = message.actions.filter((action) => classifyAgentAction(action) !== "system");
   const pendingApprovalActions = visibleActions.filter((action) => action.approval && action.status === "pending");
   const completedActions = visibleActions.filter((action) => action.status !== "pending");
+  const actionError = hasVisibleActionError(visibleActions);
   const duration = formatProcessDuration((message.completedAt ?? now) - message.submittedAt);
   const badgeFontSize = Math.max(10, processFontSize - 1);
   const lastAction = latestVisibleAction(visibleActions);
@@ -6152,6 +8600,8 @@ function OpenCodeExecutionFlow(props: ProviderExecutionFlowProps) {
   const phaseLabel =
     pendingApprovalActions.length
       ? "等待授权"
+      : actionError
+        ? "部分失败"
       : message.status === "tool-executing"
         ? "运行工具"
         : message.status === "thinking"
@@ -6186,13 +8636,13 @@ function OpenCodeExecutionFlow(props: ProviderExecutionFlowProps) {
         <div className="mt-2 space-y-3 pl-4">
           {message.reasoning.trim() ? (
             <div className="text-slate-600" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>Reasoning</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>可见过程</SectionLabel>
               <div className="whitespace-pre-wrap">{message.reasoning}</div>
             </div>
           ) : null}
           {pendingApprovalActions.length ? (
             <div className="space-y-2">
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>Approval</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>授权</SectionLabel>
               {pendingApprovalActions.map((action) => (
                 <AgentApprovalCard
                   key={action.approval?.id ?? action.toolId}
@@ -6207,7 +8657,7 @@ function OpenCodeExecutionFlow(props: ProviderExecutionFlowProps) {
           ) : null}
           {completedActions.length ? (
             <div className="space-y-2">
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>Timeline</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>执行流</SectionLabel>
               {completedActions.map((action) => (
                 <AgentActionDetails
                   key={action.toolId}
@@ -6243,9 +8693,10 @@ function ClaudeCodeExecutionFlow(props: ProviderExecutionFlowProps) {
   const pendingApprovalActions = visibleActions.filter((action) => action.approval && action.status === "pending");
   const processSummary = summarizeAgentProcess(message.actions);
   const duration = formatProcessDuration((message.completedAt ?? now) - message.submittedAt);
-  const reasoningPreview = firstReasoningLine(message.reasoning);
+  const reasoningPreview = firstProcessLine(message.reasoning);
+  const actionError = hasVisibleActionError(visibleActions);
   const statusLabel =
-    pendingApprovalActions.length ? "Needs approval" : message.status === "tool-executing" ? "Using tools" : message.status === "thinking" ? "Thinking" : message.status === "error" ? "Stopped" : "Done";
+    pendingApprovalActions.length ? "等待授权" : actionError ? "部分失败" : message.status === "tool-executing" ? "执行中" : message.status === "thinking" ? "处理中" : message.status === "error" ? "已中断" : "完成";
   return (
     <div className="mb-3 px-0 py-1">
       <button
@@ -6277,13 +8728,13 @@ function ClaudeCodeExecutionFlow(props: ProviderExecutionFlowProps) {
         <div className="mt-2 space-y-3 pl-4">
           {message.reasoning.trim() ? (
             <div className="text-[var(--text-muted)]" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>Summary</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>可见过程</SectionLabel>
               <div className="mt-1 whitespace-pre-wrap">{message.reasoning}</div>
             </div>
           ) : null}
           {pendingApprovalActions.length ? (
             <div className="space-y-2">
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>Approval</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>授权</SectionLabel>
               {pendingApprovalActions.map((action) => (
                 <AgentApprovalCard
                   key={action.approval?.id ?? action.toolId}
@@ -6298,7 +8749,7 @@ function ClaudeCodeExecutionFlow(props: ProviderExecutionFlowProps) {
           ) : null}
           {visibleActions.length ? (
             <div className="space-y-1.5">
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>Tools</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>执行流</SectionLabel>
               {visibleActions.map((action) => (
                 <AgentActionDetails
                   key={action.toolId}
@@ -6323,6 +8774,7 @@ function CodexExecutionFlow(props: ProviderExecutionFlowProps) {
   const visibleActions = message.actions.filter((action) => classifyAgentAction(action) !== "system");
   const pendingApprovalActions = visibleActions.filter((action) => action.approval && action.status === "pending");
   const verificationActions = visibleActions.filter((action) => isVerificationAction(action));
+  const actionError = hasVisibleActionError(visibleActions);
   const grouped = {
     command: visibleActions.filter((action) => classifyAgentAction(action) === "command" && !isVerificationAction(action)),
     edit: visibleActions.filter((action) => classifyAgentAction(action) === "edit"),
@@ -6343,7 +8795,7 @@ function CodexExecutionFlow(props: ProviderExecutionFlowProps) {
     verificationActions.length ? `验证 ${verificationActions.length}` : ""
   ].filter(Boolean).join(" · ");
   const statusLabel =
-    pendingApprovalActions.length ? "Waiting approval" : message.status === "tool-executing" ? "Executing" : message.status === "thinking" ? "Planning" : message.status === "error" ? "Failed" : "Complete";
+    pendingApprovalActions.length ? "等待授权" : actionError ? "部分失败" : message.status === "tool-executing" ? "执行中" : message.status === "thinking" ? "处理中" : message.status === "error" ? "失败" : "完成";
   const lastAction = latestVisibleAction(visibleActions);
   return (
     <div className="mb-3 px-0 py-1">
@@ -6372,7 +8824,7 @@ function CodexExecutionFlow(props: ProviderExecutionFlowProps) {
         <div className="mt-2 space-y-3 pl-4">
           {message.reasoning.trim() ? (
             <div className="text-slate-700" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>Plan</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>可见过程</SectionLabel>
               <div className="whitespace-pre-wrap text-slate-700">{message.reasoning}</div>
             </div>
           ) : null}
@@ -6392,11 +8844,11 @@ function CodexExecutionFlow(props: ProviderExecutionFlowProps) {
             </div>
           ) : null}
           {([
-            ["Inspect", grouped.inspect],
-            ["Command", grouped.command],
-            ["Change", grouped.edit],
-            ["Verify", verificationActions],
-            ["Other", grouped.other]
+            ["检查", grouped.inspect],
+            ["命令", grouped.command],
+            ["改动", grouped.edit],
+            ["验证", verificationActions],
+            ["其他", grouped.other]
           ] as Array<[string, AgentSessionAction[]]>)
             .filter(([, actions]) => actions.length)
             .map(([label, actions]) => (
@@ -6673,7 +9125,7 @@ function AgentPanel({
           {historyOpen ? (
             <div className="absolute right-4 top-[42px] z-30 w-[min(240px,calc(100vw-32px))] overflow-hidden rounded-xl bg-white shadow-[0_20px_48px_rgba(15,23,42,0.18),0_0_0_1px_rgba(15,23,42,0.08)]">
               <div className="border-b px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-muted)]">
-                历史会话
+                此 Agent 的历史会话
               </div>
               <div className="max-h-[320px] overflow-y-auto p-2">
                 <button
@@ -6710,6 +9162,7 @@ function AgentPanel({
                           )}
                         >
                           <span className="block truncate text-[12px] font-semibold text-[inherit]">{conversation.title}</span>
+                          <span className="block truncate text-[10px] text-slate-400">来自：{conversation.workspaceLabel || "未命名工作区"}</span>
                           <span className="block truncate text-[11px] text-slate-400">
                             {conversation.messages.find((message) => message.role === "user")?.content || "空会话"}
                           </span>
@@ -7015,8 +9468,12 @@ function SelectionToolbar({
   busy,
   left,
   top,
+  currentTextColor,
+  formatActions,
   response,
   error,
+  onApplyTextColor,
+  onEncrypt,
   onTranslate,
   onClose
 }: {
@@ -7025,15 +9482,49 @@ function SelectionToolbar({
   busy: boolean;
   left: number;
   top: number;
+  currentTextColor: string | null;
+  formatActions: Array<SelectionToolbarAction & { pressed?: boolean; onClick: () => void }>;
   response: string;
   error?: string;
+  onApplyTextColor: (color: string) => void;
+  onEncrypt?: () => void;
   onTranslate: () => void;
   onClose: () => void;
 }) {
-  if (!visible) return null;
+  const [colorMenuOpen, setColorMenuOpen] = useState(false);
+  const colorMenuRef = useRef<HTMLDivElement | null>(null);
+  const colorTriggerRef = useRef<HTMLDivElement | null>(null);
+  const customColorInputRef = useRef<HTMLInputElement | null>(null);
   const preserveSelection = (event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault();
   };
+  const customColorValue = currentTextColor ?? defaultTextColorValue;
+  const customColorActive = Boolean(currentTextColor && !selectionToolbarPresetColors.some((option) => option.value === currentTextColor));
+  const closeColorMenu = () => setColorMenuOpen(false);
+
+  useEffect(() => {
+    if (!colorMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as globalThis.Node | null;
+      if (colorMenuRef.current?.contains(target) || colorTriggerRef.current?.contains(target)) return;
+      closeColorMenu();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeColorMenu();
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [colorMenuOpen]);
+
+  if (!visible) return null;
+
   return (
     <div
       className="fixed z-[90] max-w-[360px]"
@@ -7041,17 +9532,178 @@ function SelectionToolbar({
       data-selection-toolbar-safe-area="true"
       onMouseDownCapture={markSelectionToolbarInteraction}
     >
-      <div className="surface-card w-fit max-w-[min(360px,calc(100vw-32px))] rounded-xl p-[5px] shadow-[0_14px_36px_rgba(15,23,42,0.18),0_0_0_1px_rgba(15,23,42,0.08)]">
-        <SelectionTranslateSection
-          variant="compact"
-          enabled={enabled}
-          busy={busy}
-          response={response}
-          error={error}
-          onTranslate={onTranslate}
-          onClose={onClose}
-          preserveSelection={preserveSelection}
-        />
+      <div className="surface-card w-fit max-w-[min(420px,calc(100vw-32px))] rounded-xl p-[5px] shadow-[0_14px_36px_rgba(15,23,42,0.18),0_0_0_1px_rgba(15,23,42,0.08)]">
+        <div className={cn("space-y-2", response || error ? "w-[min(360px,calc(100vw-32px))]" : "w-fit")}>
+          <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5">
+              <div ref={colorTriggerRef} className="relative">
+                <ToolbarGlyphButton
+                  label="字体颜色"
+                  icon={Palette}
+                  pressed={colorMenuOpen || Boolean(currentTextColor)}
+                  disabled={!enabled}
+                  onMouseDown={preserveSelection}
+                  onClick={() => {
+                    if (!enabled) return;
+                    if (colorMenuOpen) {
+                      closeColorMenu();
+                      return;
+                    }
+                    setColorMenuOpen(true);
+                  }}
+                  badgeColor={currentTextColor}
+                  ariaHasPopup="dialog"
+                  className={cn(
+                    "grid h-7 w-7 place-items-center rounded-md text-slate-600 transition-[background-color,color,transform] active:scale-95",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
+                    colorMenuOpen || currentTextColor
+                      ? "bg-emerald-50 text-emerald-700 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]"
+                      : "hover:bg-slate-100 hover:text-slate-900",
+                    !enabled && "cursor-not-allowed opacity-35 active:scale-100"
+                  )}
+                />
+                {colorMenuOpen ? (
+                  <div
+                    ref={colorMenuRef}
+                    className="absolute left-0 top-[calc(100%+8px)] z-[95] min-w-[204px] rounded-xl bg-[var(--surface-elevated)] p-2 shadow-[0_14px_36px_rgba(15,23,42,0.18),0_0_0_1px_rgba(15,23,42,0.08)]"
+                  >
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {selectionToolbarPresetColors.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          aria-label={option.label}
+                          title={option.label}
+                          onMouseDown={preserveSelection}
+                          onClick={() => {
+                            onApplyTextColor(option.value);
+                            closeColorMenu();
+                          }}
+                          className={cn(
+                            "grid h-7 w-7 place-items-center rounded-md transition-transform active:scale-95",
+                            ((!currentTextColor && option.value === textColorOptions[0]?.value) || currentTextColor === option.value)
+                              ? "bg-emerald-50 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.24)]"
+                              : "hover:bg-slate-100"
+                          )}
+                        >
+                          <span
+                            className="h-4 w-4 rounded-full shadow-[inset_0_0_0_1px_rgba(15,23,42,0.12)]"
+                            style={{ backgroundColor: option.value }}
+                          />
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        aria-label="选择自定义字体颜色"
+                        title={`自定义颜色 ${customColorValue}`}
+                        disabled={!enabled}
+                        onMouseDown={preserveSelection}
+                        onClick={() => customColorInputRef.current?.click()}
+                        className={cn(
+                          "relative grid h-7 w-7 place-items-center rounded-md transition-transform active:scale-95",
+                          customColorActive
+                            ? "bg-emerald-50 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.24)]"
+                            : "hover:bg-slate-100",
+                          !enabled && "cursor-not-allowed opacity-35 active:scale-100"
+                        )}
+                      >
+                        <span
+                          className="h-4 w-4 rounded-full border border-dashed border-[rgba(15,23,42,0.22)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.24)]"
+                          style={{ backgroundColor: customColorValue }}
+                        />
+                        <span className="pointer-events-none absolute inset-0 rounded-md bg-[linear-gradient(135deg,rgba(255,255,255,0.22),rgba(255,255,255,0))]" />
+                        <span className="pointer-events-none absolute bottom-0 right-0 h-0 w-0 border-b-[9px] border-l-[9px] border-b-white/90 border-l-transparent" />
+                        <span className="pointer-events-none absolute bottom-[1px] right-[1px] h-0 w-0 border-b-[6px] border-l-[6px] border-b-slate-300/80 border-l-transparent" />
+                        <span className="pointer-events-none absolute bottom-[1px] right-[1px] h-0 w-0 border-t-[6px] border-r-[6px] border-t-transparent border-r-white/18" />
+                        <input
+                          ref={customColorInputRef}
+                          type="color"
+                          value={customColorValue}
+                          aria-label="选择自定义字体颜色"
+                          onChange={(event) => onApplyTextColor(event.target.value)}
+                          className="absolute h-0 w-0 opacity-0"
+                          tabIndex={-1}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              {formatActions.map((action) => (
+                <ToolbarGlyphButton
+                  key={action.id}
+                  label={action.label}
+                  icon={action.icon}
+                  pressed={action.pressed}
+                  disabled={!enabled}
+                  onMouseDown={preserveSelection}
+                  onClick={action.onClick}
+                  className={cn(
+                    "grid h-7 w-7 place-items-center rounded-md text-slate-600 transition-[background-color,color,transform] active:scale-95",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
+                    action.pressed ? "bg-emerald-50 text-emerald-700 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]" : "hover:bg-slate-100 hover:text-slate-900",
+                    !enabled && "cursor-not-allowed opacity-35 active:scale-100"
+                  )}
+                />
+              ))}
+            </div>
+            <div className="h-5 w-px bg-slate-200" aria-hidden="true" />
+            {onEncrypt ? (
+              <ToolbarGlyphButton
+                label="加密"
+                icon={Shield}
+                disabled={!enabled}
+                onMouseDown={preserveSelection}
+                onClick={onEncrypt}
+                className={cn(
+                  "grid h-7 w-7 place-items-center rounded-md text-slate-600 transition-[background-color,color,transform] active:scale-95",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
+                  "hover:bg-slate-100 hover:text-slate-900",
+                  !enabled && "cursor-not-allowed opacity-35 active:scale-100"
+                )}
+              />
+            ) : null}
+            <ToolbarGlyphButton
+              label="翻译"
+              icon={busy ? Loader2 : Languages}
+              disabled={!enabled || busy}
+              onMouseDown={preserveSelection}
+              onClick={onTranslate}
+              className={cn(
+                "grid h-7 w-7 place-items-center rounded-md text-slate-600 transition-[background-color,color,transform] active:scale-95",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
+                "hover:bg-slate-100 hover:text-slate-900",
+                (!enabled || busy) && "cursor-not-allowed opacity-35 active:scale-100"
+              )}
+              iconClassName={busy ? "animate-spin" : undefined}
+            />
+            <button
+              type="button"
+              onMouseDown={preserveSelection}
+              onClick={onClose}
+              className="ml-0.5 grid h-6 w-6 place-items-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              aria-label="关闭工具栏"
+            >
+              <X size={12} />
+            </button>
+          </div>
+          {response ? (
+            <div
+              className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-[12px] leading-5 text-[var(--text-main)] cursor-text select-text"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              {response}
+            </div>
+          ) : null}
+          {error ? (
+            <div
+              className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 cursor-text select-text"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              {error}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -7063,6 +9715,7 @@ function SelectionTranslateSection({
   busy,
   response,
   error,
+  onEncrypt,
   onTranslate,
   onClose,
   preserveSelection: preserveSelectionHandler,
@@ -7073,6 +9726,7 @@ function SelectionTranslateSection({
   busy: boolean;
   response: string;
   error?: string;
+  onEncrypt?: () => void;
   onTranslate: () => void;
   onClose?: () => void;
   preserveSelection?: (event: ReactMouseEvent<HTMLElement>) => void;
@@ -7107,6 +9761,17 @@ function SelectionTranslateSection({
   return (
     <div className={cn(containerClassName, className)}>
       <div className={cn("flex items-center gap-1", variant === "compact" && "w-fit gap-0.5")}>
+        {variant === "pdf" || !onEncrypt ? null : (
+          <button
+            type="button"
+            onMouseDown={preserveSelection}
+            onClick={onEncrypt}
+            disabled={!enabled}
+            className={buttonClassName}
+          >
+            <span>加密</span>
+          </button>
+        )}
         <button
           type="button"
           onMouseDown={preserveSelection}
@@ -7171,6 +9836,198 @@ function SettingRow({
   );
 }
 
+function ShortcutBindingControl({
+  value,
+  recording,
+  onStartRecording,
+  onCapture,
+  onClear,
+  onRestoreDefault
+}: {
+  value?: string;
+  recording: boolean;
+  onStartRecording: () => void;
+  onCapture: (accelerator: string) => void;
+  onClear: () => void;
+  onRestoreDefault: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onStartRecording}
+        onKeyDown={(event) => {
+          if (!recording) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.key === "Escape") {
+            onStartRecording();
+            return;
+          }
+          const accelerator = acceleratorFromKeyboardEvent(event);
+          if (accelerator) onCapture(accelerator);
+        }}
+        className={cn(
+          "min-w-[132px] rounded-md bg-white px-2.5 py-1.5 text-left font-mono text-[12px] text-slate-700 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.10)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
+          recording && "bg-emerald-50 text-emerald-800 shadow-[inset_0_0_0_1px_rgba(5,150,105,0.28)]"
+        )}
+      >
+        {recording ? "按下新快捷键" : acceleratorToDisplay(value, shortcutDisplayPlatform)}
+      </button>
+      <button
+        type="button"
+        onClick={onRestoreDefault}
+        className="rounded-md px-2 py-1 text-[12px] font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+      >
+        默认
+      </button>
+      <button
+        type="button"
+        onClick={onClear}
+        disabled={!value}
+        className="rounded-md px-2 py-1 text-[12px] font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-35"
+      >
+        清空
+      </button>
+    </div>
+  );
+}
+
+function FontFamilySelect({
+  value,
+  options,
+  onValueChange,
+  onOpenChange
+}: {
+  value: string;
+  options: LocalFontOption[];
+  onValueChange: (value: string) => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = useMemo(() => {
+    if (!normalizedQuery) return options;
+    return options.filter((font) => {
+      const haystacks = [font.family, font.fullName, font.style]
+        .filter(Boolean)
+        .map((item) => item!.toLowerCase());
+      return haystacks.some((item) => item.includes(normalizedQuery));
+    });
+  }, [normalizedQuery, options]);
+
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 10);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof globalThis.Node)) return;
+      if (rootRef.current?.contains(target)) return;
+      setOpen(false);
+      setQuery("");
+      onOpenChange(false);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      setQuery("");
+      onOpenChange(false);
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [open, onOpenChange]);
+
+  return (
+    <div ref={rootRef} className="relative min-w-[260px] max-w-[360px]">
+      <button
+        type="button"
+        onClick={() => {
+          const nextOpen = !open;
+          setOpen(nextOpen);
+          if (!nextOpen) setQuery("");
+          onOpenChange(nextOpen);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowDown" && event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          if (open) return;
+          setOpen(true);
+          onOpenChange(true);
+        }}
+        className="flex h-9 w-full items-center justify-between gap-2 rounded-md bg-white px-3 text-left text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-slate-200 transition-colors hover:bg-slate-50 focus:ring-2 focus:ring-emerald-500/45"
+      >
+        <span className="block truncate">{value}</span>
+        <span aria-hidden="true">
+          <ChevronDown size={14} className="block text-slate-400" />
+        </span>
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-[calc(100%+8px)] z-[80] w-full overflow-hidden rounded-lg bg-white p-1 shadow-xl ring-1 ring-slate-200">
+          <div className="border-b border-slate-200 px-2 pb-2 pt-1">
+            <input
+              ref={searchInputRef}
+              value={query}
+              placeholder="搜索字体名，例如 PingFang、苹方、Mono"
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setOpen(false);
+                  setQuery("");
+                  onOpenChange(false);
+                }
+              }}
+              className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-medium text-slate-700 outline-none ring-1 ring-slate-200 focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
+            />
+          </div>
+          <div className="max-h-72 overflow-y-auto p-1">
+            {filteredOptions.map((font) => (
+              <button
+                type="button"
+                key={`font-family-${font.family}`}
+                onClick={() => {
+                  onValueChange(font.family);
+                  setOpen(false);
+                  setQuery("");
+                  onOpenChange(false);
+                }}
+                className={cn(
+                  "block w-full rounded-md px-3 py-2 text-left text-slate-700 outline-none transition-colors hover:bg-emerald-50 hover:text-slate-950 focus:bg-emerald-50 focus:text-slate-950",
+                  font.family === value && "bg-emerald-50 text-slate-950"
+                )}
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-[13px] font-semibold">{font.family}</div>
+                  {font.fullName && font.fullName !== font.family ? (
+                    <div className="truncate text-[11px] font-medium text-slate-500">{font.fullName}</div>
+                  ) : null}
+                </div>
+              </button>
+            ))}
+            {!filteredOptions.length ? (
+              <div className="px-3 py-3 text-[12px] text-slate-500">没有匹配的字体，换个关键词试试。</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SettingsView({
   settings,
   connections,
@@ -7180,11 +10037,7 @@ function SettingsView({
   onCheckApiModels,
   checkingApiModels,
   apiCheckState,
-  appInfo,
-  updaterState,
-  checkingForUpdates,
-  onCheckForUpdates,
-  onRestartToInstallUpdate
+  appInfo
 }: {
   settings: AppSettings;
   connections: AgentConnection[];
@@ -7195,21 +10048,89 @@ function SettingsView({
   checkingApiModels: boolean;
   apiCheckState: ApiCheckState;
   appInfo: AppInfo;
-  updaterState: UpdaterState;
-  checkingForUpdates: boolean;
-  onCheckForUpdates: () => void;
-  onRestartToInstallUpdate: () => void;
 }) {
   const apiSettings = normalizeApiSettings(settings.api);
   const customThemeColor = settings.appearance.customThemeColor || DEFAULT_CUSTOM_THEME_COLOR;
   const updateAppearance = (patch: Partial<AppSettings["appearance"]>) =>
     onChange({ ...settings, appearance: { ...settings.appearance, ...patch } });
+  const [recordingShortcutId, setRecordingShortcutId] = useState<string | null>(null);
+  const [shortcutError, setShortcutError] = useState<string | null>(null);
   const [section, setSection] = useState<(typeof settingsNav)[number]["id"]>(() => {
     const requested = window.localStorage.getItem("informio-settings-section");
     window.localStorage.removeItem("informio-settings-section");
     const normalized = requested === "markdown" ? "editor" : requested === "integrations" ? "agent" : requested;
     return settingsNav.some((item) => item.id === normalized) ? (normalized as (typeof settingsNav)[number]["id"]) : "appearance";
   });
+  const [localFontsState, setLocalFontsState] = useState<{
+    status: "idle" | "loading" | "ready" | "error";
+    fonts: LocalFontOption[];
+    error?: string;
+  }>({
+    status: "idle",
+    fonts: []
+  });
+  const ensureLocalFontsLoaded = async () => {
+    if (localFontsState.status === "loading" || localFontsState.status === "ready") return;
+    setLocalFontsState((current) => ({ ...current, status: "loading", error: undefined }));
+    const result = await window.informio.listLocalFonts();
+    setLocalFontsState({
+      status: result.error ? "error" : "ready",
+      fonts: result.fonts,
+      error: result.error
+    });
+  };
+  const localFontOptions = useMemo(
+    () =>
+      mergeFontOptions(
+        localFontsState.fonts,
+        settings.appearance.chineseFontFamily,
+        settings.appearance.englishFontFamily,
+        settings.appearance.codeFontFamily
+      ),
+    [
+      localFontsState.fonts,
+      settings.appearance.chineseFontFamily,
+      settings.appearance.englishFontFamily,
+      settings.appearance.codeFontFamily
+    ]
+  );
+  const shortcutGroups = useMemo(() => {
+    const groups = new Map<string, Array<(typeof configurableShortcutEntries)[number]>>();
+    configurableShortcutEntries.forEach((entry) => {
+      const items = groups.get(entry.category) ?? [];
+      items.push(entry);
+      groups.set(entry.category, items);
+    });
+    return Array.from(groups.entries()).map(([title, items]) => ({ title, items }));
+  }, []);
+  const updateShortcutBinding = (id: string, accelerator: string) => {
+    const nextBindings = {
+      ...settings.shortcuts.bindings,
+      [id]: normalizeAccelerator(accelerator)
+    };
+    const conflict = findShortcutConflict(nextBindings, id, nextBindings[id]);
+    if (conflict) {
+      setShortcutError(`“${shortcutRegistryById.get(id)?.label || id}” 与 “${conflict.label}” 不能使用同一个快捷键。`);
+      return;
+    }
+    setShortcutError(null);
+    setRecordingShortcutId(null);
+    onChange({ ...settings, shortcuts: { ...settings.shortcuts, bindings: nextBindings } });
+  };
+  const clearShortcutBinding = (id: string) => {
+    const nextBindings = { ...settings.shortcuts.bindings, [id]: "" };
+    setShortcutError(null);
+    setRecordingShortcutId(null);
+    onChange({ ...settings, shortcuts: { ...settings.shortcuts, bindings: nextBindings } });
+  };
+  const restoreShortcutBinding = (id: string) => {
+    const fallback = defaultShortcutBindings[id];
+    if (!fallback) {
+      clearShortcutBinding(id);
+      return;
+    }
+    updateShortcutBinding(id, fallback);
+  };
   return (
     <div className="settings-window grid h-screen grid-cols-[246px_1fr] overflow-hidden">
           <div className="settings-sidebar drag-region border-r px-3 pb-5 pt-[50px]">
@@ -7298,6 +10219,46 @@ function SettingsView({
                   </div>
                 ) : null}
 
+                <h2 className="mt-12 text-[18px] font-bold">字体</h2>
+                <div className="settings-divide mt-4 divide-y">
+                  <SettingRow title="中文字体" description="影响整个软件里的中文显示，包括侧栏、工具栏、设置页和编辑器正文。">
+                    <FontFamilySelect
+                      value={settings.appearance.chineseFontFamily}
+                      options={localFontOptions}
+                      onValueChange={(value) => updateAppearance({ chineseFontFamily: value })}
+                      onOpenChange={(open) => {
+                        if (open) void ensureLocalFontsLoaded();
+                      }}
+                    />
+                  </SettingRow>
+                  <SettingRow title="英文字体" description="影响整个软件里的英文、数字和拉丁字符显示。">
+                    <FontFamilySelect
+                      value={settings.appearance.englishFontFamily}
+                      options={localFontOptions}
+                      onValueChange={(value) => updateAppearance({ englishFontFamily: value })}
+                      onOpenChange={(open) => {
+                        if (open) void ensureLocalFontsLoaded();
+                      }}
+                    />
+                  </SettingRow>
+                  <SettingRow title="代码字体" description="影响代码块、源码模式，以及路径、命令、日志这类等宽信息。">
+                    <FontFamilySelect
+                      value={settings.appearance.codeFontFamily}
+                      options={localFontOptions}
+                      onValueChange={(value) => updateAppearance({ codeFontFamily: value })}
+                      onOpenChange={(open) => {
+                        if (open) void ensureLocalFontsLoaded();
+                      }}
+                    />
+                  </SettingRow>
+                </div>
+                {localFontsState.status === "loading" ? (
+                  <p className="mt-3 text-[12px] text-[var(--text-muted)]">正在读取本地字体列表……</p>
+                ) : null}
+                {localFontsState.error ? (
+                  <p className="mt-3 text-[12px] text-[var(--text-muted)]">{localFontsState.error}</p>
+                ) : null}
+
                 <h2 className="mt-12 text-[18px] font-bold">窗口</h2>
                 <div className="settings-divide mt-4 divide-y">
                   <SettingRow title="自动隐藏状态栏" description="不交互时隐藏底部统计">
@@ -7365,7 +10326,7 @@ function SettingsView({
                 <div className="flex items-start gap-5">
                   <div>
                     <h2 className="text-[18px] font-bold text-[var(--text-main)]">Agent</h2>
-                    <p className="mt-2 text-[13px] text-[var(--text-muted)]">Informio 会用当前文档和选中文本作为上下文，调用本机已安装的 Agent runtime。</p>
+                    <p className="mt-2 text-[13px] text-[var(--text-muted)]">Informio 会用选中文本、当前文档、打开 Tab、项目文件结构作为上下文，调用本机已安装的 Agent。</p>
                   </div>
                 </div>
 
@@ -7379,7 +10340,7 @@ function SettingsView({
                       <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
                     </Switch.Root>
                   </SettingRow>
-                  <SettingRow title="自动启动" description="打开应用后自动连接当前选择的 Agent。">
+                  <SettingRow title="自动启动" description="打开应用后自动预连接全部已启用 Agent，首次切换更快。">
                     <Switch.Root
                       checked={settings.agentRuntime.autoStart}
                       disabled={!settings.agentRuntime.enabled}
@@ -7389,7 +10350,7 @@ function SettingsView({
                       <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
                     </Switch.Root>
                   </SettingRow>
-                  <SettingRow title="保留会话数量" description="每个工作区下每个 Agent 最多保留多少条历史会话。">
+                  <SettingRow title="保留会话数量" description="每个 Agent 最多保留多少条历史会话。">
                     <input
                       type="number"
                       min={1}
@@ -7458,6 +10419,9 @@ function SettingsView({
                         >
                           <span className="min-w-0">
                             <span className="block truncate text-[14px] font-bold text-[var(--text-main)]">{agent.name}</span>
+                            {connection?.status === "error" && connection.message ? (
+                              <span className="mt-1 block truncate text-[11px] text-red-600">{connection.message}</span>
+                            ) : null}
                           </span>
                           <span className="flex shrink-0 items-center gap-2 text-[12px] font-bold text-[var(--text-muted)]">
                             <span className={cn("h-2.5 w-2.5 rounded-full", connectionTone[status])} />
@@ -7600,16 +10564,17 @@ function SettingsView({
 
             {section === "about" && (
               <section className="max-w-4xl">
+                <h2 className="text-[18px] font-bold text-[var(--text-main)]">关于</h2>
                 <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-start">
                   <div className="flex items-start gap-5">
                     <img
-                      src="/icon.png"
+                      src={appInfo.iconDataUrl || appIconUrl}
                       alt="Informio"
                       className="h-18 w-18 rounded-[18px] object-cover shadow-[0_6px_18px_rgba(15,23,42,0.12)]"
                     />
                     <div className="pt-1">
-                      <h2 className="text-[32px] leading-none font-bold tracking-[0] text-[var(--text-main)]">{appInfo.name || "Informio"}</h2>
-                      <p className="mt-3 text-[17px] text-[var(--text-muted)]">版本 {appInfo.version || "-"}</p>
+                      <div className="text-[15px] font-bold text-[var(--text-main)]">{appInfo.name || "Informio"}</div>
+                      <p className="mt-1 text-[13px] text-[var(--text-muted)]">版本 {appInfo.version || "-"}</p>
                     </div>
                   </div>
 
@@ -7620,61 +10585,11 @@ function SettingsView({
                       onClick={() => {
                         if (appInfo.githubUrl) window.informio.openExternal(appInfo.githubUrl);
                       }}
-                      className="inline-flex items-center gap-3 text-[15px] text-[var(--text-main)] transition-colors hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:text-[var(--text-muted)]"
+                      className="inline-flex items-center gap-3 text-[14px] font-semibold text-[var(--text-main)] transition-colors hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:text-[var(--text-muted)]"
                     >
                       <Github size={18} />
                       <span className="border-b border-current/25 pb-0.5">GitHub</span>
                     </button>
-                  </div>
-                </div>
-
-                <div className="mt-18">
-                  <h3 className="text-[30px] font-bold tracking-[0] text-[var(--text-main)]">更新</h3>
-
-                  <div className="settings-divide mt-8 divide-y">
-                    <SettingRow title="自动更新" description="启动时检查更新">
-                      <Switch.Root
-                        checked={settings.updates.autoCheckOnLaunch}
-                        onCheckedChange={(value) => onChange({ ...settings, updates: { ...settings.updates, autoCheckOnLaunch: value } })}
-                        className="relative h-7 w-12 rounded-full bg-slate-300 data-[state=checked]:bg-[var(--accent)]"
-                      >
-                        <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
-                      </Switch.Root>
-                    </SettingRow>
-
-                    <SettingRow title="检查更新" description={updaterStateSummary(updaterState)}>
-                      {updaterState.status === "downloaded" ? (
-                        <button
-                          type="button"
-                          onClick={onRestartToInstallUpdate}
-                          className="rounded-[10px] bg-[var(--text-main)] px-4 py-2 text-[14px] font-bold text-[var(--surface)] transition-transform active:scale-[0.98]"
-                        >
-                          重启安装
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={onCheckForUpdates}
-                          disabled={checkingForUpdates || updaterState.status === "checking" || updaterState.status === "downloading"}
-                          className="inline-flex min-w-[108px] items-center justify-center gap-2 rounded-[10px] bg-slate-200 px-4 py-2 text-[14px] font-bold text-[var(--text-main)] transition-transform active:scale-[0.98] disabled:cursor-not-allowed disabled:text-slate-400"
-                        >
-                          {checkingForUpdates || updaterState.status === "checking" ? <Loader2 size={14} className="animate-spin" /> : null}
-                          立即检查
-                        </button>
-                      )}
-                    </SettingRow>
-                  </div>
-
-                  <div className={cn("mt-4 text-[13px] leading-6", updaterStateTone[updaterState.status])}>
-                    {updaterState.status === "downloading" && typeof updaterState.progress === "number"
-                      ? `下载进度 ${Math.round(updaterState.progress)}%`
-                      : updaterState.status === "available" && updaterState.version
-                        ? `将升级到 ${updaterState.version}`
-                        : updaterState.status === "downloaded" && updaterState.version
-                          ? `已准备安装 ${updaterState.version}`
-                          : appInfo.githubUrl
-                            ? `发布源：${appInfo.githubUrl}`
-                            : "发布仓库地址尚未配置。"}
                   </div>
                 </div>
               </section>
@@ -7697,18 +10612,7 @@ function SettingsView({
                           <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
                         </Switch.Root>
                       </SettingRow>
-                      <SettingRow title="更改 PDF 源文件" description="开启后会尝试把高亮、下划线和批注写回 PDF；Informio 跳转仍保存在本地标注数据中。">
-                        <Switch.Root
-                          checked={settings.editor.writePdfAnnotationsToSource}
-                          onCheckedChange={(value) =>
-                            onChange({ ...settings, editor: { ...settings.editor, writePdfAnnotationsToSource: value } })
-                          }
-                          className="relative h-7 w-12 rounded-full bg-slate-300 data-[state=checked]:bg-[var(--accent)]"
-                        >
-                          <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
-                        </Switch.Root>
-                      </SettingRow>
-                      <SettingRow title="自动保存" description="输入后自动保存到本地应用数据">
+	                      <SettingRow title="自动保存" description="输入后自动保存到本地应用数据">
                         <Switch.Root
                           checked={settings.markdown.autoSave}
                           onCheckedChange={(value) => onChange({ ...settings, markdown: { ...settings.markdown, autoSave: value } })}
@@ -7717,6 +10621,48 @@ function SettingsView({
                           <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
                         </Switch.Root>
                       </SettingRow>
+                      <div className="grid gap-3 py-5">
+                        <div className="text-[15px] font-bold text-[var(--text-main)]">文件插入策略</div>
+                        <p className="text-[13px] text-[var(--text-muted)]">只影响从文件选择器插入图片、视频、音频和 PDF；粘贴图片仍会复制到 `attachment/`。</p>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onChange({
+                                ...settings,
+                                editor: { ...settings.editor, assetImportMode: "copy-to-attachment" }
+                              })
+                            }
+                            className={cn(
+                              "rounded-xl border px-4 py-3 text-left transition-colors",
+                              settings.editor.assetImportMode === "copy-to-attachment"
+                                ? "border-emerald-500/45 bg-emerald-50"
+                                : "border-[var(--divider)] bg-white hover:bg-slate-50"
+                            )}
+                          >
+                            <div className="text-[14px] font-bold text-[var(--text-main)]">复制到 attachment</div>
+                            <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">更稳，文档迁移或分享时不容易丢资源。</div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onChange({
+                                ...settings,
+                                editor: { ...settings.editor, assetImportMode: "link-original-file" }
+                              })
+                            }
+                            className={cn(
+                              "rounded-xl border px-4 py-3 text-left transition-colors",
+                              settings.editor.assetImportMode === "link-original-file"
+                                ? "border-emerald-500/45 bg-emerald-50"
+                                : "border-[var(--divider)] bg-white hover:bg-slate-50"
+                            )}
+                          >
+                            <div className="text-[14px] font-bold text-[var(--text-main)]">直接链接原文件</div>
+                            <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">不复制，插入更快；但原文件被移动或删除后会失效。</div>
+                          </button>
+                        </div>
+                      </div>
                       <SettingRow title="缩进宽度" description="用于 Markdown 列表与代码块">
                         <input
                           type="number"
@@ -7755,16 +10701,34 @@ function SettingsView({
                   )}
                   {section === "shortcuts" && (
                     <>
-                      <SettingRow title="快速保存" description="保存当前文档，保存后标签栏绿点消失">
-                        <kbd className="rounded-md bg-white px-3 py-2 font-mono text-sm text-slate-700 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.12)]">
-                          {settings.shortcuts.quickSave}
-                        </kbd>
-                      </SettingRow>
-                      <SettingRow title="快速唤起窗口" description="打开一个左右栏全折叠的空白速记窗口">
-                        <kbd className="rounded-md bg-white px-3 py-2 font-mono text-sm text-slate-700 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.12)]">
-                          {settings.shortcuts.quickCapture}
-                        </kbd>
-                      </SettingRow>
+                      <div className="mb-5">
+                        <h2 className="text-[18px] font-bold text-[var(--text-main)]">可配置快捷键</h2>
+                        <p className="mt-2 max-w-2xl text-[13px] leading-6 text-[var(--text-muted)]">这里直接改当前生效的快捷键。点一下键位开始录制，冲突时会当场阻止保存。</p>
+                      </div>
+                      {shortcutError ? <p className="mb-4 rounded-md bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">{shortcutError}</p> : null}
+                      <div className="space-y-6">
+                        {shortcutGroups.map((group) => (
+                          <section key={group.title}>
+                            <div className="mb-2 text-[12px] font-bold tracking-[0.08em] text-[var(--text-muted)] uppercase">{group.title}</div>
+                            <div className="divide-y divide-[var(--divider)] border-y border-[var(--divider)]/80">
+                              {group.items.map((entry) => (
+                                <SettingRow key={entry.id} title={entry.label} description={entry.description}>
+                                  <ShortcutBindingControl
+                                    value={settings.shortcuts.bindings[entry.id]}
+                                    recording={recordingShortcutId === entry.id}
+                                    onStartRecording={() =>
+                                      setRecordingShortcutId((current) => (current === entry.id ? null : entry.id))
+                                    }
+                                    onCapture={(accelerator) => updateShortcutBinding(entry.id, accelerator)}
+                                    onClear={() => clearShortcutBinding(entry.id)}
+                                    onRestoreDefault={() => restoreShortcutBinding(entry.id)}
+                                  />
+                                </SettingRow>
+                              ))}
+                            </div>
+                          </section>
+                        ))}
+                      </div>
                     </>
                   )}
                   {section !== "editor" && section !== "shortcuts" && (
@@ -7797,14 +10761,14 @@ export function App() {
   const [outlineJumpRequest, setOutlineJumpRequest] = useState<OutlineJumpRequest | null>(null);
   const [lastMarkdownTarget, setLastMarkdownTarget] = useState<PdfMarkdownTarget | null>(null);
   const [pdfAnnotationIndex, setPdfAnnotationIndex] = useState<Map<string, PdfAnnotation>>(() => new Map());
+  const [pdfAnnotationRefreshToken, setPdfAnnotationRefreshToken] = useState(0);
+  const [pendingPdfBacklink, setPendingPdfBacklink] = useState<PendingPdfBacklinkState | null>(null);
   const [focusPdfAnnotationId, setFocusPdfAnnotationId] = useState<string | null>(null);
   const [agentBusy, setAgentBusy] = useState(false);
   const [checkingAgents, setCheckingAgents] = useState(false);
   const [checkingApiModels, setCheckingApiModels] = useState(false);
   const [apiCheckState, setApiCheckState] = useState<ApiCheckState>({ status: "idle" });
-  const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Informio", version: "", githubUrl: "" });
-  const [updaterState, setUpdaterState] = useState<UpdaterState>({ status: "idle", message: "自动更新尚未检查。" });
-  const [checkingForUpdates, setCheckingForUpdates] = useState(false);
+  const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Informio", version: "", githubUrl: "", iconDataUrl: undefined });
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
   const [openDocumentIds, setOpenDocumentIds] = useState<string[]>([]);
   const [editorPanes, setEditorPanes] = useState<EditorPaneState[]>([]);
@@ -7818,10 +10782,9 @@ export function App() {
   const [paneRatio, setPaneRatio] = useState(0.5);
   const [dropZone, setDropZone] = useState<EditorDropZone | null>(null);
   const [dirtyDocumentIds, setDirtyDocumentIds] = useState<Set<string>>(() => new Set());
-  const [renameRequest, setRenameRequest] = useState<RenameRequest | null>(null);
   const [fileListCreationSignal, setFileListCreationSignal] = useState(0);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const [toolbarTranslate, setToolbarTranslate] = useState<ToolbarTranslateState>({ status: "idle", response: "" });
+  const [toolbarTranslate, setToolbarTranslate] = useState<UnifiedToolbarTranslateState>({ status: "idle", response: "" });
   const saveTimer = useRef<number | null>(null);
   const saveQueueRef = useRef(Promise.resolve<AppData | null>(null));
   const pendingAutoSaveIdsRef = useRef<Set<string>>(new Set());
@@ -7832,30 +10795,8 @@ export function App() {
   const lastActiveDocumentIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    window.informio
-      .loadApp()
-      .then((loaded) => {
-        setLoadError(null);
-        latestDataRef.current = loaded;
-        setData(loaded);
-        window.informio.listAgentRuntimeConnections().then(setConnections);
-        const active = loaded.settings.agents.find((agent) => agent.id === loaded.settings.activeAgentId) ?? loaded.settings.agents[0];
-        if (loaded.settings.agentRuntime.enabled && loaded.settings.agentRuntime.autoStart && active) {
-          setConnections((items) => [
-            ...items.filter((item) => item.providerId !== active.id),
-            { providerId: active.id, status: "connecting", message: "正在启动 Agent...", tools: [] }
-          ]);
-          window.informio.connectAgentRuntime(active.id).then((connection) => {
-            setConnections((items) => [...items.filter((item) => item.providerId !== active.id), connection]);
-          });
-        }
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error("loadApp failed", error);
-        setLoadError(message || "无法加载应用数据。");
-      });
-    return window.informio.onAppDataUpdated((updated) => {
+    let cancelled = false;
+    const unsubscribe = window.informio.onAppDataUpdated((updated) => {
       const current = latestDataRef.current;
       const dirtyIds = dirtyDocumentIdsRef.current;
       if (!current || !dirtyIds.size) {
@@ -7882,18 +10823,79 @@ export function App() {
       setData(merged);
       setDirtyDocumentIds(preservedDirtyIds);
     });
+
+    void (async () => {
+      try {
+        const loaded = await window.informio.loadApp();
+        if (cancelled) return;
+        setLoadError(null);
+        latestDataRef.current = loaded;
+        setData(loaded);
+
+        const existingConnections = await window.informio.listAgentRuntimeConnections();
+        if (cancelled) return;
+        setConnections(existingConnections);
+
+        const shouldAutoStart = loaded.settings.agentRuntime.enabled && loaded.settings.agentRuntime.autoStart;
+        if (!shouldAutoStart) return;
+        const targetAgents = loaded.settings.agents.filter((agent) => agent.enabled);
+        const activeAgentId = loaded.settings.activeAgentId;
+        const disconnectedAgents = targetAgents.filter((agent) => {
+          const existing = existingConnections.find((item) => item.providerId === agent.id);
+          return existing?.status !== "connected";
+        });
+        if (!disconnectedAgents.length) return;
+
+        const prioritizedAgents = [
+          ...disconnectedAgents.filter((agent) => agent.id === activeAgentId),
+          ...disconnectedAgents.filter((agent) => agent.id !== activeAgentId)
+        ];
+
+        setConnections((items) => [
+          ...items.filter((item) => !disconnectedAgents.some((agent) => agent.id === item.providerId)),
+          ...disconnectedAgents.map((agent) => ({
+            providerId: agent.id,
+            status: "connecting" as const,
+            message: `正在启动 ${agent.name}...`,
+            tools: []
+          }))
+        ]);
+
+        for (const agent of prioritizedAgents) {
+          if (cancelled) return;
+          const connection = await (async () => {
+            try {
+              return await window.informio.connectAgentRuntime(agent.id);
+            } catch (error) {
+              return {
+                providerId: agent.id,
+                status: "error" as const,
+                message: error instanceof Error ? error.message : "Agent 启动失败。",
+                tools: [],
+                models: agent.models
+              };
+            }
+          })();
+          if (cancelled) return;
+          setConnections((items) => [...items.filter((item) => item.providerId !== connection.providerId), connection]);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : String(error);
+        console.error("loadApp failed", error);
+        setLoadError(message || "无法加载应用数据。");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
     window.informio.getAppInfo().then(setAppInfo).catch(() => {
-      setAppInfo({ name: "Informio", version: "", githubUrl: "" });
-    });
-    window.informio.getUpdaterState().then(setUpdaterState).catch(() => {
-      setUpdaterState({ status: "idle", message: "自动更新尚未检查。" });
-    });
-    return window.informio.onUpdaterStateChanged((state) => {
-      setUpdaterState(state);
-      if (state.status !== "checking") setCheckingForUpdates(false);
+      setAppInfo({ name: "Informio", version: "", githubUrl: "", iconDataUrl: undefined });
     });
   }, []);
 
@@ -7946,23 +10948,28 @@ export function App() {
   const activeConnection = connections.find((connection) => connection.providerId === activeAgent?.id);
   const apiSettings = useMemo(() => normalizeApiSettings(data?.settings.api), [data?.settings.api]);
   const activeModels = useMemo(() => {
-    const merged = [
-      ...(activeConnection?.models ?? []),
-      ...(activeAgent?.models ?? []),
-      ...(activeAgent?.model ? [{ id: activeAgent.model, label: activeAgent.model }] : [])
-    ];
+    const runtimeModels = activeConnection?.models?.length ? activeConnection.models : [];
+    const merged = runtimeModels.length
+      ? [
+          ...runtimeModels,
+          ...(activeAgent?.model ? [{ id: activeAgent.model, label: activeAgent.model }] : [])
+        ]
+      : [
+          ...(activeAgent?.models ?? []),
+          ...(activeAgent?.model ? [{ id: activeAgent.model, label: activeAgent.model }] : [])
+        ];
     return Array.from(new Map(merged.filter((item) => item.id).map((item) => [item.id, item])).values());
   }, [activeAgent?.model, activeAgent?.models, activeConnection?.models]);
-  const scopedAgentConversations = useMemo(
+  const providerAgentConversations = useMemo(
     () =>
       (data?.agentConversations ?? [])
-        .filter((conversation) => conversation.workspaceScopeId === workspaceScopeId && conversation.providerId === activeAgent?.id)
+        .filter((conversation) => conversation.providerId === activeAgent?.id)
         .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
-    [activeAgent?.id, data?.agentConversations, workspaceScopeId]
+    [activeAgent?.id, data?.agentConversations]
   );
   const activeConversation = useMemo(
-    () => scopedAgentConversations.find((conversation) => conversation.id === activeConversationId) ?? null,
-    [activeConversationId, scopedAgentConversations]
+    () => providerAgentConversations.find((conversation) => conversation.id === activeConversationId) ?? null,
+    [activeConversationId, providerAgentConversations]
   );
   const activeModel = useMemo(() => {
     if (activeAgent?.model?.trim()) return activeAgent.model;
@@ -7982,6 +10989,24 @@ export function App() {
     () => (activePane ? documentsById.get(activePane.documentId) : undefined) ?? openDocuments.find((doc) => doc.id === activePane?.documentId) ?? openDocuments[0],
     [activePane, documentsById, openDocuments]
   );
+  const writableMarkdownDocuments = useMemo(
+    () => (data?.documents ?? []).filter((document) => isWritableTextDocument(document) && isMarkdownDocument(document)),
+    [data?.documents]
+  );
+  const resolvedPdfMarkdownTarget = useMemo<PdfMarkdownTarget | null>(() => {
+    if (lastMarkdownTarget) {
+      const targetDocument = documentsById.get(lastMarkdownTarget.documentId);
+      if (targetDocument && isWritableTextDocument(targetDocument)) return lastMarkdownTarget;
+    }
+    const fallback = [activeOpenDoc, ...openDocuments].find((document): document is InformioDocument => isWritableTextDocument(document));
+    if (!fallback) return null;
+    return {
+      documentId: fallback.id,
+      title: fallback.title,
+      filePath: fallback.filePath,
+      to: fallback.markdown.length
+    };
+  }, [activeOpenDoc, documentsById, lastMarkdownTarget, openDocuments]);
 
   useEffect(() => {
     if (!data) return;
@@ -8000,6 +11025,21 @@ export function App() {
   }, [activePaneId, editorPanes]);
 
   useEffect(() => {
+    if (!pendingPdfBacklink || pendingPdfBacklink.step === "select-document" || !data) return;
+    const targetDocument = data.documents.find((document) => document.id === pendingPdfBacklink.targetDocumentId);
+    if (!targetDocument || !isWritableTextDocument(targetDocument) || !isMarkdownDocument(targetDocument)) {
+      setPendingPdfBacklink(null);
+      window.alert("目标 Markdown 文档不可用，已取消 PDF 回链插入。");
+      return;
+    }
+    const visiblePanes = normalizeEditorPanes(editorPanes, (documentId) => data.documents.some((document) => document.id === documentId));
+    if (!visiblePanes.some((pane) => pane.documentId === pendingPdfBacklink.targetDocumentId)) {
+      setPendingPdfBacklink(null);
+      window.alert("目标 Markdown 文档已被切走，已取消 PDF 回链插入。");
+    }
+  }, [data, editorPanes, pendingPdfBacklink]);
+
+  useEffect(() => {
     if (agentBusy) return;
     if (activeConversation) {
       setAgentMessages(buildSessionMessagesFromConversation(activeConversation));
@@ -8010,16 +11050,16 @@ export function App() {
       setAgentMessages([]);
       return;
     }
-    if (scopedAgentConversations.length) {
-      setActiveConversationId(scopedAgentConversations[0].id);
-      setAgentMessages(buildSessionMessagesFromConversation(scopedAgentConversations[0]));
+    if (providerAgentConversations.length) {
+      setActiveConversationId(providerAgentConversations[0].id);
+      setAgentMessages(buildSessionMessagesFromConversation(providerAgentConversations[0]));
       setPendingNewConversation(false);
       return;
     }
     setActiveConversationId(null);
     setAgentMessages([]);
     setPendingNewConversation(true);
-  }, [activeConversation, agentBusy, pendingNewConversation, scopedAgentConversations]);
+  }, [activeConversation, agentBusy, pendingNewConversation, providerAgentConversations]);
 
   const clearSavedDirtyIds = (cleanIds: string[], savedDocuments: InformioDocument[]) => {
     const savedById = new Map(savedDocuments.map((doc) => [doc.id, doc]));
@@ -8133,37 +11173,137 @@ export function App() {
     if (focusPdfAnnotationId === annotationId) setFocusPdfAnnotationId(null);
   };
 
-  const insertPdfBacklink = (annotation: PdfAnnotation) => {
-    const target = annotation.markdownTarget ?? lastMarkdownTarget;
-    const current = latestDataRef.current;
-    if (!target || !current) return;
-    const doc = current.documents.find((item) => item.id === target.documentId);
-    if (!doc || isPdfFile(doc.filePath ?? doc.title)) return;
-    const link = `[PDF 标注](informio://pdf-annotation/${encodeURIComponent(annotation.id)})`;
-    const insertAt = typeof target.to === "number" && target.to >= 0 ? target.to : doc.markdown.length;
-    const needsLeadingBreak = insertAt > 0 && !doc.markdown.slice(0, insertAt).endsWith("\n");
-    const insertion = `${needsLeadingBreak ? "\n" : ""}${link}\n`;
-    const markdown = `${doc.markdown.slice(0, insertAt)}${insertion}${doc.markdown.slice(insertAt)}`;
-    const documents = current.documents.map((item) =>
-      item.id === doc.id ? { ...item, markdown, updatedAt: new Date().toISOString() } : item
-    );
-    const next = { ...current, documents };
+  const bumpPdfAnnotationRefresh = () => {
+    setPdfAnnotationRefreshToken((value) => value + 1);
+  };
+
+  const insertPdfBacklink = (_annotation?: PdfAnnotation) => {
+    bumpPdfAnnotationRefresh();
+  };
+
+  const openDocumentInLinkedPane = (
+    sourcePaneId: EditorPaneState["id"],
+    documentId: string,
+    options?: { forceRichText?: boolean }
+  ): EditorPaneState["id"] | null => {
+    if (!data || !documentsById.has(documentId)) return null;
+    const normalized = normalizeEditorPanes(editorPanes, (paneDocumentId) => documentsById.has(paneDocumentId));
+    const sourcePane =
+      normalized.find((pane) => pane.id === sourcePaneId) ??
+      normalized.find((pane) => pane.id === activePaneId) ??
+      normalized[0] ??
+      (data.activeDocumentId ? { id: "main" as const, documentId: data.activeDocumentId } : null);
+    if (!sourcePane) return null;
+    if (sourcePane.documentId === documentId) {
+      setActivePaneId(sourcePane.id);
+      return sourcePane.id;
+    }
+    const targetPaneId: EditorPaneState["id"] = sourcePane.id === "main" ? "secondary" : "main";
+    const nextPanes =
+      normalized.length <= 1
+        ? normalizeEditorPanes([
+            { id: "main", documentId: sourcePane.documentId },
+            { id: "secondary", documentId }
+          ])
+        : normalizeEditorPanes(
+            normalized.map((pane) => (pane.id === targetPaneId ? { ...pane, documentId } : pane))
+          );
+    setSplitDirection("horizontal");
+    setOpenDocumentIds((ids) => (ids.includes(documentId) ? ids : [...ids, documentId].slice(-6)));
+    setEditorPanes(nextPanes);
+    if (options?.forceRichText) {
+      setEditorViewModes((current) => ({ ...current, [targetPaneId]: "rich-text" }));
+    }
+    setActivePaneId(targetPaneId);
+    const next = { ...data, activeDocumentId: documentId };
     latestDataRef.current = next;
     setData(next);
-    setDirtyDocumentIds((items) => new Set(items).add(doc.id));
-    window.informio.saveDocuments(documents, current.activeDocumentId);
+    window.informio.saveDocuments(next.documents, documentId);
+    return targetPaneId;
   };
 
-  const openMarkdownTarget = (target: PdfMarkdownTarget) => {
-    selectDocument(target.documentId);
+  const openMarkdownTarget = (target: PdfMarkdownTarget, sourcePaneId: EditorPaneState["id"]) => {
+    openDocumentInLinkedPane(sourcePaneId, target.documentId);
   };
 
-  const openPdfAnnotation = (annotationId: string) => {
-    const annotation = pdfAnnotationIndex.get(annotationId);
+  const openPdfAnnotation = (annotationId: string, sourcePaneId: EditorPaneState["id"]) => {
     setFocusPdfAnnotationId(annotationId);
-    if (!annotation || !data) return;
-    const doc = data.documents.find((item) => item.filePath && normalizePath(item.filePath) === normalizePath(annotation.pdfPath));
-    if (doc) selectDocument(doc.id);
+    void (async () => {
+      const cached = pdfAnnotationIndex.get(annotationId);
+      const annotation = cached ?? (await window.informio.findPdfAnnotation({ annotationId }));
+      if (!annotation) {
+        window.alert("找不到对应的 PDF 标注，可能已被删除或尚未同步。");
+        return;
+      }
+      if (!cached) registerPdfAnnotation(annotation);
+      const latest = latestDataRef.current;
+      if (!latest) return;
+      const doc = latest.documents.find((item) => item.filePath && normalizePath(item.filePath) === normalizePath(annotation.pdfPath));
+      if (!doc) {
+        window.alert("找到了 PDF 标注，但当前工作区里没有对应的 PDF 文档。");
+        return;
+      }
+      openDocumentInLinkedPane(sourcePaneId, doc.id);
+    })();
+  };
+
+  const requestPdfBacklink = (annotation: PdfAnnotation, sourcePaneId: EditorPaneState["id"]) => {
+    if (!writableMarkdownDocuments.length) {
+      window.alert("当前没有可用的 Markdown 文档，暂时无法创建 PDF 回链。");
+      return;
+    }
+    setPendingPdfBacklink({
+      step: "select-document",
+      annotation,
+      sourcePaneId
+    });
+  };
+
+  const choosePendingPdfBacklinkDocument = (documentId: string) => {
+    setPendingPdfBacklink((current) => {
+      if (!current || current.step !== "select-document") return current;
+      const targetPaneId = openDocumentInLinkedPane(current.sourcePaneId, documentId, { forceRichText: true });
+      if (!targetPaneId) return null;
+      return {
+        step: "choose-position",
+        annotation: current.annotation,
+        sourcePaneId: current.sourcePaneId,
+        targetDocumentId: documentId,
+        targetPaneId
+      };
+    });
+  };
+
+  const cancelPendingPdfBacklink = () => {
+    setPendingPdfBacklink(null);
+  };
+
+  const confirmPendingPdfBacklink = async (target: PdfMarkdownTarget) => {
+    const current = latestDataRef.current;
+    if (!current) return false;
+    const pending = pendingPdfBacklink;
+    if (!pending || pending.step !== "choose-position") return false;
+    setPendingPdfBacklink({ ...pending, step: "saving" });
+    try {
+      const result = await window.informio.savePdfAnnotation({
+        annotation: {
+          ...pending.annotation,
+          markdownTarget: target,
+          updatedAt: new Date().toISOString()
+        },
+        writeToSource: true
+      });
+      registerPdfAnnotation(result.annotation);
+      bumpPdfAnnotationRefresh();
+      if (result.sourceWrite?.attempted && !result.sourceWrite.ok) {
+        window.alert(result.sourceWrite.message ?? "源 PDF 写回失败，标注已保存在本地。");
+      }
+      return true;
+    } catch (error) {
+      setPendingPdfBacklink(pending);
+      window.alert(error instanceof Error ? error.message : "保存 PDF 标注失败。");
+      return false;
+    }
   };
 
   const handleEditorCompositionChange = (documentId: string, composing: boolean) => {
@@ -8218,15 +11358,15 @@ export function App() {
     window.informio.saveDocuments(next.documents, id);
   };
 
-  const closeDocumentTab = (id: string) => {
-    if (!data) return;
-    const currentTabs = openDocumentIds;
+  const applyClosedDocumentTab = (id: string, currentData: AppData, currentTabs: string[]) => {
     const closingIndex = currentTabs.indexOf(id);
     const nextTabs = currentTabs.filter((item) => item !== id);
     const nextActiveDocumentId =
-      data.activeDocumentId === id && nextTabs.length
+      currentData.activeDocumentId === id && nextTabs.length
         ? (currentTabs[closingIndex + 1] ?? currentTabs[closingIndex - 1] ?? nextTabs[0])
-        : data.activeDocumentId;
+        : currentData.activeDocumentId === id
+          ? ""
+          : currentData.activeDocumentId;
 
     setOpenDocumentIds(nextTabs);
     setEditorPanes((panes) => {
@@ -8236,11 +11376,24 @@ export function App() {
       return normalizeEditorPanes(remaining);
     });
     setActivePaneId((current) => (current === "secondary" && nextTabs.length < 2 ? "main" : current));
-    if (nextActiveDocumentId !== data.activeDocumentId) {
-      const next = { ...data, activeDocumentId: nextActiveDocumentId };
-      setData(next);
-      window.informio.saveDocuments(next.documents, nextActiveDocumentId);
+    const next = { ...currentData, activeDocumentId: nextActiveDocumentId };
+    latestDataRef.current = next;
+    setData(next);
+    window.informio.saveDocuments(next.documents, nextActiveDocumentId);
+  };
+
+  const closeDocumentTab = async (id: string) => {
+    const currentData = latestDataRef.current;
+    if (!currentData) return;
+    try {
+      if (dirtyDocumentIdsRef.current.has(id)) {
+        await saveDocumentsNow(currentData.documents, currentData.activeDocumentId, [id]);
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? `保存失败，已取消关闭标签。\n${error.message}` : "保存失败，已取消关闭标签。");
+      return;
     }
+    applyClosedDocumentTab(id, latestDataRef.current ?? currentData, openDocumentIds);
   };
 
   const createDocument = async (folderPath?: string) => {
@@ -8422,16 +11575,9 @@ export function App() {
     }
   };
 
-  const runFileSystemAction = (input: FileSystemOperationInput) => {
-    if (input.action === "rename") {
-      setRenameRequest({ ...input, currentName: pathBaseName(input.path) });
-      return;
-    }
-    executeFileSystemAction(input);
-  };
-
-  const renameProject = (path: string, title: string) => {
-    setRenameRequest({ kind: "project", path, currentName: title });
+  const renameProject = async (path: string, title: string) => {
+    const next = await window.informio.renameProject(path, title);
+    setData(next);
   };
 
   const toggleProjectPinned = async (path: string) => {
@@ -8445,30 +11591,19 @@ export function App() {
     window.informio.saveSettings(settings);
   };
 
-  const checkForUpdates = async () => {
-    setCheckingForUpdates(true);
-    try {
-      const state = await window.informio.checkForUpdates();
-      setUpdaterState(state);
-    } catch (error) {
-      setUpdaterState({
-        status: "error",
-        message: error instanceof Error && error.message ? error.message : "检查更新失败，请稍后重试。"
-      });
-    } finally {
-      setCheckingForUpdates(false);
+  const saveActiveDocumentAs = async () => {
+    if (!data || !activeOpenDoc) return;
+    const next = await window.informio.saveActiveDocumentAs(data.documents, data.activeDocumentId);
+    if (!next) return;
+    setData(next);
+    if (next.activeDocumentId) {
+      setOpenDocumentIds((ids) => (ids.includes(next.activeDocumentId) ? ids : [next.activeDocumentId, ...ids].slice(0, 6)));
     }
   };
 
-  const restartToInstallUpdate = async () => {
-    try {
-      await window.informio.restartToInstallUpdate();
-    } catch (error) {
-      setUpdaterState({
-        status: "error",
-        message: error instanceof Error && error.message ? error.message : "更新安装失败，请稍后再试。"
-      });
-    }
+  const exportActiveDocument = async (format: "markdown" | "html" | "pdf") => {
+    if (!data || !activeOpenDoc || !isWritableTextDocument(activeOpenDoc)) return;
+    await window.informio.exportActiveDocument(data.documents, data.activeDocumentId, format);
   };
 
   const updateActiveAgentModel = (model: string) => {
@@ -8516,52 +11651,83 @@ export function App() {
     }
   };
 
-  useEffect(() => {
-    return window.informio.onMenuCommand((command) => {
-      if (!data) return;
-      if (command === "file:new") {
-        createDocument();
-        return;
-      }
-      if (command === "command:open-palette") {
+  const runAppCommand = (command: MenuCommand) => {
+    if (!data) return false;
+    switch (command) {
+      case "file:new":
+        void createDocument();
+        return true;
+      case "window:new":
+        void window.informio.newWindow();
+        return true;
+      case "command:open-palette":
         setCommandPaletteOpen(true);
-        return;
-      }
-      if (command === "file:save") {
-        saveDocumentsNow(data.documents, data.activeDocumentId);
-        return;
-      }
-      if (command === "file:close-workspace") {
+        return true;
+      case "file:save":
+        if (activeOpenDoc) void saveDocumentsNow(data.documents, data.activeDocumentId);
+        return true;
+      case "file:save-as":
+        void saveActiveDocumentAs();
+        return true;
+      case "file:export-html":
+        void exportActiveDocument("html");
+        return true;
+      case "file:export-pdf":
+        void exportActiveDocument("pdf");
+        return true;
+      case "file:open":
+        void window.informio.openFiles().then((next) => next && setData(next));
+        return true;
+      case "workspace:open":
+        void window.informio.openWorkspace().then((next) => next && setData(next));
+        return true;
+      case "settings:open":
+        window.informio.openSettings();
+        return true;
+      case "file:close-tab":
+        if (activeOpenDoc?.id) void closeDocumentTab(activeOpenDoc.id);
+        return true;
+      case "window:close":
+        window.close();
+        return true;
+      case "file:close-workspace":
         updateSettings({
           ...data.settings,
           appearance: { ...data.settings.appearance, leftPanel: "collapsed", rightPanel: "collapsed" }
         });
-        return;
-      }
-      if (command === "view:toggle-left-panel") {
+        return true;
+      case "view:toggle-left-panel": {
         const leftOpen = data.settings.appearance.leftPanel === "expanded";
         updateSettings({
           ...data.settings,
           appearance: { ...data.settings.appearance, leftPanel: leftOpen ? "collapsed" : "expanded" }
         });
-        return;
+        return true;
       }
-      if (command === "view:toggle-right-panel") {
+      case "view:toggle-right-panel": {
         const rightOpen = data.settings.appearance.rightPanel === "expanded";
         updateSettings({
           ...data.settings,
           appearance: { ...data.settings.appearance, rightPanel: rightOpen ? "collapsed" : "expanded" }
         });
-        return;
+        return true;
       }
-      if (command === "view:toggle-status-bar") {
+      case "view:toggle-status-bar":
         updateSettings({
           ...data.settings,
           appearance: { ...data.settings.appearance, autoHideStatusBar: !data.settings.appearance.autoHideStatusBar }
         });
-      }
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  useEffect(() => {
+    return window.informio.onMenuCommand((command) => {
+      runAppCommand(command);
     });
-  }, [data]);
+  }, [activeOpenDoc?.id, data]);
 
   const startPanelResize = (side: "left" | "right", event: React.PointerEvent<HTMLDivElement>) => {
     if (!data) return;
@@ -8611,22 +11777,6 @@ export function App() {
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp, { once: true });
   };
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "p") {
-        event.preventDefault();
-        setCommandPaletteOpen(true);
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        if (data) saveDocumentsNow(data.documents, data.activeDocumentId);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [data]);
 
   const connectAgent = async (providerId?: string) => {
     if (!data?.settings.agentRuntime.enabled) return;
@@ -8723,7 +11873,7 @@ export function App() {
 
   const selectAgentConversation = (conversationId: string) => {
     if (agentBusy) return;
-    const conversation = scopedAgentConversations.find((item) => item.id === conversationId);
+    const conversation = providerAgentConversations.find((item) => item.id === conversationId);
     setActiveConversationId(conversationId);
     setPendingNewConversation(false);
     setAgentMessages(buildSessionMessagesFromConversation(conversation ?? null));
@@ -8742,11 +11892,11 @@ export function App() {
     if (!currentData) return;
     const remainingConversations = (currentData.agentConversations ?? []).filter((conversation) => conversation.id !== conversationId);
     const saved = await saveAgentConversations(remainingConversations);
-    const remainingScoped = saved
-      .filter((conversation) => conversation.workspaceScopeId === workspaceScopeId && conversation.providerId === activeAgent?.id)
+    const remainingProviderConversations = saved
+      .filter((conversation) => conversation.providerId === activeAgent?.id)
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
     if (activeConversationId === conversationId) {
-      const nextConversation = remainingScoped[0] ?? null;
+      const nextConversation = remainingProviderConversations[0] ?? null;
       if (nextConversation) {
         setActiveConversationId(nextConversation.id);
         setPendingNewConversation(false);
@@ -8808,10 +11958,12 @@ export function App() {
     const baseRuntimeThreadId = existingConversation?.runtimeThreadId;
     const baseCreatedAt = existingConversation?.createdAt ?? nowIso;
     const baseTitle = existingConversation?.title ?? createConversationTitle(text);
+    const baseWorkspaceScopeId = existingConversation?.workspaceScopeId ?? workspaceScopeId;
+    const baseWorkspaceLabel = existingConversation?.workspaceLabel ?? workspaceLabel;
     const conversationBase: Omit<AgentConversation, "messages" | "updatedAt" | "runtimeThreadId"> = {
       id: conversationId,
-      workspaceScopeId,
-      workspaceLabel,
+      workspaceScopeId: baseWorkspaceScopeId,
+      workspaceLabel: baseWorkspaceLabel,
       providerId: activeAgent.id,
       title: baseTitle,
       createdAt: baseCreatedAt
@@ -8920,7 +12072,10 @@ export function App() {
         },
         (event) => {
           applySessionMessageUpdate((item) => {
-            if (event.type === "thinking_delta") return { ...item, reasoning: item.reasoning + event.content, status: "thinking" };
+            if (event.type === "thinking_delta") {
+              if (event.kind === "reasoning") return item;
+              return { ...item, reasoning: item.reasoning + event.content, status: "thinking" };
+            }
             if (event.type === "text_delta") return { ...item, response: item.response + event.content, status: "thinking" };
             if (event.type === "tool_start") {
               return { ...item, status: "tool-executing", actions: upsertSessionAction(item.actions, event.action) };
@@ -9051,13 +12206,11 @@ export function App() {
   const leftPanelWidth = clamp(data.settings.appearance.leftPanelWidth, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH);
   const rightPanelWidth = clamp(data.settings.appearance.rightPanelWidth, RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH);
   const isSettingsWindow = window.location.hash === "#settings";
-  const shellStyle =
-    data.settings.appearance.theme === "custom"
-      ? ({ "--custom-theme-color": data.settings.appearance.customThemeColor || DEFAULT_CUSTOM_THEME_COLOR } as CSSProperties)
-      : undefined;
+  const shellStyle = buildShellStyle(data.settings.appearance);
   const lineCount = activeOpenDoc ? countLines(activeOpenDoc.markdown) : 0;
   const activePaneViewMode = editorViewModes[activePaneId] ?? "rich-text";
   const canToggleMarkdownSource = Boolean(activeOpenDoc) && !isPdfFile(activeOpenDoc.filePath ?? activeOpenDoc.title);
+  const canExportActiveDocument = isWritableTextDocument(activeOpenDoc);
   const toggleActivePaneViewMode = () => {
     if (!canToggleMarkdownSource) return;
     setEditorViewModes((current) => ({
@@ -9073,13 +12226,36 @@ export function App() {
       appearance: { ...data.settings.appearance, leftPanel: nextPanel }
     });
   };
+  const shortcutLabel = (id: string) => {
+    const accelerator = getShortcutAccelerator(data.settings.shortcuts.bindings, id);
+    return accelerator ? acceleratorToDisplay(accelerator, shortcutDisplayPlatform) : undefined;
+  };
   const commandPaletteItems: CommandPaletteItem[] = [
-    { id: "file:new", title: "新建文档", shortcut: "Cmd+N", keywords: "新建 文档 new document", run: createDocument },
-    { id: "file:save", title: "保存", shortcut: "Cmd+S", keywords: "保存 save", run: () => saveDocumentsNow(data.documents, data.activeDocumentId) },
-    { id: "file:open", title: "打开文件", keywords: "打开 文件 open files", run: () => window.informio.openFiles().then((next) => next && setData(next)) },
-    { id: "settings", title: "打开设置", shortcut: "Cmd+,", keywords: "设置 settings", run: () => window.informio.openSettings() },
+    { id: "file:new", scope: "system", title: "新建文档", shortcut: shortcutLabel("file.new"), keywords: "新建 文档 new document", run: () => runAppCommand("file:new") },
+    { id: "file:open", scope: "system", title: "打开文件", shortcut: shortcutLabel("file.open"), keywords: "打开 文件 open files", run: () => runAppCommand("file:open") },
+    { id: "workspace:open", scope: "system", title: "打开项目", shortcut: shortcutLabel("workspace.open"), keywords: "打开 工作区 项目 workspace project", run: () => runAppCommand("workspace:open") },
+    { id: "settings:open", scope: "system", title: "打开设置", shortcut: shortcutLabel("settings.open"), keywords: "设置 settings", run: () => runAppCommand("settings:open") },
+    ...(canExportActiveDocument
+      ? [
+          {
+            id: "file:export-html",
+            scope: "system" as const,
+            title: `导出 ${(activeOpenDoc?.title ?? "Untitled").replace(/\.[^.]+$/, "")}.HTML`,
+            keywords: "导出 html export save 当前文档",
+            run: () => runAppCommand("file:export-html")
+          },
+          {
+            id: "file:export-pdf",
+            scope: "system" as const,
+            title: `导出 ${(activeOpenDoc?.title ?? "Untitled").replace(/\.[^.]+$/, "")}.PDF`,
+            keywords: "导出 pdf export save 当前文档",
+            run: () => runAppCommand("file:export-pdf")
+          }
+        ]
+      : []),
     {
       id: "view:left",
+      scope: "system",
       title: leftOpen ? "隐藏文件侧栏" : "显示文件侧栏",
       keywords: "切换 侧栏 文件 toggle file sidebar",
       run: () =>
@@ -9090,6 +12266,7 @@ export function App() {
     },
     {
       id: "view:right",
+      scope: "system",
       title: rightOpen ? "隐藏 Agent Session" : "显示 Agent Session",
       keywords: "assistant agent session ai 右栏 助手 任务 切换",
       run: () =>
@@ -9098,26 +12275,13 @@ export function App() {
           appearance: { ...data.settings.appearance, rightPanel: rightOpen ? "collapsed" : "expanded" }
         })
     },
-    { id: "format:bold", title: "加粗", shortcut: "Cmd+B", keywords: "加粗 bold", run: () => dispatchEditorCommand("format:bold") },
-    { id: "format:italic", title: "倾斜", shortcut: "Cmd+I", keywords: "倾斜 斜体 italic", run: () => dispatchEditorCommand("format:italic") },
-    { id: "format:heading1", title: "标题 1", keywords: "标题 h1 heading", run: () => dispatchEditorCommand("format:heading", 1) },
-    { id: "format:heading2", title: "标题 2", keywords: "标题 h2 heading", run: () => dispatchEditorCommand("format:heading", 2) },
-    { id: "format:heading3", title: "标题 3", keywords: "标题 h3 heading", run: () => dispatchEditorCommand("format:heading", 3) },
-    { id: "insert:table", title: "插入表格", keywords: "表格 table", run: () => dispatchEditorCommand("insert:table") },
-    { id: "format:code-block", title: "插入代码块", keywords: "代码 code", run: () => dispatchEditorCommand("format:code-block") },
-    { id: "insert:pdf", title: "插入 PDF", keywords: "pdf 文件 附件", run: () => window.informio.insertAsset("pdf") },
-    { id: "insert:math", title: "插入数学公式块", keywords: "公式 math", run: () => dispatchEditorCommand("insert:math") },
-    { id: "insert:chart", title: "插入 Mermaid 图表", keywords: "图表 mermaid", run: () => dispatchEditorCommand("insert:chart") },
-    { id: "insert:callout", title: "插入信息框", keywords: "信息框 callout note", run: () => dispatchEditorCommand("insert:callout") },
-    { id: "insert:footnote", title: "插入脚注", keywords: "脚注 footnote", run: () => dispatchEditorCommand("insert:footnote") },
-    { id: "insert:details", title: "插入折叠块", keywords: "折叠 details", run: () => dispatchEditorCommand("insert:details") },
-    ...data.documents.map((doc) => ({
-      id: `doc:${doc.id}`,
-      title: `打开 ${markdownTitle(doc.title)}`,
-      subtitle: doc.filePath ?? doc.title,
-      keywords: `打开 文档 open ${doc.title}`,
-      run: () => selectDocument(doc.id)
-    }))
+    {
+      id: "file:close-workspace",
+      scope: "system",
+      title: "收起写作侧栏",
+      keywords: "隐藏 左栏 右栏 close workspace collapse panels",
+      run: () => runAppCommand("file:close-workspace")
+    }
   ];
   const visibleEditorPanes =
     normalizeEditorPanes(editorPanes, (documentId) => documentsById.has(documentId)).length > 0
@@ -9163,6 +12327,7 @@ export function App() {
           <EditorSurfaceErrorBoundary documentId={document.id} onResetSelection={() => setAgentSelection(null)}>
             <EditorPane
               key={`${pane.id}-${document.id}-${documentRefreshTokens[document.id] ?? 0}`}
+              paneId={pane.id}
               document={document}
               documents={data.documents}
               settings={data.settings}
@@ -9170,11 +12335,19 @@ export function App() {
               outlineJumpRequest={outlineJumpRequest}
               onOutlineJumpHandled={handleOutlineJumpHandled}
               onChange={updateDocument}
-              onOpenInternalLink={selectDocument}
+              onOpenInternalLink={(documentId, sourcePaneId) => {
+                openDocumentInLinkedPane(sourcePaneId, documentId);
+              }}
               onCreateInternalLink={createLinkedDocument}
               onSelection={handleAgentSelection}
-              markdownTarget={lastMarkdownTarget}
+              markdownTarget={resolvedPdfMarkdownTarget}
               focusPdfAnnotationId={focusPdfAnnotationId}
+              annotationRefreshToken={pdfAnnotationRefreshToken}
+              pendingPdfBacklink={pendingPdfBacklink?.step === "select-document" ? null : pendingPdfBacklink}
+              onRequestPdfBacklink={requestPdfBacklink}
+              onConfirmPendingPdfBacklink={confirmPendingPdfBacklink}
+              onCancelPendingPdfBacklink={cancelPendingPdfBacklink}
+              onPdfAnnotationStoreChanged={bumpPdfAnnotationRefresh}
               onRegisterPdfAnnotation={registerPdfAnnotation}
               onDeletePdfAnnotation={unregisterPdfAnnotation}
               onInsertPdfBacklink={insertPdfBacklink}
@@ -9196,7 +12369,7 @@ export function App() {
 
   if (isSettingsWindow) {
     return (
-      <Tooltip.Provider delayDuration={300}>
+      <Tooltip.Provider delayDuration={120} skipDelayDuration={80}>
         <div className={cn("app-shell h-screen overflow-hidden", `theme-${data.settings.appearance.theme}`)} style={shellStyle}>
           <SettingsView
             settings={data.settings}
@@ -9208,10 +12381,6 @@ export function App() {
             checkingApiModels={checkingApiModels}
             apiCheckState={apiCheckState}
             appInfo={appInfo}
-            updaterState={updaterState}
-            checkingForUpdates={checkingForUpdates}
-            onCheckForUpdates={checkForUpdates}
-            onRestartToInstallUpdate={restartToInstallUpdate}
           />
         </div>
       </Tooltip.Provider>
@@ -9219,8 +12388,14 @@ export function App() {
   }
 
   return (
-    <Tooltip.Provider delayDuration={300}>
+    <Tooltip.Provider delayDuration={120} skipDelayDuration={80}>
       <div className={cn("app-shell h-screen overflow-hidden", `theme-${data.settings.appearance.theme}`)} style={shellStyle}>
+        <PdfBacklinkDocumentDialog
+          request={pendingPdfBacklink?.step === "select-document" ? pendingPdfBacklink : null}
+          documents={writableMarkdownDocuments}
+          onClose={cancelPendingPdfBacklink}
+          onSelect={choosePendingPdfBacklinkDocument}
+        />
         <div className="flex h-full flex-col overflow-hidden">
 	          <header className="top-bar drag-region flex h-[42px] shrink-0 items-center border-b">
 	            <div
@@ -9255,7 +12430,7 @@ export function App() {
                         aria-label={`Close ${doc.title}`}
                         onClick={(event) => {
                           event.stopPropagation();
-                          closeDocumentTab(doc.id);
+                          void closeDocumentTab(doc.id);
                         }}
                         className={cn(
 	                          "no-drag absolute right-1 grid h-5 w-5 place-items-center rounded-md text-[var(--text-muted)] opacity-0 transition-[background-color,opacity,transform,color] active:scale-95",
@@ -9282,7 +12457,7 @@ export function App() {
 	                  onSelect={selectDocument}
 	                  onCreate={createDocument}
 	                  onCreateFolder={createFolder}
-	                  onFileAction={runFileSystemAction}
+	                  onFileAction={(input) => { void executeFileSystemAction(input); }}
 	                  onRenameProject={renameProject}
 	                  onToggleProjectPinned={toggleProjectPinned}
 	                  onRemoveProject={(path) => window.informio.removeProject(path).then(setData)}
@@ -9391,7 +12566,7 @@ export function App() {
 	                    providers={data.settings.agents}
 	                    provider={activeAgent}
 	                    connection={activeConnection}
-	                    conversations={scopedAgentConversations}
+	                    conversations={providerAgentConversations}
 	                    activeConversationId={activeConversationId}
 	                    pendingNewConversation={pendingNewConversation}
 	                    messages={agentMessages}
@@ -9494,22 +12669,6 @@ export function App() {
 	            </div>
 	          </footer>
         </div>
-        <RenameDialog
-          request={renameRequest}
-          onClose={() => setRenameRequest(null)}
-          onConfirm={async (name) => {
-            if (!renameRequest) return;
-            if (renameRequest.kind === "project") {
-              const request = renameRequest;
-              setRenameRequest(null);
-              const next = await window.informio.renameProject(request.path, name);
-              setData(next);
-              return;
-            }
-            setRenameRequest(null);
-            executeFileSystemAction({ ...renameRequest, name });
-          }}
-        />
         <CommandPalette open={commandPaletteOpen} commands={commandPaletteItems} onClose={() => setCommandPaletteOpen(false)} />
       </div>
     </Tooltip.Provider>
