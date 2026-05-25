@@ -94,13 +94,13 @@ jobs:
       - name: Package desktop app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm exec electron-builder --linux AppImage deb --x64 --config electron-builder.config.ts
+        run: pnpm exec electron-builder --linux AppImage --x64 --config electron-builder.config.ts
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: informio-linux
-          path: release/*linux*
+          path: release/*.AppImage
           if-no-files-found: error
 
   publish-linux-release:
@@ -123,4 +123,3 @@ jobs:
           tag_name: ${{ github.ref_name }}
           files: |
             release/*.AppImage
-            release/*.deb

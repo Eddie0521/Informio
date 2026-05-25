@@ -6,7 +6,7 @@ Informio ships desktop builds for three operating systems:
 
 - macOS: unsigned `.dmg` and `.zip`
 - Windows: `.exe` installer via NSIS
-- Linux: `.AppImage` and `.deb`
+- Linux: `.AppImage`
 
 Distribution is split into two paths:
 
@@ -80,7 +80,6 @@ After a successful build, `release/` will contain files such as:
 - `Informio-0.1.0-mac-arm64.zip`
 - `Informio-0.1.0-win-x64.exe`
 - `Informio-0.1.0-linux-arm64.AppImage`
-- `Informio-0.1.0-linux-arm64.deb`
 
 Exact filenames depend on version, OS, and architecture.
 
@@ -109,7 +108,7 @@ If the app is not code signed yet, SmartScreen may warn before launch. Users can
 
 ### Linux
 
-AppImage works as a portable download. `.deb` is better for Ubuntu and Debian users who expect a native installer.
+AppImage works as a portable download and is the current canonical Linux release format.
 
 ## Troubleshooting
 
