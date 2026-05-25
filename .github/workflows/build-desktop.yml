@@ -25,7 +25,7 @@ jobs:
             artifact_glob: release/*win*
           - os: ubuntu-22.04
             platform: linux
-            command: pnpm exec electron-builder --linux AppImage deb --publish always --config electron-builder.config.ts
+            command: pnpm exec electron-builder --linux AppImage deb --x64 --publish always --config electron-builder.config.ts
             artifact_glob: release/*linux*
 
     runs-on: ${{ matrix.os }}
