@@ -331,8 +331,8 @@ export function installDemoApi() {
       version: "1.0.3",
       githubUrl: ""
     }),
-    saveDocuments: async (documents: InformioDocument[], activeDocumentId: string) => {
-      state = { ...state, documents, activeDocumentId };
+    saveDocuments: async (_documents: InformioDocument[], activeDocumentId: string) => {
+      state = { ...state, activeDocumentId };
       return state;
     },
     saveNow: async (documents: InformioDocument[], activeDocumentId: string) => {

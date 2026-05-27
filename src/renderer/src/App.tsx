@@ -4989,6 +4989,126 @@ type ConflictDiffLine = {
   text: string;
 };
 
+type MarkdownDiffHunk = {
+  baseStart: number;
+  baseEnd: number;
+  replacement: string[];
+};
+
+const buildMarkdownDiffHunks = (base: string[], next: string[]): MarkdownDiffHunk[] => {
+  const table = Array.from({ length: base.length + 1 }, () => Array(next.length + 1).fill(0) as number[]);
+  for (let i = base.length - 1; i >= 0; i -= 1) {
+    for (let j = next.length - 1; j >= 0; j -= 1) {
+      table[i][j] = base[i] === next[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+    }
+  }
+
+  const hunks: MarkdownDiffHunk[] = [];
+  let i = 0;
+  let j = 0;
+  let current: MarkdownDiffHunk | null = null;
+
+  const startHunk = () => {
+    if (!current) current = { baseStart: i, baseEnd: i, replacement: [] };
+    return current;
+  };
+  const closeHunk = () => {
+    if (!current) return;
+    hunks.push(current);
+    current = null;
+  };
+
+  while (i < base.length && j < next.length) {
+    if (base[i] === next[j]) {
+      closeHunk();
+      i += 1;
+      j += 1;
+    } else if (table[i + 1][j] >= table[i][j + 1]) {
+      const hunk = startHunk();
+      hunk.baseEnd = i + 1;
+      i += 1;
+    } else {
+      const hunk = startHunk();
+      hunk.replacement.push(next[j]);
+      j += 1;
+    }
+  }
+
+  while (i < base.length) {
+    const hunk = startHunk();
+    hunk.baseEnd = i + 1;
+    i += 1;
+  }
+  while (j < next.length) {
+    const hunk = startHunk();
+    hunk.replacement.push(next[j]);
+    j += 1;
+  }
+  closeHunk();
+  return hunks;
+};
+
+const sameHunkReplacement = (left: MarkdownDiffHunk, right: MarkdownDiffHunk) =>
+  left.baseStart === right.baseStart &&
+  left.baseEnd === right.baseEnd &&
+  left.replacement.length === right.replacement.length &&
+  left.replacement.every((line, index) => line === right.replacement[index]);
+
+const hunksOverlap = (left: MarkdownDiffHunk, right: MarkdownDiffHunk) => {
+  if (left.baseStart === left.baseEnd && right.baseStart === right.baseEnd) {
+    return left.baseStart === right.baseStart;
+  }
+  return Math.max(left.baseStart, right.baseStart) < Math.min(left.baseEnd, right.baseEnd);
+};
+
+const mergeMarkdownWithBase = (
+  baseMarkdown: string,
+  localMarkdown: string,
+  externalMarkdown: string
+): { mergedMarkdown: string; conflicted: boolean } => {
+  if (localMarkdown === externalMarkdown) return { mergedMarkdown: localMarkdown, conflicted: false };
+  if (localMarkdown === baseMarkdown) return { mergedMarkdown: externalMarkdown, conflicted: false };
+  if (externalMarkdown === baseMarkdown) return { mergedMarkdown: localMarkdown, conflicted: false };
+
+  const base = baseMarkdown.split("\n");
+  const localHunks = buildMarkdownDiffHunks(base, localMarkdown.split("\n"));
+  const externalHunks = buildMarkdownDiffHunks(base, externalMarkdown.split("\n"));
+  const merged: string[] = [];
+  let baseIndex = 0;
+  let localIndex = 0;
+  let externalIndex = 0;
+
+  const applyHunk = (hunk: MarkdownDiffHunk) => {
+    merged.push(...base.slice(baseIndex, hunk.baseStart), ...hunk.replacement);
+    baseIndex = hunk.baseEnd;
+  };
+
+  while (localIndex < localHunks.length || externalIndex < externalHunks.length) {
+    const local = localHunks[localIndex];
+    const external = externalHunks[externalIndex];
+    if (!external || (local && local.baseStart < external.baseStart && !hunksOverlap(local, external))) {
+      applyHunk(local);
+      localIndex += 1;
+      continue;
+    }
+    if (!local || (external.baseStart < local.baseStart && !hunksOverlap(local, external))) {
+      applyHunk(external);
+      externalIndex += 1;
+      continue;
+    }
+    if (local && external && sameHunkReplacement(local, external)) {
+      applyHunk(local);
+      localIndex += 1;
+      externalIndex += 1;
+      continue;
+    }
+    return { mergedMarkdown: localMarkdown, conflicted: true };
+  }
+
+  merged.push(...base.slice(baseIndex));
+  return { mergedMarkdown: merged.join("\n"), conflicted: false };
+};
+
 const buildConflictDiffLines = (externalMarkdown: string, localMarkdown: string): ConflictDiffLine[] => {
   const removed = externalMarkdown.split("\n");
   const added = localMarkdown.split("\n");
@@ -5055,9 +5175,9 @@ function DocumentConflictDialog({
         <Dialog.Content className="fixed left-1/2 top-1/2 z-[93] flex h-[min(720px,calc(100vh-40px))] w-[min(980px,calc(100vw-40px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg bg-white text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
           <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-3">
             <div className="min-w-0">
-              <Dialog.Title className="truncate text-[15px] font-extrabold">外部有新更改</Dialog.Title>
+              <Dialog.Title className="truncate text-[15px] font-extrabold">需要合并更改</Dialog.Title>
               <Dialog.Description className="mt-1 truncate text-[12px] leading-5 text-[var(--text-muted)]">
-                {document?.title ?? conflict?.filePath ?? "当前文档"} 已被 Agent 或磁盘刷新修改。自动保存已暂停，请选择如何处理。
+                {document?.title ?? conflict?.filePath ?? "当前文档"} 的同一段内容同时被你和外部修改。自动保存已暂停，请选择如何处理。
               </Dialog.Description>
             </div>
             <button
@@ -10692,9 +10812,68 @@ export function App() {
   const documentConflictsRef = useRef<Map<string, DocumentConflict>>(new Map());
   const activeConflictDocumentIdRef = useRef<string | null>(null);
   const latestDataRef = useRef<AppData | null>(null);
+  const dirtyBaseMarkdownRef = useRef<Map<string, string>>(new Map());
   const composingDocumentIdRef = useRef<string | null>(null);
   const initializedTabsRef = useRef(false);
   const lastActiveDocumentIdRef = useRef<string | null>(null);
+
+  const applyDataState = (next: AppData) => {
+    latestDataRef.current = next;
+    setData(next);
+  };
+
+  const applyDirtyDocumentIds = (next: Set<string>) => {
+    dirtyDocumentIdsRef.current = next;
+    setDirtyDocumentIds(next);
+  };
+
+  const updateDirtyDocumentIds = (updater: (items: Set<string>) => Set<string>) => {
+    const next = updater(dirtyDocumentIdsRef.current);
+    applyDirtyDocumentIds(next);
+    return next;
+  };
+
+  const applyDocumentConflicts = (next: Map<string, DocumentConflict>) => {
+    documentConflictsRef.current = next;
+    setDocumentConflicts(next);
+  };
+
+  const markDocumentDirty = (document: InformioDocument) => {
+    if (!dirtyDocumentIdsRef.current.has(document.id)) {
+      dirtyBaseMarkdownRef.current.set(document.id, document.markdown);
+    }
+    updateDirtyDocumentIds((items) => new Set(items).add(document.id));
+  };
+
+  const forgetDocumentDirtyState = (documentId: string) => {
+    dirtyBaseMarkdownRef.current.delete(documentId);
+    updateDirtyDocumentIds((items) => {
+      const next = new Set(items);
+      next.delete(documentId);
+      return next;
+    });
+  };
+
+  const applyMergedAppData = (updated: AppData) => {
+    const merged = mergeDiskDataWithLocalDrafts(
+      updated,
+      latestDataRef.current,
+      dirtyDocumentIdsRef.current,
+      documentConflictsRef.current
+    );
+    applyDataState(merged.data);
+    applyDirtyDocumentIds(merged.dirtyIds);
+    applyDocumentConflicts(merged.conflicts);
+    if (!merged.conflicts.has(activeConflictDocumentIdRef.current ?? "")) {
+      setActiveConflictDocumentId((id) => (id && merged.conflicts.has(id) ? id : null));
+    }
+    merged.dirtyIds.forEach((id) => {
+      if (!merged.conflicts.has(id) && !pendingAutoSaveIdsRef.current.has(id)) {
+        persistDocuments(id);
+      }
+    });
+    return merged.data;
+  };
 
   const mergeDiskDataWithLocalDrafts = (
     updated: AppData,
@@ -10705,6 +10884,7 @@ export function App() {
     if (!current || !dirtyIds.size) {
       const validIds = new Set(updated.documents.map((doc) => doc.id));
       const nextConflicts = new Map(Array.from(conflicts).filter(([id]) => validIds.has(id)));
+      dirtyBaseMarkdownRef.current = new Map(Array.from(dirtyBaseMarkdownRef.current).filter(([id]) => validIds.has(id)));
       return { data: updated, dirtyIds: new Set<string>(), conflicts: nextConflicts };
     }
 
@@ -10721,13 +10901,30 @@ export function App() {
       }
 
       if (local.markdown === doc.markdown) {
+        dirtyBaseMarkdownRef.current.delete(doc.id);
         return doc;
+      }
+
+      const baseMarkdown = existingConflict?.baseMarkdown ?? dirtyBaseMarkdownRef.current.get(doc.id);
+      if (baseMarkdown !== undefined) {
+        const externalChanged = doc.markdown !== baseMarkdown;
+        if (!externalChanged) {
+          nextDirtyIds.add(doc.id);
+          return { ...doc, markdown: local.markdown, updatedAt: local.updatedAt };
+        }
+
+        const merged = mergeMarkdownWithBase(baseMarkdown, local.markdown, doc.markdown);
+        if (!merged.conflicted) {
+          dirtyBaseMarkdownRef.current.set(doc.id, doc.markdown);
+          nextDirtyIds.add(doc.id);
+          return { ...doc, markdown: merged.mergedMarkdown, updatedAt: new Date().toISOString() };
+        }
       }
 
       const conflict: DocumentConflict = {
         documentId: doc.id,
         filePath: doc.filePath ?? existingConflict?.filePath ?? local.filePath ?? doc.title,
-        baseMarkdown: existingConflict?.baseMarkdown,
+        baseMarkdown,
         localMarkdown: local.markdown,
         externalMarkdown: doc.markdown,
         detectedAt: existingConflict?.detectedAt ?? nowIso,
@@ -10738,23 +10935,33 @@ export function App() {
       return { ...doc, markdown: local.markdown, updatedAt: local.updatedAt };
     });
 
+    const updatedDocumentIds = new Set(updated.documents.map((doc) => doc.id));
+    localDirtyDocs.forEach((local, id) => {
+      if (updatedDocumentIds.has(id)) return;
+      const existingConflict = conflicts.get(id);
+      nextDirtyIds.add(id);
+      nextConflicts.set(id, {
+        documentId: id,
+        filePath: existingConflict?.filePath ?? local.filePath ?? local.title,
+        baseMarkdown: existingConflict?.baseMarkdown ?? dirtyBaseMarkdownRef.current.get(id),
+        localMarkdown: local.markdown,
+        externalMarkdown: existingConflict?.externalMarkdown ?? "",
+        detectedAt: existingConflict?.detectedAt ?? nowIso,
+        externalUpdatedAt: existingConflict?.externalUpdatedAt
+      });
+      documents.push(local);
+    });
+
+    dirtyBaseMarkdownRef.current = new Map(
+      Array.from(dirtyBaseMarkdownRef.current).filter(([id]) => nextDirtyIds.has(id) || nextConflicts.has(id))
+    );
     return { data: { ...updated, documents }, dirtyIds: nextDirtyIds, conflicts: nextConflicts };
   };
 
   useEffect(() => {
     let cancelled = false;
     const unsubscribe = window.informio.onAppDataUpdated((updated) => {
-      const current = latestDataRef.current;
-      const dirtyIds = dirtyDocumentIdsRef.current;
-      const merged = mergeDiskDataWithLocalDrafts(updated, current, dirtyIds, documentConflictsRef.current);
-      latestDataRef.current = merged.data;
-      documentConflictsRef.current = merged.conflicts;
-      setData(merged.data);
-      setDirtyDocumentIds(merged.dirtyIds);
-      setDocumentConflicts(merged.conflicts);
-      if (!merged.conflicts.has(activeConflictDocumentIdRef.current ?? "")) {
-        setActiveConflictDocumentId((id) => (id && merged.conflicts.has(id) ? id : null));
-      }
+      applyMergedAppData(updated);
     });
 
     void (async () => {
@@ -10762,8 +10969,7 @@ export function App() {
         const loaded = await window.informio.loadApp();
         if (cancelled) return;
         setLoadError(null);
-        latestDataRef.current = loaded;
-        setData(loaded);
+        applyDataState(loaded);
 
         const existingConnections = await window.informio.listAgentRuntimeConnections();
         if (cancelled) return;
@@ -10972,12 +11178,15 @@ export function App() {
 
   const clearSavedDirtyIds = (cleanIds: string[], savedDocuments: InformioDocument[]) => {
     const savedById = new Map(savedDocuments.map((doc) => [doc.id, doc]));
-    setDirtyDocumentIds((items) => {
+    updateDirtyDocumentIds((items) => {
       const next = new Set(items);
       cleanIds.forEach((id) => {
         const current = latestDataRef.current?.documents.find((doc) => doc.id === id);
         const saved = savedById.get(id);
-        if (current && saved && current.markdown === saved.markdown) next.delete(id);
+        if (current && saved && current.markdown === saved.markdown) {
+          next.delete(id);
+          dirtyBaseMarkdownRef.current.delete(id);
+        }
       });
       return next;
     });
@@ -10999,13 +11208,13 @@ export function App() {
     const runSave = async () => {
       const result = await window.informio.saveNow(nextDocuments, activeDocumentId);
       if (options.syncData !== false) {
-        latestDataRef.current = result.data;
-        setData(result.data);
+        applyDataState(result.data);
       }
       if (cleanIds?.length) {
-        clearSavedDirtyIds(cleanIds, nextDocuments);
+        clearSavedDirtyIds(cleanIds, result.data.documents);
       } else {
-        setDirtyDocumentIds(new Set());
+        dirtyBaseMarkdownRef.current.clear();
+        applyDirtyDocumentIds(new Set());
       }
       return result.data;
     };
@@ -11033,6 +11242,9 @@ export function App() {
       pendingAutoSaveIdsRef.current.clear();
       void saveDocumentsNow(latest.documents, latest.activeDocumentId, cleanIds, { syncData: false }).catch(() => {
         cleanIds.forEach((id) => pendingAutoSaveIdsRef.current.add(id));
+        if (cleanIds.every((id) => !documentConflictsRef.current.has(id))) {
+          persistDocuments(cleanIds[0]);
+        }
       });
     }, 900);
   };
@@ -11045,18 +11257,19 @@ export function App() {
       doc.id === documentId ? { ...doc, markdown, updatedAt: new Date().toISOString() } : doc
     );
     const nextData = { ...data, documents };
-    latestDataRef.current = nextData;
-    setData(nextData);
-    setDirtyDocumentIds((items) => new Set(items).add(sourceDocument.id));
-    setDocumentConflicts((items) => {
-      const existing = items.get(sourceDocument.id);
-      if (!existing) return items;
-      const next = new Map(items);
-      const nextConflict = { ...existing, localMarkdown: markdown };
-      next.set(sourceDocument.id, nextConflict);
-      documentConflictsRef.current = next;
-      return next;
-    });
+    applyDataState(nextData);
+    markDocumentDirty(sourceDocument);
+    applyDocumentConflicts(
+      (() => {
+        const items = documentConflictsRef.current;
+        const existing = items.get(sourceDocument.id);
+        if (!existing) return items;
+        const next = new Map(items);
+        const nextConflict = { ...existing, localMarkdown: markdown };
+        next.set(sourceDocument.id, nextConflict);
+        return next;
+      })()
+    );
     if (!options?.composing) persistDocuments(sourceDocument.id);
   };
 
@@ -11102,8 +11315,7 @@ export function App() {
     }
     setActivePaneId(targetPaneId);
     const next = { ...data, activeDocumentId: documentId };
-    latestDataRef.current = next;
-    setData(next);
+    applyDataState(next);
     window.informio.saveDocuments(next.documents, documentId);
     return targetPaneId;
   };
@@ -11129,7 +11341,7 @@ export function App() {
     setActivePaneId(pane.id);
     if (data.activeDocumentId === pane.documentId) return;
     const next = { ...data, activeDocumentId: pane.documentId };
-    setData(next);
+    applyDataState(next);
     window.informio.saveDocuments(next.documents, pane.documentId);
   };
 
@@ -11141,7 +11353,7 @@ export function App() {
     setDropZone(null);
     if (data.activeDocumentId === pane.documentId) return;
     const next = { ...data, activeDocumentId: pane.documentId };
-    setData(next);
+    applyDataState(next);
     window.informio.saveDocuments(next.documents, pane.documentId);
   };
 
@@ -11156,7 +11368,7 @@ export function App() {
       return nextPanes;
     });
     const next = { ...data, activeDocumentId: id };
-    setData(next);
+    applyDataState(next);
     window.informio.saveDocuments(next.documents, id);
   };
 
@@ -11179,8 +11391,7 @@ export function App() {
     });
     setActivePaneId((current) => (current === "secondary" && nextTabs.length < 2 ? "main" : current));
     const next = { ...currentData, activeDocumentId: nextActiveDocumentId };
-    latestDataRef.current = next;
-    setData(next);
+    applyDataState(next);
     window.informio.saveDocuments(next.documents, nextActiveDocumentId);
   };
 
@@ -11208,7 +11419,7 @@ export function App() {
         : [{ id: "main", documentId: next.activeDocumentId }]
     );
     setActivePaneId((current) => (editorPanes.some((pane) => pane.id === current) ? current : "main"));
-    setData(next);
+    applyMergedAppData(next);
   };
 
   const createDefaultMarkdownDocument = async () => {
@@ -11220,7 +11431,7 @@ export function App() {
         : [{ id: "main", documentId: next.activeDocumentId }]
     );
     setActivePaneId((current) => (editorPanes.some((pane) => pane.id === current) ? current : "main"));
-    setData(next);
+    applyMergedAppData(next);
   };
 
   const createLinkedDocument = async (title: string) => {
@@ -11232,7 +11443,7 @@ export function App() {
         : [{ id: "main", documentId: next.activeDocumentId }]
     );
     setActivePaneId((current) => (editorPanes.some((pane) => pane.id === current) ? current : "main"));
-    setData(next);
+    applyMergedAppData(next);
   };
 
   const dispatchEditorCommand = (command: MenuCommand, payload?: unknown) => {
@@ -11242,7 +11453,7 @@ export function App() {
   const createFolder = async (folderPath?: string) => {
     setFileListCreationSignal((value) => value + 1);
     const next = folderPath ? await window.informio.createFolderInFolder(folderPath) : await window.informio.createFolder();
-    setData(next);
+    applyMergedAppData(next);
   };
 
   const startDocumentDrag = (documentId: string, event: ReactDragEvent<HTMLElement>) => {
@@ -11306,7 +11517,7 @@ export function App() {
     });
     setActivePaneId(dropWillCollapse ? "main" : targetPaneId);
     const next = { ...data, activeDocumentId: documentId };
-    setData(next);
+    applyDataState(next);
     window.informio.saveDocuments(next.documents, documentId);
   };
 
@@ -11358,9 +11569,10 @@ export function App() {
       ...input,
       documentId: input.documentId
     });
-    setData(next);
+    applyMergedAppData(next);
     setOpenDocumentIds((ids) => ids.filter((id) => next.documents.some((doc) => doc.id === id)));
-    setDirtyDocumentIds(new Set());
+    dirtyBaseMarkdownRef.current.clear();
+    applyDirtyDocumentIds(new Set());
     if (saved.activeDocumentId !== next.activeDocumentId && next.documents.some((doc) => doc.id === next.activeDocumentId)) {
       setOpenDocumentIds((ids) => (ids.includes(next.activeDocumentId) ? ids : [next.activeDocumentId, ...ids].slice(0, 6)));
     }
@@ -11379,17 +11591,17 @@ export function App() {
 
   const renameProject = async (path: string, title: string) => {
     const next = await window.informio.renameProject(path, title);
-    setData(next);
+    applyMergedAppData(next);
   };
 
   const toggleProjectPinned = async (path: string) => {
     const next = await window.informio.toggleProjectPinned(path);
-    setData(next);
+    applyMergedAppData(next);
   };
 
   const updateSettings = (settings: AppSettings) => {
     if (!data) return;
-    setData({ ...data, settings });
+    applyDataState({ ...data, settings });
     window.informio.saveSettings(settings);
   };
 
@@ -11397,7 +11609,7 @@ export function App() {
     if (!data || !activeOpenDoc) return;
     const next = await window.informio.saveActiveDocumentAs(data.documents, data.activeDocumentId);
     if (!next) return;
-    setData(next);
+    applyMergedAppData(next);
     if (next.activeDocumentId) {
       setOpenDocumentIds((ids) => (ids.includes(next.activeDocumentId) ? ids : [next.activeDocumentId, ...ids].slice(0, 6)));
     }
@@ -11478,10 +11690,14 @@ export function App() {
         void exportActiveDocument("pdf");
         return true;
       case "file:open":
-        void window.informio.openFiles().then((next) => next && setData(next));
+        void window.informio.openFiles().then((next) => {
+          if (next) applyMergedAppData(next);
+        });
         return true;
       case "workspace:open":
-        void window.informio.openWorkspace().then((next) => next && setData(next));
+        void window.informio.openWorkspace().then((next) => {
+          if (next) applyMergedAppData(next);
+        });
         return true;
       case "settings:open":
         window.informio.openSettings();
@@ -11547,20 +11763,18 @@ export function App() {
     const onPointerMove = (moveEvent: PointerEvent) => {
       const delta = moveEvent.clientX - startX;
       nextWidth = clamp(side === "left" ? startWidth + delta : startWidth - delta, min, max);
-      setData((current) =>
-        current
-          ? {
-              ...current,
-              settings: {
-                ...current.settings,
-                appearance: {
-                  ...current.settings.appearance,
-                  [key]: nextWidth
-                }
-              }
-            }
-          : current
-      );
+      const current = latestDataRef.current;
+      if (!current) return;
+      applyDataState({
+        ...current,
+        settings: {
+          ...current.settings,
+          appearance: {
+            ...current.settings.appearance,
+            [key]: nextWidth
+          }
+        }
+      });
     };
 
     const onPointerUp = () => {
@@ -11658,20 +11872,7 @@ export function App() {
 
   const refreshAppDataFromDisk = async () => {
     const updated = await window.informio.loadApp();
-    const merged = mergeDiskDataWithLocalDrafts(
-      updated,
-      latestDataRef.current,
-      dirtyDocumentIdsRef.current,
-      documentConflictsRef.current
-    );
-    latestDataRef.current = merged.data;
-    documentConflictsRef.current = merged.conflicts;
-    setData(merged.data);
-    setDirtyDocumentIds(merged.dirtyIds);
-    setDocumentConflicts(merged.conflicts);
-    if (!merged.conflicts.has(activeConflictDocumentIdRef.current ?? "")) {
-      setActiveConflictDocumentId((id) => (id && merged.conflicts.has(id) ? id : null));
-    }
+    applyMergedAppData(updated);
   };
 
   const openDocumentConflict = (documentId: string) => {
@@ -11680,13 +11881,12 @@ export function App() {
   };
 
   const clearDocumentConflict = (documentId: string) => {
-    setDocumentConflicts((items) => {
-      if (!items.has(documentId)) return items;
+    const items = documentConflictsRef.current;
+    if (items.has(documentId)) {
       const next = new Map(items);
       next.delete(documentId);
-      documentConflictsRef.current = next;
-      return next;
-    });
+      applyDocumentConflicts(next);
+    }
     setActiveConflictDocumentId((id) => (id === documentId ? null : id));
   };
 
@@ -11694,6 +11894,7 @@ export function App() {
     const latest = latestDataRef.current;
     if (!latest || !documentConflictsRef.current.has(documentId)) return;
     await saveDocumentsNow(latest.documents, latest.activeDocumentId, [documentId], { syncData: true, ignoreConflicts: true });
+    forgetDocumentDirtyState(documentId);
     clearDocumentConflict(documentId);
   };
 
@@ -11707,24 +11908,15 @@ export function App() {
         : doc
     );
     const nextData = { ...latest, documents };
-    latestDataRef.current = nextData;
-    setData(nextData);
-    setDirtyDocumentIds((items) => {
-      const next = new Set(items);
-      next.delete(documentId);
-      return next;
-    });
+    applyDataState(nextData);
+    forgetDocumentDirtyState(documentId);
     clearDocumentConflict(documentId);
   };
 
   const saveAgentConversations = async (conversations: AgentConversation[]) => {
     const saved = await window.informio.saveAgentConversations({ conversations });
-    setData((current) => {
-      if (!current) return current;
-      const next = { ...current, agentConversations: saved };
-      latestDataRef.current = next;
-      return next;
-    });
+    const current = latestDataRef.current;
+    if (current) applyDataState({ ...current, agentConversations: saved });
     return saved;
   };
 
@@ -12183,14 +12375,14 @@ export function App() {
         {document ? (
           <EditorSurfaceErrorBoundary documentId={document.id} onResetSelection={() => setAgentSelection(null)}>
             {documentConflicts.has(document.id) ? (
-              <button
-                type="button"
-                className="mx-auto mt-2 flex w-[min(760px,calc(100%-32px))] shrink-0 items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[12px] font-semibold text-amber-900 shadow-sm"
-                onClick={() => openDocumentConflict(document.id)}
-              >
-                <span className="min-w-0 truncate">外部有新更改，自动保存已暂停。点击查看 Diff 并选择处理方式。</span>
-                <span className="shrink-0 text-amber-700">查看</span>
-              </button>
+	              <button
+	                type="button"
+	                className="mx-auto mt-2 flex w-[min(760px,calc(100%-32px))] shrink-0 items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[12px] font-semibold text-amber-900 shadow-sm"
+	                onClick={() => openDocumentConflict(document.id)}
+	              >
+	                <span className="min-w-0 truncate">需要合并更改，自动保存已暂停。点击查看 Diff 并选择处理方式。</span>
+	                <span className="shrink-0 text-amber-700">查看</span>
+	              </button>
             ) : null}
             <EditorPane
               key={`${pane.id}-${document.id}-${documentRefreshTokens[document.id] ?? 0}`}
@@ -12280,11 +12472,11 @@ export function App() {
                         onClick={() => selectDocument(doc.id)}
 	                        className="no-drag flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2.5 pr-7 text-left transition-transform active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45"
                       >
-                        {conflicted ? (
-                          <span
-                            className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
-                            title="外部有新更改"
-                            onClick={(event) => {
+	                        {conflicted ? (
+	                          <span
+	                            className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+	                            title="需要合并更改"
+	                            onClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
                               openDocumentConflict(doc.id);
@@ -12497,7 +12689,11 @@ export function App() {
 	              <IconButton
 	                label="添加项目"
 	                className="h-6 w-6"
-	                onClick={() => window.informio.addProject().then((next) => { if (next) setData(next); })}
+	                onClick={() =>
+	                  window.informio.addProject().then((next) => {
+	                    if (next) applyMergedAppData(next);
+	                  })
+	                }
 	              >
 	                <FolderPlus size={14} />
 	              </IconButton>

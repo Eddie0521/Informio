@@ -1944,12 +1944,11 @@ ipcMain.handle("app:save-settings", async (_event, settings: AppSettings) => {
 
 ipcMain.handle("app:get-info", async () => getAppInfo());
 
-ipcMain.handle("app:save-documents", async (_event, documents: InformioDocument[], activeDocumentId: string) => {
-  const mergedDocuments = mergeRendererDocuments(documents);
+ipcMain.handle("app:save-documents", async (_event, _documents: InformioDocument[], activeDocumentId: string) => {
+  const knownActiveDocumentId = normalizeActiveDocumentId(appData.documents, activeDocumentId);
   appData = await saveAppData({
     ...appData,
-    documents: mergedDocuments,
-    activeDocumentId: normalizeActiveDocumentId(mergedDocuments, activeDocumentId)
+    activeDocumentId: knownActiveDocumentId
   });
   return appData;
 });
