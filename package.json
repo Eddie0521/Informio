@@ -1,6 +1,6 @@
 {
   "name": "informio",
-  "version": "1.0.3",
+  "version": "0.1.4",
   "description": "A minimal Markdown editor with contextual MCP Agent assistance.",
   "homepage": "https://github.com/Eddie0521/Informio",
   "repository": {
