@@ -15,6 +15,7 @@ import type { JSONContent } from "@tiptap/core";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { EditorContent, NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Fragment as ProseMirrorFragment } from "@tiptap/pm/model";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import StarterKit from "@tiptap/starter-kit";
@@ -1248,6 +1249,27 @@ const textColorOptions: TextColorOption[] = [
 
 const selectionToolbarPresetColors = textColorOptions;
 const defaultTextColorValue = textColorOptions[0]?.value ?? "#111827";
+const defaultTextColorAliases = new Set([
+  "#000",
+  "#000000",
+  "black",
+  "rgb(0,0,0)",
+  "rgba(0,0,0,1)",
+  "#111827",
+  "rgb(17,24,39)",
+  "rgba(17,24,39,1)"
+]);
+
+const compactCssColor = (color: string) => color.trim().toLowerCase().replace(/\s+/g, "");
+
+const normalizeTextColorMark = (color: unknown) => {
+  if (typeof color !== "string") return null;
+  const value = color.trim();
+  if (!value) return null;
+  const compact = compactCssColor(value);
+  if (compact === compactCssColor(defaultTextColorValue) || defaultTextColorAliases.has(compact)) return null;
+  return value;
+};
 
 const insertToolbarActions: InsertToolbarAction[] = [
   { id: "image", label: "插入图片", icon: ImageIcon, kind: "asset", assetKind: "image" },
@@ -1882,6 +1904,31 @@ const highlightedCodeHtml = (language: string, code: string) => {
   }
 };
 
+const codeBlockRawMarkdown = (language: string, code: string) => {
+  const languageSuffix = language === "plaintext" ? "" : language;
+  return `\`\`\`${languageSuffix}\n${code}\n\`\`\``;
+};
+
+const parseCodeBlockRawMarkdown = (value: string) => {
+  const match = value.match(/^```([^\n`]*)\n([\s\S]*?)\n```$/);
+  if (!match) return null;
+  return {
+    language: normalizeCodeLanguage(match[1] ?? "plaintext"),
+    code: match[2] ?? ""
+  };
+};
+
+const replaceNodeWithPlainText = (editor: Editor, getPos: NodeViewPositionGetter, node: NodeViewNode, text: string) => {
+  const position = getPos();
+  if (typeof position !== "number") return;
+  const paragraph = editor.schema.nodes.paragraph;
+  if (!paragraph) return;
+  const paragraphs = text.split("\n").map((line) => paragraph.create(null, line ? editor.schema.text(line) : undefined));
+  const tr = editor.state.tr.replaceWith(position, position + node.nodeSize, paragraphs);
+  tr.setSelection(TextSelection.create(tr.doc, Math.min(position + Math.max(1, text.length), tr.doc.content.size)));
+  editor.view.dispatch(tr);
+};
+
 type NodeViewPositionGetter = ReactNodeViewProps["getPos"];
 type NodeViewNode = ReactNodeViewProps["node"];
 
@@ -1934,13 +1981,42 @@ const markdownOffsetForLine = (markdown: string, line: number) => {
 
 function CodeBlockView({ editor, getPos, node, selected, updateAttributes }: ReactNodeViewProps) {
   const language = normalizeCodeLanguage(String(node.attrs.language || "plaintext"));
-  const [languageFocused, setLanguageFocused] = useState(false);
+  const [sourceFocused, setSourceFocused] = useState(false);
+  const rawSource = codeBlockRawMarkdown(language, node.textContent);
+  const [draftSource, setDraftSource] = useState(rawSource);
+  const sourceRef = useRef<HTMLTextAreaElement | null>(null);
   const sourceActive = useNodeLivePreviewState(editor, getPos, node, selected);
-  const active = sourceActive || languageFocused;
+  const active = sourceActive || sourceFocused;
   const previewHtml = highlightedCodeHtml(language, node.textContent);
-  const updateLanguage = (value: string) => {
-    const nextLanguage = normalizeCodeLanguage(value);
-    if (nextLanguage !== language) updateAttributes({ language: nextLanguage });
+
+  useEffect(() => {
+    if (!sourceFocused) setDraftSource(rawSource);
+  }, [rawSource, sourceFocused]);
+
+  useEffect(() => {
+    if (!active) return;
+    window.setTimeout(() => {
+      const textarea = sourceRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(Math.min(textarea.value.length, 4 + (language === "plaintext" ? 0 : language.length)), Math.min(textarea.value.length, 4 + (language === "plaintext" ? 0 : language.length)));
+    }, 0);
+  }, [active, language]);
+
+  const applyRawSource = (value: string) => {
+    setDraftSource(value);
+    const parsed = parseCodeBlockRawMarkdown(value);
+    if (!parsed) {
+      replaceNodeWithPlainText(editor, getPos, node, value);
+      return;
+    }
+    const position = getPos();
+    if (typeof position !== "number") return;
+    const textContent = parsed.code ? editor.schema.text(parsed.code) : ProseMirrorFragment.empty;
+    const tr = editor.state.tr
+      .setNodeMarkup(position, undefined, { ...node.attrs, language: parsed.language })
+      .replaceWith(position + 1, position + node.nodeSize - 1, textContent);
+    editor.view.dispatch(tr);
   };
 
   return (
@@ -1953,38 +2029,23 @@ function CodeBlockView({ editor, getPos, node, selected, updateAttributes }: Rea
       }}
     >
       <div className={cn("informio-code-source", !active && "is-hidden-source-content")}>
-        <div className="informio-source-fence informio-source-fence-header" contentEditable={false}>
-          <span aria-hidden="true">```</span>
-          <input
-            type="text"
-            value={language === "plaintext" ? "" : language}
-            contentEditable={false}
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            placeholder="text / python / ts"
-            className="informio-code-language-input"
-            onMouseDown={(event) => {
-              event.stopPropagation();
-              setLanguageFocused(true);
-            }}
-            onFocus={() => setLanguageFocused(true)}
-            onBlur={(event) => {
-              setLanguageFocused(false);
-              updateLanguage(event.currentTarget.value);
-            }}
-            onChange={(event) => updateLanguage(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              event.stopPropagation();
-              if (event.key === "Enter") {
-                event.preventDefault();
-                focusNodeSource(editor, getPos);
-              }
-            }}
-          />
-        </div>
-        <NodeViewContent as={"pre" as "div"} className="informio-code-source-content" />
-        <div className="informio-source-fence">```</div>
+        <textarea
+          ref={sourceRef}
+          value={draftSource}
+          rows={Math.max(3, draftSource.split("\n").length)}
+          contentEditable={false}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          className="informio-code-source-textarea"
+          onMouseDown={(event) => {
+            event.stopPropagation();
+          }}
+          onFocus={() => setSourceFocused(true)}
+          onBlur={() => setSourceFocused(false)}
+          onChange={(event) => applyRawSource(event.currentTarget.value)}
+          onKeyDown={(event) => event.stopPropagation()}
+        />
       </div>
       {!active ? (
         <pre contentEditable={false}>
@@ -2517,10 +2578,10 @@ const TextColor = Mark.create({
         default: null,
         parseHTML: (element: HTMLElement) => {
           if (!(element instanceof HTMLElement)) return null;
-          return element.getAttribute("data-text-color") || element.style.color || null;
+          return normalizeTextColorMark(element.getAttribute("data-text-color") || element.style.color);
         },
         renderHTML: (attributes: Record<string, unknown>) => {
-          const color = typeof attributes.color === "string" ? attributes.color.trim() : "";
+          const color = normalizeTextColorMark(attributes.color);
           return color ? { "data-text-color": color, style: `color: ${color}` } : {};
         }
       }
@@ -2532,15 +2593,15 @@ const TextColor = Mark.create({
         tag: "span[data-text-color]",
         getAttrs: (element: string | HTMLElement) => {
           if (!(element instanceof HTMLElement)) return false;
-          const color = element.getAttribute("data-text-color") || element.style.color;
+          const color = normalizeTextColorMark(element.getAttribute("data-text-color") || element.style.color);
           return color ? { color } : false;
         }
       },
       {
         style: "color",
         getAttrs: (value: string) => {
-          if (typeof value !== "string" || !value.trim()) return false;
-          return { color: value };
+          const color = normalizeTextColorMark(value);
+          return color ? { color } : false;
         }
       }
     ];
@@ -2549,7 +2610,7 @@ const TextColor = Mark.create({
     return ["span", mergeAttributes(HTMLAttributes), 0];
   },
   renderMarkdown(node: JSONContent, helpers: MarkdownRendererHelpers) {
-    const color = typeof node.attrs?.color === "string" ? node.attrs.color.trim() : "";
+    const color = normalizeTextColorMark(node.attrs?.color);
     const content = helpers.renderChildren(node.content ?? []);
     if (!color) return content;
     const escapedColor = escapeHtml(color);
@@ -4606,7 +4667,7 @@ function FileList({
               )
             : <span className="min-w-0 flex-1 truncate">{node.folder.title}</span>}
           {isProject && projectsByPath.get(folderKey)?.pinned ? <Pin size={11} className="shrink-0 text-slate-400" /> : null}
-          <span className="shrink-0 font-mono text-[13px] font-semibold text-[var(--text-muted)]">{documentCount}</span>
+          <span className="shrink-0 font-mono text-[10px] font-semibold text-[var(--text-muted)]">{documentCount}</span>
         </button>
         {collapsed ? null : (
           <div className="space-y-1">
@@ -10819,6 +10880,8 @@ export function App() {
   const composingDocumentIdRef = useRef<string | null>(null);
   const initializedTabsRef = useRef(false);
   const lastActiveDocumentIdRef = useRef<string | null>(null);
+  const tabsScrollRef = useRef<HTMLDivElement | null>(null);
+  const activeTabRef = useRef<HTMLDivElement | null>(null);
 
   const applyDataState = (next: AppData) => {
     latestDataRef.current = next;
@@ -11081,12 +11144,12 @@ export function App() {
       if (!initializedTabsRef.current) {
         initializedTabsRef.current = true;
         const seeded = [data.activeDocumentId, ...validIds, ...data.documents.slice(0, 2).map((doc) => doc.id)].filter(Boolean);
-        const nextIds = Array.from(new Set(seeded)).slice(0, 6);
+        const nextIds = Array.from(new Set(seeded));
         return nextIds.length === ids.length && nextIds.every((id, index) => id === ids[index]) ? ids : nextIds;
       }
 
       if (activeDocumentChanged && data.activeDocumentId && !validIds.includes(data.activeDocumentId)) {
-        return [data.activeDocumentId, ...validIds].slice(0, 6);
+        return [data.activeDocumentId, ...validIds];
       }
 
       if (validIds.includes(data.activeDocumentId) || !activeDocumentChanged) {
@@ -11156,6 +11219,24 @@ export function App() {
   );
   const activeConflict = activeConflictDocumentId ? documentConflicts.get(activeConflictDocumentId) ?? null : null;
   const activeConflictDocument = activeConflict ? documentsById.get(activeConflict.documentId) : undefined;
+
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeOpenDoc?.id, openDocuments.length]);
+
+  useEffect(() => {
+    const target = tabsScrollRef.current;
+    if (!target) return;
+    const handleWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      if (target.scrollWidth <= target.clientWidth) return;
+      event.preventDefault();
+      target.scrollLeft += event.deltaY;
+    };
+    target.addEventListener("wheel", handleWheel, { passive: false });
+    return () => target.removeEventListener("wheel", handleWheel);
+  }, [openDocuments.length]);
+
   useEffect(() => {
     if (!data) return;
     setEditorPanes((panes) => {
@@ -11326,7 +11407,7 @@ export function App() {
             normalized.map((pane) => (pane.id === targetPaneId ? { ...pane, documentId } : pane))
           );
     setSplitDirection("horizontal");
-    setOpenDocumentIds((ids) => (ids.includes(documentId) ? ids : [...ids, documentId].slice(-6)));
+    setOpenDocumentIds((ids) => (ids.includes(documentId) ? ids : [...ids, documentId]));
     setEditorPanes(nextPanes);
     if (options?.forceRichText) {
       setEditorViewModes((current) => ({ ...current, [targetPaneId]: "rich-text" }));
@@ -11377,7 +11458,7 @@ export function App() {
 
   const selectDocument = (id: string) => {
     if (!data) return;
-    setOpenDocumentIds((ids) => (ids.includes(id) ? ids : [...ids, id].slice(-6)));
+    setOpenDocumentIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
     setEditorPanes((panes) => {
       if (!panes.length) return [{ id: "main", documentId: id }];
       const targetPaneId = panes.some((pane) => pane.id === activePaneId) ? activePaneId : panes[0].id;
@@ -11430,7 +11511,7 @@ export function App() {
   const createDocument = async (folderPath?: string) => {
     setFileListCreationSignal((value) => value + 1);
     const next = folderPath ? await window.informio.createDocumentInFolder(folderPath) : await window.informio.createDocument();
-    setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)].slice(0, 6));
+    setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)]);
     setEditorPanes((panes) =>
       panes.length
         ? normalizeEditorPanes(panes.map((pane) => (pane.id === activePaneId ? { ...pane, documentId: next.activeDocumentId } : pane)))
@@ -11442,7 +11523,7 @@ export function App() {
 
   const createDefaultMarkdownDocument = async () => {
     const next = await window.informio.createDefaultMarkdownDocument();
-    setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)].slice(0, 6));
+    setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)]);
     setEditorPanes((panes) =>
       panes.length
         ? normalizeEditorPanes(panes.map((pane) => (pane.id === activePaneId ? { ...pane, documentId: next.activeDocumentId } : pane)))
@@ -11454,7 +11535,7 @@ export function App() {
 
   const createLinkedDocument = async (title: string) => {
     const next = await window.informio.createLinkedDocument(title);
-    setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)].slice(0, 6));
+    setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)]);
     setEditorPanes((panes) =>
       panes.length
         ? normalizeEditorPanes(panes.map((pane) => (pane.id === activePaneId ? { ...pane, documentId: next.activeDocumentId } : pane)))
@@ -11505,7 +11586,7 @@ export function App() {
     const targetPaneId: EditorPaneState["id"] = zone === "left" || zone === "top" ? "main" : "secondary";
     const existingPaneForDrop = normalizeEditorPanes(editorPanes, (paneDocumentId) => documentsById.has(paneDocumentId)).find((pane) => pane.documentId === documentId);
     const dropWillCollapse = Boolean(existingPaneForDrop && existingPaneForDrop.id !== targetPaneId);
-    setOpenDocumentIds((ids) => (ids.includes(documentId) ? ids : [...ids, documentId].slice(-6)));
+    setOpenDocumentIds((ids) => (ids.includes(documentId) ? ids : [...ids, documentId]));
     setSplitDirection(direction);
     setEditorPanes((panes) => {
       const valid = normalizeEditorPanes(panes, (paneDocumentId) => documentsById.has(paneDocumentId));
@@ -11592,7 +11673,7 @@ export function App() {
     dirtyBaseMarkdownRef.current.clear();
     applyDirtyDocumentIds(new Set());
     if (saved.activeDocumentId !== next.activeDocumentId && next.documents.some((doc) => doc.id === next.activeDocumentId)) {
-      setOpenDocumentIds((ids) => (ids.includes(next.activeDocumentId) ? ids : [next.activeDocumentId, ...ids].slice(0, 6)));
+      setOpenDocumentIds((ids) => (ids.includes(next.activeDocumentId) ? ids : [next.activeDocumentId, ...ids]));
     }
     if (affectedEmbeddableDocumentIds.length) {
       const nextIds = new Set(next.documents.map((doc) => doc.id));
@@ -11629,7 +11710,7 @@ export function App() {
     if (!next) return;
     applyMergedAppData(next);
     if (next.activeDocumentId) {
-      setOpenDocumentIds((ids) => (ids.includes(next.activeDocumentId) ? ids : [next.activeDocumentId, ...ids].slice(0, 6)));
+      setOpenDocumentIds((ids) => (ids.includes(next.activeDocumentId) ? ids : [next.activeDocumentId, ...ids]));
     }
   };
 
@@ -12471,8 +12552,11 @@ export function App() {
 	              className={cn("titlebar-left h-full shrink-0", leftOpen ? "border-r" : "w-[86px]")}
 	              style={leftOpen ? { width: leftPanelWidth + 1 } : undefined}
 	            />
-            <div className="flex min-w-0 flex-1 items-center justify-between px-2">
-              <div className="flex h-full min-w-0 items-center gap-2">
+            <div className="flex h-full min-w-0 flex-1 items-center px-2">
+              <div
+                ref={tabsScrollRef}
+                className="document-tabs-scroll no-drag flex h-full min-w-0 flex-1 items-center gap-2 overflow-x-auto overflow-y-hidden"
+              >
                 {openDocuments.map((doc) => {
                   const active = doc.id === activeOpenDoc?.id;
                   const dirty = dirtyDocumentIds.has(doc.id);
@@ -12480,10 +12564,11 @@ export function App() {
                   return (
                     <div
                       key={doc.id}
+                      ref={active ? activeTabRef : undefined}
                       draggable
                       onDragStart={(event) => startDocumentDrag(doc.id, event)}
                       className={cn(
-	                        "group relative flex h-7 min-w-28 max-w-40 items-center rounded-md text-[12px] font-semibold text-[var(--text-muted)] transition-[background-color,transform,color]",
+	                        "group relative flex h-7 min-w-28 max-w-40 shrink-0 items-center rounded-md text-[12px] font-semibold text-[var(--text-muted)] transition-[background-color,transform,color]",
                         active && "surface-card text-[var(--text-main)] shadow-[inset_0_0_0_1px_rgba(15,23,42,0.12)]"
                       )}
                     >
