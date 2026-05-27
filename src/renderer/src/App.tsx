@@ -1103,6 +1103,9 @@ const classifyAgentAction = (action: AgentSessionAction): AgentProcessCategory =
   return "other";
 };
 
+const didAgentEditFiles = (messages: AgentSessionMessage[]) =>
+  messages.some((message) => message.actions.some((action) => action.kind === "file_change" && action.status !== "error"));
+
 const processCategoryLabel: Record<Exclude<AgentProcessCategory, "system">, string> = {
   explore: "探索",
   search: "搜索",
@@ -10854,12 +10857,13 @@ export function App() {
     });
   };
 
-  const applyMergedAppData = (updated: AppData) => {
+  const applyMergedAppData = (updated: AppData, options: { allowNewConflicts?: boolean } = {}) => {
     const merged = mergeDiskDataWithLocalDrafts(
       updated,
       latestDataRef.current,
       dirtyDocumentIdsRef.current,
-      documentConflictsRef.current
+      documentConflictsRef.current,
+      options
     );
     applyDataState(merged.data);
     applyDirtyDocumentIds(merged.dirtyIds);
@@ -10879,7 +10883,8 @@ export function App() {
     updated: AppData,
     current: AppData | null,
     dirtyIds: Set<string>,
-    conflicts: Map<string, DocumentConflict>
+    conflicts: Map<string, DocumentConflict>,
+    options: { allowNewConflicts?: boolean } = {}
   ) => {
     if (!current || !dirtyIds.size) {
       const validIds = new Set(updated.documents.map((doc) => doc.id));
@@ -10919,6 +10924,15 @@ export function App() {
           nextDirtyIds.add(doc.id);
           return { ...doc, markdown: merged.mergedMarkdown, updatedAt: new Date().toISOString() };
         }
+        if (!options.allowNewConflicts && !existingConflict) {
+          nextDirtyIds.add(doc.id);
+          return { ...doc, markdown: local.markdown, updatedAt: local.updatedAt };
+        }
+      }
+
+      if (!options.allowNewConflicts && !existingConflict) {
+        nextDirtyIds.add(doc.id);
+        return { ...doc, markdown: local.markdown, updatedAt: local.updatedAt };
       }
 
       const conflict: DocumentConflict = {
@@ -10940,6 +10954,10 @@ export function App() {
       if (updatedDocumentIds.has(id)) return;
       const existingConflict = conflicts.get(id);
       nextDirtyIds.add(id);
+      if (!options.allowNewConflicts && !existingConflict) {
+        documents.push(local);
+        return;
+      }
       nextConflicts.set(id, {
         documentId: id,
         filePath: existingConflict?.filePath ?? local.filePath ?? local.title,
@@ -11870,9 +11888,9 @@ export function App() {
     setOutlineJumpRequest((current) => (current && current.nonce === request.nonce ? null : current));
   };
 
-  const refreshAppDataFromDisk = async () => {
+  const refreshAppDataFromDisk = async (options: { allowNewConflicts?: boolean } = {}) => {
     const updated = await window.informio.loadApp();
-    applyMergedAppData(updated);
+    applyMergedAppData(updated, options);
   };
 
   const openDocumentConflict = (documentId: string) => {
@@ -12185,7 +12203,9 @@ export function App() {
         completedAt: item.completedAt ?? Date.now()
       }));
       await persistConversationSnapshot(result.runtimeThreadId ?? baseRuntimeThreadId);
-      if (permissionMode !== "read_only") await refreshAppDataFromDisk();
+      if (permissionMode !== "read_only") {
+        await refreshAppDataFromDisk({ allowNewConflicts: didAgentEditFiles(latestSessionMessages) });
+      }
       window.informio.listAgentRuntimeConnections().then(setConnections);
     } catch (error) {
       applySessionMessageUpdate((item) => ({
