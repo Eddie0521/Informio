@@ -20,9 +20,15 @@
   <em>"I write entirely to find out what I'm thinking." - Joan Didion</em>
 </p>
 
-<video controls width="100%" src="./docs/assets/demo_informio.mp4">
-  Your browser does not support the video tag. You can view the demo video at ./docs/assets/demo_informio.mp4.
-</video>
+<p align="center">
+  <a href="./docs/assets/demo_informio.mp4">
+    <img src="./docs/assets/demo_informio_preview.jpg" alt="Watch the Informio demo video" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="./docs/assets/demo_informio.mp4"><strong>Watch demo video</strong></a>
+</p>
 
 ## Features
 

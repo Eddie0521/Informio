@@ -20,9 +20,15 @@
   <em>“我写作，完全是为了弄清自己在想什么。” - Joan Didion</em>
 </p>
 
-<video controls width="100%" src="./docs/assets/demo_informio.mp4">
-  你的浏览器不支持 video 标签，可以直接打开 ./docs/assets/demo_informio.mp4 查看演示视频。
-</video>
+<p align="center">
+  <a href="./docs/assets/demo_informio.mp4">
+    <img src="./docs/assets/demo_informio_preview.jpg" alt="查看 Informio 演示视频" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="./docs/assets/demo_informio.mp4"><strong>查看演示视频</strong></a>
+</p>
 
 ## Features
 
