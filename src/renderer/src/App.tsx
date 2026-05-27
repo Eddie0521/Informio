@@ -123,15 +123,14 @@ import type {
   AppInfo,
   AppData,
   AppSettings,
+  DocumentConflict,
   FileSystemOperationInput,
   InformioFolder,
   InformioDocument,
   InformioProject,
   LocalFontOption,
   MenuCommand,
-  PdfAnnotation,
-  PdfAnnotationRect,
-  PdfMarkdownTarget,
+  PdfSelectionRect,
   ThemeName
 } from "../../shared/types";
 import {
@@ -157,7 +156,6 @@ import type {
   ToolbarTranslateState as UnifiedToolbarTranslateState
 } from "./pdfSurface";
 import "katex/dist/katex.min.css";
-import "pdfjs-dist/web/pdf_viewer.css";
 const appIconUrl = "/icon.png";
 
 const themeOptions: Array<{ id: ThemeName; label: string; surface: string; accent: string }> = [
@@ -359,7 +357,7 @@ type AgentSelection = {
   title?: string;
   filePath?: string;
   page?: number;
-  rects?: PdfAnnotationRect[];
+  rects?: PdfSelectionRect[];
   overlayLeft?: number;
   overlayTop?: number;
 };
@@ -376,7 +374,7 @@ const normalizeApiSettings = (api: AppSettings["api"] | undefined) => ({
   models: api?.models ?? defaultApiSettings.models
 });
 
-const sameAnnotationRects = (left: PdfAnnotationRect[] | undefined, right: PdfAnnotationRect[] | undefined) => {
+const samePdfSelectionRects = (left: PdfSelectionRect[] | undefined, right: PdfSelectionRect[] | undefined) => {
   const leftRects = left ?? [];
   const rightRects = right ?? [];
   if (leftRects.length !== rightRects.length) return false;
@@ -406,7 +404,7 @@ const sameAgentSelection = (left: AgentSelection | null, right: AgentSelection |
     left.page === right.page &&
     left.overlayLeft === right.overlayLeft &&
     left.overlayTop === right.overlayTop &&
-    sameAnnotationRects(left.rects, right.rects)
+    samePdfSelectionRects(left.rects, right.rects)
   );
 };
 
@@ -3859,20 +3857,6 @@ type LinkRequest = {
   url: string;
 };
 
-type PendingPdfBacklinkState =
-  | {
-      step: "select-document";
-      annotation: PdfAnnotation;
-      sourcePaneId: EditorPaneState["id"];
-    }
-  | {
-      step: "choose-position" | "saving";
-      annotation: PdfAnnotation;
-      sourcePaneId: EditorPaneState["id"];
-      targetDocumentId: string;
-      targetPaneId: EditorPaneState["id"];
-    };
-
 type EditorTextSearchIndex = {
   text: string;
   positions: number[];
@@ -4357,13 +4341,6 @@ function FileList({
   const projectsByPath = useMemo(() => new Map(projects.map((project) => [normalizePath(project.path), project])), [projects]);
 
   useEffect(() => {
-    setExpandedFolderKeys((current) => {
-      if (current.size) return current;
-      return new Set(projects.map((project) => normalizePath(project.path)));
-    });
-  }, [projects]);
-
-  useEffect(() => {
     if (!inlineRename) return;
     if (inlineRename.type === "project") {
       if (!projects.some((project) => normalizePath(project.path) === normalizePath(inlineRename.path))) {
@@ -4582,7 +4559,7 @@ function FileList({
           data-file-path={node.folder.path}
           data-file-title={node.folder.title}
           className={cn(
-            "group flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12px] font-bold text-[var(--text-muted)] transition-[background-color,color] hover:bg-white/65 hover:text-[var(--text-main)] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
+            "group flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-bold text-[var(--text-muted)] transition-[background-color,color] hover:bg-white/65 hover:text-[var(--text-main)] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
             isDropTarget && "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500/35"
           )}
           style={{ paddingLeft: 8 + depth * 14 }}
@@ -4626,7 +4603,7 @@ function FileList({
               )
             : <span className="min-w-0 flex-1 truncate">{node.folder.title}</span>}
           {isProject && projectsByPath.get(folderKey)?.pinned ? <Pin size={11} className="shrink-0 text-slate-400" /> : null}
-          <span className="shrink-0 font-mono text-[10px] font-semibold text-[var(--text-muted)]">{documentCount}</span>
+          <span className="shrink-0 font-mono text-[13px] font-semibold text-[var(--text-muted)]">{documentCount}</span>
         </button>
         {collapsed ? null : (
           <div className="space-y-1">
@@ -4646,7 +4623,7 @@ function FileList({
                   onClick={() => onSelect(doc.id)}
                   onDragStart={(event) => onDocumentDragStart(doc.id, event)}
                   className={cn(
-                    "w-full rounded-md px-2.5 py-2 text-left transition-[background-color,box-shadow,transform] duration-150 active:scale-[0.99]",
+                    "w-full rounded-md px-2.5 py-2 text-left text-[13px] transition-[background-color,box-shadow,transform] duration-150 active:scale-[0.99]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
                     active
                       ? "bg-white shadow-[0_1px_4px_rgba(15,23,42,0.10),inset_0_0_0_1px_rgba(15,23,42,0.10)]"
@@ -4732,7 +4709,7 @@ function FileList({
       style={{ width }}
       onContextMenu={openContextMenu}
     >
-      <div className="space-y-2 overflow-y-auto px-3 py-3">
+      <div className="space-y-2 overflow-y-auto px-3 py-3 text-[13px]">
         {tree.map((node) => renderTreeNode(node))}
       </div>
       {contextMenu ? (
@@ -4881,86 +4858,6 @@ function LinkDialog({
   );
 }
 
-function PdfBacklinkDocumentDialog({
-  request,
-  documents,
-  onClose,
-  onSelect
-}: {
-  request: Extract<PendingPdfBacklinkState, { step: "select-document" }> | null;
-  documents: InformioDocument[];
-  onClose: () => void;
-  onSelect: (documentId: string) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const queryInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (!request) return;
-    setQuery("");
-    window.setTimeout(() => queryInputRef.current?.focus(), 0);
-  }, [request]);
-
-  const filteredDocuments = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    const sorted = [...documents].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-    if (!normalizedQuery) return sorted;
-    return sorted.filter((document) => {
-      const haystacks = [document.title, document.filePath ?? ""].map((value) => value.toLowerCase());
-      return haystacks.some((value) => value.includes(normalizedQuery));
-    });
-  }, [documents, query]);
-
-  return (
-    <Dialog.Root open={Boolean(request)} onOpenChange={(open) => (!open ? onClose() : undefined)}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/18" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(520px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-4 text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
-          <Dialog.Title className="text-[14px] font-extrabold">选择回链文档</Dialog.Title>
-          <Dialog.Description className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-            选一个现有 Markdown 文档。打开后你可以在另一栏里手动放置插入位置，再确认写入 PDF 回链。
-          </Dialog.Description>
-          <div className="mt-4 grid gap-3">
-            <input
-              ref={queryInputRef}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索文档标题或路径"
-              className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-[var(--divider)] focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
-            />
-            <div className="max-h-[320px] overflow-y-auto rounded-lg ring-1 ring-[var(--divider)]">
-              {filteredDocuments.length ? (
-                filteredDocuments.map((document) => (
-                  <button
-                    key={document.id}
-                    type="button"
-                    className="flex w-full flex-col items-start gap-1 border-b border-[var(--divider)]/70 px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-slate-50"
-                    onClick={() => onSelect(document.id)}
-                  >
-                    <span className="w-full truncate text-[13px] font-semibold text-[var(--text-main)]">{document.title}</span>
-                    <span className="w-full truncate text-[11px] text-[var(--text-muted)]">{document.filePath ?? "未保存文档"}</span>
-                  </button>
-                ))
-              ) : (
-                <div className="px-3 py-6 text-center text-[12px] text-[var(--text-muted)]">没有匹配的 Markdown 文档。</div>
-              )}
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                className="h-8 rounded-md px-3 text-[12px] font-bold text-slate-600 transition-[background-color,transform] hover:bg-slate-100 active:scale-[0.99]"
-                onClick={onClose}
-              >
-                取消
-              </button>
-            </div>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
 type SecretPromptRequest =
   | {
       mode: "set-passphrase";
@@ -5080,6 +4977,161 @@ function SecretPassphraseDialog({
               </button>
             </div>
           </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+type ConflictDiffLine = {
+  key: string;
+  kind: "same" | "removed" | "added";
+  text: string;
+};
+
+const buildConflictDiffLines = (externalMarkdown: string, localMarkdown: string): ConflictDiffLine[] => {
+  const removed = externalMarkdown.split("\n");
+  const added = localMarkdown.split("\n");
+  const table = Array.from({ length: removed.length + 1 }, () => Array(added.length + 1).fill(0) as number[]);
+  for (let i = removed.length - 1; i >= 0; i -= 1) {
+    for (let j = added.length - 1; j >= 0; j -= 1) {
+      table[i][j] = removed[i] === added[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+    }
+  }
+
+  const lines: ConflictDiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < removed.length && j < added.length) {
+    if (removed[i] === added[j]) {
+      lines.push({ key: `same-${i}-${j}`, kind: "same", text: removed[i] });
+      i += 1;
+      j += 1;
+    } else if (table[i + 1][j] >= table[i][j + 1]) {
+      lines.push({ key: `removed-${i}-${j}`, kind: "removed", text: removed[i] });
+      i += 1;
+    } else {
+      lines.push({ key: `added-${i}-${j}`, kind: "added", text: added[j] });
+      j += 1;
+    }
+  }
+  while (i < removed.length) {
+    lines.push({ key: `removed-${i}-${j}`, kind: "removed", text: removed[i] });
+    i += 1;
+  }
+  while (j < added.length) {
+    lines.push({ key: `added-${i}-${j}`, kind: "added", text: added[j] });
+    j += 1;
+  }
+  return lines;
+};
+
+function DocumentConflictDialog({
+  conflict,
+  document,
+  onClose,
+  onKeepLocal,
+  onUseExternal
+}: {
+  conflict: DocumentConflict | null;
+  document?: InformioDocument;
+  onClose: () => void;
+  onKeepLocal: (documentId: string) => void;
+  onUseExternal: (documentId: string) => void;
+}) {
+  const diffLines = useMemo(
+    () => (conflict ? buildConflictDiffLines(conflict.externalMarkdown, conflict.localMarkdown) : []),
+    [conflict]
+  );
+  const copyExternal = () => {
+    if (!conflict) return;
+    void navigator.clipboard?.writeText(conflict.externalMarkdown);
+  };
+
+  return (
+    <Dialog.Root open={Boolean(conflict)} onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[92] bg-slate-950/22 backdrop-blur-[1px]" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[93] flex h-[min(720px,calc(100vh-40px))] w-[min(980px,calc(100vw-40px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg bg-white text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
+          <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-3">
+            <div className="min-w-0">
+              <Dialog.Title className="truncate text-[15px] font-extrabold">外部有新更改</Dialog.Title>
+              <Dialog.Description className="mt-1 truncate text-[12px] leading-5 text-[var(--text-muted)]">
+                {document?.title ?? conflict?.filePath ?? "当前文档"} 已被 Agent 或磁盘刷新修改。自动保存已暂停，请选择如何处理。
+              </Dialog.Description>
+            </div>
+            <button
+              type="button"
+              aria-label="关闭"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+              onClick={onClose}
+            >
+              <X size={15} />
+            </button>
+          </div>
+          <div className="grid min-h-0 flex-1 grid-cols-[220px_1fr]">
+            <aside className="border-r border-slate-200 bg-slate-50/80 p-3 text-[12px] leading-5 text-slate-600">
+              <div className="font-bold text-slate-900">处理方式</div>
+              <p className="mt-2">绿色是你当前编辑器里的内容，红色是外部版本中被替换或删除的内容。</p>
+              <p className="mt-2">关闭不会解决冲突，自动保存会继续暂停。</p>
+              <button
+                type="button"
+                className="mt-3 inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] font-bold text-slate-600 transition-colors hover:bg-white hover:text-slate-900"
+                onClick={copyExternal}
+              >
+                <Copy size={13} />
+                复制外部版本
+              </button>
+            </aside>
+            <div className="min-h-0 overflow-auto p-3">
+              <pre className="min-h-full whitespace-pre-wrap rounded-md bg-slate-950 p-3 font-mono text-[12px] leading-5 text-slate-200">
+                {diffLines.map((line) => (
+                  <div
+                    key={line.key}
+                    className={cn(
+                      "block min-h-5 px-1",
+                      line.kind === "removed" && "bg-red-500/20 text-red-100",
+                      line.kind === "added" && "bg-emerald-500/20 text-emerald-100",
+                      line.kind === "same" && "text-slate-300"
+                    )}
+                  >
+                    <span className="select-none pr-2 text-slate-500">
+                      {line.kind === "removed" ? "-" : line.kind === "added" ? "+" : " "}
+                    </span>
+                    {line.text || " "}
+                  </div>
+                ))}
+              </pre>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3">
+            <div className="text-[12px] text-[var(--text-muted)]">也可以手动合并后再选择“保留我的版本”保存。</div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="h-8 rounded-md px-3 text-[12px] font-bold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800"
+                onClick={onClose}
+              >
+                稍后处理
+              </button>
+              <button
+                type="button"
+                disabled={!conflict}
+                className="h-8 rounded-md bg-slate-900 px-3 text-[12px] font-bold text-white transition-colors hover:bg-slate-700 disabled:opacity-45"
+                onClick={() => conflict && onUseExternal(conflict.documentId)}
+              >
+                采用外部版本
+              </button>
+              <button
+                type="button"
+                disabled={!conflict}
+                className="h-8 rounded-md bg-emerald-600 px-3 text-[12px] font-bold text-white transition-colors hover:bg-emerald-700 disabled:opacity-45"
+                onClick={() => conflict && onKeepLocal(conflict.documentId)}
+              >
+                保留我的版本
+              </button>
+            </div>
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -5398,19 +5450,6 @@ function EditorPane({
   onOpenInternalLink,
   onCreateInternalLink,
   onSelection,
-  markdownTarget,
-  focusPdfAnnotationId,
-  annotationRefreshToken,
-  pendingPdfBacklink,
-  onRequestPdfBacklink,
-  onConfirmPendingPdfBacklink,
-  onCancelPendingPdfBacklink,
-  onPdfAnnotationStoreChanged,
-  onRegisterPdfAnnotation,
-  onDeletePdfAnnotation,
-  onInsertPdfBacklink,
-  onOpenPdfAnnotation,
-  onOpenMarkdownTarget,
   onCompositionChange,
   toolbarEnabled,
   toolbarTranslate,
@@ -5428,19 +5467,6 @@ function EditorPane({
   onOpenInternalLink: (documentId: string, sourcePaneId: EditorPaneState["id"]) => void;
   onCreateInternalLink: (title: string) => void;
   onSelection: (selection: AgentSelection | null) => void;
-  markdownTarget: PdfMarkdownTarget | null;
-  focusPdfAnnotationId: string | null;
-  annotationRefreshToken: number;
-  pendingPdfBacklink: Extract<PendingPdfBacklinkState, { step: "choose-position" | "saving" }> | null;
-  onRequestPdfBacklink: (annotation: PdfAnnotation, sourcePaneId: EditorPaneState["id"]) => void;
-  onConfirmPendingPdfBacklink: (target: PdfMarkdownTarget) => Promise<boolean>;
-  onCancelPendingPdfBacklink: () => void;
-  onPdfAnnotationStoreChanged: () => void;
-  onRegisterPdfAnnotation: (annotation: PdfAnnotation) => void;
-  onDeletePdfAnnotation: (annotationId: string) => void;
-  onInsertPdfBacklink: (annotation: PdfAnnotation) => void;
-  onOpenPdfAnnotation: (annotationId: string, sourcePaneId: EditorPaneState["id"]) => void;
-  onOpenMarkdownTarget: (target: PdfMarkdownTarget, sourcePaneId: EditorPaneState["id"]) => void;
   onCompositionChange: (documentId: string, composing: boolean) => void;
   toolbarEnabled: boolean;
   toolbarTranslate: UnifiedToolbarTranslateState;
@@ -5450,6 +5476,7 @@ function EditorPane({
   const composingRef = useRef(false);
   const applyingMarkdownAutoBlockRef = useRef(false);
   const markdownAutoBlockTimerRef = useRef<number | null>(null);
+  const editorScrollTimerRef = useRef<number | null>(null);
   const editorInstanceRef = useRef<Editor | null>(null);
   const sourceTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const findQueryInputRef = useRef<HTMLInputElement | null>(null);
@@ -5471,11 +5498,11 @@ function EditorPane({
   const [replaceQuery, setReplaceQuery] = useState("");
   const [findMatch, setFindMatch] = useState<FindMatch | null>(null);
   const [findStatus, setFindStatus] = useState<string | null>(null);
+  const [editorScrolling, setEditorScrolling] = useState(false);
   const frontmatter = useMemo(() => parseFrontmatter(document.markdown), [document.markdown]);
   const editorMarkdown = frontmatter.body;
   const isReadOnlyDocument = isPdfFile(document.filePath ?? document.title);
   const isSourceMode = !isReadOnlyDocument && viewMode === "source";
-  const pendingBacklinkForDocument = pendingPdfBacklink?.targetDocumentId === document.id ? pendingPdfBacklink : null;
   const documentLookupIndex = useMemo(() => buildDocumentLookupIndex(documents, document.id), [document.id, documents]);
   const documentLinkIndexKey = useMemo(
     () => documents.map((doc) => `${doc.id}:${doc.title}:${doc.filePath ?? ""}`).join("|"),
@@ -5895,6 +5922,10 @@ function EditorPane({
     editorInstanceRef.current = editor;
     return () => {
       if (editorInstanceRef.current === editor) editorInstanceRef.current = null;
+      if (editorScrollTimerRef.current !== null) {
+        window.clearTimeout(editorScrollTimerRef.current);
+        editorScrollTimerRef.current = null;
+      }
     };
   }, [editor]);
 
@@ -6667,57 +6698,6 @@ function EditorPane({
       url: String(editor.getAttributes("link").href ?? "")
     });
   };
-  const confirmPendingPdfBacklink = async () => {
-    if (!pendingBacklinkForDocument || isReadOnlyDocument) return;
-    const markdownLink = `[PDF 标注](informio://pdf-annotation/${encodeURIComponent(pendingBacklinkForDocument.annotation.id)})`;
-
-    if (isSourceMode) {
-      const textarea = sourceTextareaRef.current;
-      if (!textarea) return;
-      const selectionStart = textarea.selectionStart ?? 0;
-      const selectionEnd = textarea.selectionEnd ?? selectionStart;
-      const selectedText = selectionStart === selectionEnd ? "" : textarea.value.slice(selectionStart, selectionEnd).trim();
-      const target: PdfMarkdownTarget = {
-        documentId: document.id,
-        title: document.title,
-        filePath: document.filePath,
-        text: selectedText || undefined
-      };
-      const saved = await onConfirmPendingPdfBacklink(target);
-      if (!saved) return;
-      const insertion = selectionStart === selectionEnd ? markdownLink : `\n\n${markdownLink}\n`;
-      const insertAt = selectionEnd;
-      const nextMarkdown = `${textarea.value.slice(0, insertAt)}${insertion}${textarea.value.slice(insertAt)}`;
-      onChange(document.id, nextMarkdown);
-      window.setTimeout(() => {
-        textarea.focus();
-        const cursor = insertAt + insertion.length;
-        textarea.setSelectionRange(cursor, cursor);
-      }, 0);
-      onCancelPendingPdfBacklink();
-      return;
-    }
-
-    const currentEditor = editorInstanceRef.current;
-    if (!currentEditor || currentEditor.isDestroyed) return;
-    const { from, to } = currentEditor.state.selection;
-    const selectedText = from === to ? "" : currentEditor.state.doc.textBetween(from, to, "\n").trim();
-    const target: PdfMarkdownTarget = {
-      documentId: document.id,
-      title: document.title,
-      filePath: document.filePath,
-      text: selectedText || undefined
-    };
-    const saved = await onConfirmPendingPdfBacklink(target);
-    if (!saved) return;
-    const insertion = from === to ? markdownLink : `\n\n${markdownLink}\n`;
-    currentEditor
-      .chain()
-      .focus()
-      .insertContentAt({ from: to, to }, insertion, { contentType: "markdown" })
-      .run();
-    onCancelPendingPdfBacklink();
-  };
   const runSelectionToolbarAction = (actionId: SelectionToolbarAction["id"]) => {
     if (!editor || editor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
     switch (actionId) {
@@ -6960,62 +6940,22 @@ function EditorPane({
       paneId,
       document,
       settings,
-      markdownTarget,
-      focusAnnotationId: focusPdfAnnotationId,
-      annotationRefreshToken,
-      toolbarEnabled,
       toolbarTranslate,
-      onPdfSelection: (selection) => {
-        onSelection(
-          selection
-            ? {
-                kind: "pdf",
-                documentId: document.id,
-                from: -1,
-                to: -1,
-                text: selection.text,
-                markdown: `PDF: ${selection.title}\nPage: ${selection.page}\n\n${selection.text}`,
-                title: selection.title,
-                filePath: selection.pdfPath,
-                page: selection.page,
-                rects: selection.rects,
-                overlayLeft: selection.left,
-                overlayTop: selection.top - 54
-              }
-            : null
-        );
-      },
       onTranslateSelection,
-      onClearToolbarTranslate,
-      onRequestPdfBacklink: (annotation) => onRequestPdfBacklink(annotation, paneId),
-      onPdfAnnotationStoreChanged,
-      onRegisterPdfAnnotation,
-      onDeletePdfAnnotation,
-      onInsertPdfBacklink,
-      onOpenMarkdownTarget: (target) => onOpenMarkdownTarget(target, paneId)
+      onClearToolbarTranslate
     }),
-    [
-      annotationRefreshToken,
-      document,
-      focusPdfAnnotationId,
-      markdownTarget,
-      onClearToolbarTranslate,
-      onDeletePdfAnnotation,
-      onPdfAnnotationStoreChanged,
-      onInsertPdfBacklink,
-      onOpenMarkdownTarget,
-      onRequestPdfBacklink,
-      onRegisterPdfAnnotation,
-      onSelection,
-      onTranslateSelection,
-      paneId,
-      settings,
-      toolbarEnabled,
-      toolbarTranslate
-    ]
+    [document, onClearToolbarTranslate, onTranslateSelection, paneId, settings, toolbarTranslate]
   );
   const editorContentMaxWidth = isReadOnlyDocument ? undefined : clamp(settings.editor.contentWidth, EDITOR_CONTENT_MIN_WIDTH, EDITOR_CONTENT_MAX_WIDTH);
   const showPinnedInsertToolbar = !isReadOnlyDocument && !isSourceMode;
+  const handleEditorScroll = () => {
+    setEditorScrolling(true);
+    if (editorScrollTimerRef.current !== null) window.clearTimeout(editorScrollTimerRef.current);
+    editorScrollTimerRef.current = window.setTimeout(() => {
+      setEditorScrolling(false);
+      editorScrollTimerRef.current = null;
+    }, 900);
+  };
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -7040,8 +6980,10 @@ function EditorPane({
         ref={shellRef}
         className={cn(
           "informio-editor-shell relative flex min-w-0 flex-1 justify-center",
+          editorScrolling && "is-scrolling",
           isReadOnlyDocument ? "is-pdf-document overflow-y-auto overflow-x-hidden" : "overflow-y-auto"
         )}
+        onScroll={handleEditorScroll}
         onMouseUp={(event) => {
           if ((event.target as HTMLElement).closest(selectionToolbarSafeAreaSelector)) return;
           if (editor && !isReadOnlyDocument && !isSourceMode) scheduleMarkdownSelectionCapture(editor);
@@ -7176,45 +7118,6 @@ function EditorPane({
           }}
         />
       )}
-      {pendingBacklinkForDocument ? (
-        <div
-          className="pointer-events-auto absolute right-5 top-4 z-40 w-[min(360px,calc(100vw-32px))] rounded-xl border border-emerald-200/90 bg-white/96 p-3 text-[13px] shadow-[0_20px_45px_rgba(15,23,42,0.16)] backdrop-blur"
-          data-selection-toolbar-safe-area="true"
-        >
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 rounded-full bg-emerald-50 p-1 text-emerald-600">
-              <Link2 size={14} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="font-semibold text-[var(--text-main)]">放置 PDF 回链位置</div>
-              <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                先在这里点击光标，或选中一段文字作为参考位置，然后确认插入。
-              </div>
-              <div className="mt-3 flex justify-end gap-2">
-                <button
-                  type="button"
-                  className="h-8 rounded-md px-3 text-[12px] font-bold text-slate-600 transition-[background-color,transform] hover:bg-slate-100 active:scale-[0.99]"
-                  onClick={onCancelPendingPdfBacklink}
-                  disabled={pendingBacklinkForDocument.step === "saving"}
-                >
-                  取消
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-emerald-600 px-3 text-[12px] font-bold text-white transition-[background-color,opacity,transform] hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-45"
-                  onClick={() => {
-                    void confirmPendingPdfBacklink();
-                  }}
-                  disabled={pendingBacklinkForDocument.step === "saving"}
-                >
-                  {pendingBacklinkForDocument.step === "saving" ? <Loader2 size={13} className="animate-spin" /> : null}
-                  <span>{pendingBacklinkForDocument.step === "saving" ? "保存中" : "确认插入"}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
       {!isReadOnlyDocument && !isSourceMode && wikiSuggest ? (
         <div className="informio-wiki-suggest no-drag fixed z-50 max-h-72 w-72 overflow-hidden rounded-md bg-white py-1 text-[13px] shadow-[0_18px_45px_rgba(15,23,42,0.18),0_0_0_1px_rgba(15,23,42,0.08)]" style={{ left: wikiSuggest.left, top: wikiSuggest.top }}>
           {wikiSuggestions.length ? (
@@ -10659,7 +10562,7 @@ function SettingsView({
                             )}
                           >
                             <div className="text-[14px] font-bold text-[var(--text-main)]">直接链接原文件</div>
-                            <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">不复制，插入更快；但原文件被移动或删除后会失效。</div>
+                            <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">更快；但原文件被移动或删除后会失效。</div>
                           </button>
                         </div>
                       </div>
@@ -10759,11 +10662,6 @@ export function App() {
   const [pendingNewConversation, setPendingNewConversation] = useState(false);
   const [agentSelection, setAgentSelection] = useState<AgentSelection | null>(null);
   const [outlineJumpRequest, setOutlineJumpRequest] = useState<OutlineJumpRequest | null>(null);
-  const [lastMarkdownTarget, setLastMarkdownTarget] = useState<PdfMarkdownTarget | null>(null);
-  const [pdfAnnotationIndex, setPdfAnnotationIndex] = useState<Map<string, PdfAnnotation>>(() => new Map());
-  const [pdfAnnotationRefreshToken, setPdfAnnotationRefreshToken] = useState(0);
-  const [pendingPdfBacklink, setPendingPdfBacklink] = useState<PendingPdfBacklinkState | null>(null);
-  const [focusPdfAnnotationId, setFocusPdfAnnotationId] = useState<string | null>(null);
   const [agentBusy, setAgentBusy] = useState(false);
   const [checkingAgents, setCheckingAgents] = useState(false);
   const [checkingApiModels, setCheckingApiModels] = useState(false);
@@ -10782,6 +10680,8 @@ export function App() {
   const [paneRatio, setPaneRatio] = useState(0.5);
   const [dropZone, setDropZone] = useState<EditorDropZone | null>(null);
   const [dirtyDocumentIds, setDirtyDocumentIds] = useState<Set<string>>(() => new Set());
+  const [documentConflicts, setDocumentConflicts] = useState<Map<string, DocumentConflict>>(() => new Map());
+  const [activeConflictDocumentId, setActiveConflictDocumentId] = useState<string | null>(null);
   const [fileListCreationSignal, setFileListCreationSignal] = useState(0);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [toolbarTranslate, setToolbarTranslate] = useState<UnifiedToolbarTranslateState>({ status: "idle", response: "" });
@@ -10789,39 +10689,72 @@ export function App() {
   const saveQueueRef = useRef(Promise.resolve<AppData | null>(null));
   const pendingAutoSaveIdsRef = useRef<Set<string>>(new Set());
   const dirtyDocumentIdsRef = useRef<Set<string>>(new Set());
+  const documentConflictsRef = useRef<Map<string, DocumentConflict>>(new Map());
+  const activeConflictDocumentIdRef = useRef<string | null>(null);
   const latestDataRef = useRef<AppData | null>(null);
   const composingDocumentIdRef = useRef<string | null>(null);
   const initializedTabsRef = useRef(false);
   const lastActiveDocumentIdRef = useRef<string | null>(null);
+
+  const mergeDiskDataWithLocalDrafts = (
+    updated: AppData,
+    current: AppData | null,
+    dirtyIds: Set<string>,
+    conflicts: Map<string, DocumentConflict>
+  ) => {
+    if (!current || !dirtyIds.size) {
+      const validIds = new Set(updated.documents.map((doc) => doc.id));
+      const nextConflicts = new Map(Array.from(conflicts).filter(([id]) => validIds.has(id)));
+      return { data: updated, dirtyIds: new Set<string>(), conflicts: nextConflicts };
+    }
+
+    const localDirtyDocs = new Map(current.documents.filter((doc) => dirtyIds.has(doc.id)).map((doc) => [doc.id, doc]));
+    const nextDirtyIds = new Set<string>();
+    const nextConflicts = new Map<string, DocumentConflict>();
+    const nowIso = new Date().toISOString();
+    const documents = updated.documents.map((doc) => {
+      const local = localDirtyDocs.get(doc.id);
+      const existingConflict = conflicts.get(doc.id);
+      if (!local) {
+        if (existingConflict) nextConflicts.set(doc.id, existingConflict);
+        return doc;
+      }
+
+      if (local.markdown === doc.markdown) {
+        return doc;
+      }
+
+      const conflict: DocumentConflict = {
+        documentId: doc.id,
+        filePath: doc.filePath ?? existingConflict?.filePath ?? local.filePath ?? doc.title,
+        baseMarkdown: existingConflict?.baseMarkdown,
+        localMarkdown: local.markdown,
+        externalMarkdown: doc.markdown,
+        detectedAt: existingConflict?.detectedAt ?? nowIso,
+        externalUpdatedAt: doc.updatedAt
+      };
+      nextDirtyIds.add(doc.id);
+      nextConflicts.set(doc.id, conflict);
+      return { ...doc, markdown: local.markdown, updatedAt: local.updatedAt };
+    });
+
+    return { data: { ...updated, documents }, dirtyIds: nextDirtyIds, conflicts: nextConflicts };
+  };
 
   useEffect(() => {
     let cancelled = false;
     const unsubscribe = window.informio.onAppDataUpdated((updated) => {
       const current = latestDataRef.current;
       const dirtyIds = dirtyDocumentIdsRef.current;
-      if (!current || !dirtyIds.size) {
-        latestDataRef.current = updated;
-        setData(updated);
-        setDirtyDocumentIds(new Set());
-        return;
+      const merged = mergeDiskDataWithLocalDrafts(updated, current, dirtyIds, documentConflictsRef.current);
+      latestDataRef.current = merged.data;
+      documentConflictsRef.current = merged.conflicts;
+      setData(merged.data);
+      setDirtyDocumentIds(merged.dirtyIds);
+      setDocumentConflicts(merged.conflicts);
+      if (!merged.conflicts.has(activeConflictDocumentIdRef.current ?? "")) {
+        setActiveConflictDocumentId((id) => (id && merged.conflicts.has(id) ? id : null));
       }
-
-      const localDirtyDocs = new Map(
-        current.documents.filter((doc) => dirtyIds.has(doc.id)).map((doc) => [doc.id, doc])
-      );
-      const preservedDirtyIds = new Set<string>();
-      const merged: AppData = {
-        ...updated,
-        documents: updated.documents.map((doc) => {
-          const local = localDirtyDocs.get(doc.id);
-          if (!local) return doc;
-          preservedDirtyIds.add(doc.id);
-          return { ...doc, markdown: local.markdown, updatedAt: local.updatedAt };
-        })
-      };
-      latestDataRef.current = merged;
-      setData(merged);
-      setDirtyDocumentIds(preservedDirtyIds);
     });
 
     void (async () => {
@@ -10908,6 +10841,14 @@ export function App() {
   }, [dirtyDocumentIds]);
 
   useEffect(() => {
+    documentConflictsRef.current = documentConflicts;
+  }, [documentConflicts]);
+
+  useEffect(() => {
+    activeConflictDocumentIdRef.current = activeConflictDocumentId;
+  }, [activeConflictDocumentId]);
+
+  useEffect(() => {
     if (!data) return;
     const activeDocumentChanged = lastActiveDocumentIdRef.current !== data.activeDocumentId;
     setOpenDocumentIds((ids) => {
@@ -10989,25 +10930,8 @@ export function App() {
     () => (activePane ? documentsById.get(activePane.documentId) : undefined) ?? openDocuments.find((doc) => doc.id === activePane?.documentId) ?? openDocuments[0],
     [activePane, documentsById, openDocuments]
   );
-  const writableMarkdownDocuments = useMemo(
-    () => (data?.documents ?? []).filter((document) => isWritableTextDocument(document) && isMarkdownDocument(document)),
-    [data?.documents]
-  );
-  const resolvedPdfMarkdownTarget = useMemo<PdfMarkdownTarget | null>(() => {
-    if (lastMarkdownTarget) {
-      const targetDocument = documentsById.get(lastMarkdownTarget.documentId);
-      if (targetDocument && isWritableTextDocument(targetDocument)) return lastMarkdownTarget;
-    }
-    const fallback = [activeOpenDoc, ...openDocuments].find((document): document is InformioDocument => isWritableTextDocument(document));
-    if (!fallback) return null;
-    return {
-      documentId: fallback.id,
-      title: fallback.title,
-      filePath: fallback.filePath,
-      to: fallback.markdown.length
-    };
-  }, [activeOpenDoc, documentsById, lastMarkdownTarget, openDocuments]);
-
+  const activeConflict = activeConflictDocumentId ? documentConflicts.get(activeConflictDocumentId) ?? null : null;
+  const activeConflictDocument = activeConflict ? documentsById.get(activeConflict.documentId) : undefined;
   useEffect(() => {
     if (!data) return;
     setEditorPanes((panes) => {
@@ -11023,21 +10947,6 @@ export function App() {
       setActivePaneId(editorPanes[0]?.id ?? "main");
     }
   }, [activePaneId, editorPanes]);
-
-  useEffect(() => {
-    if (!pendingPdfBacklink || pendingPdfBacklink.step === "select-document" || !data) return;
-    const targetDocument = data.documents.find((document) => document.id === pendingPdfBacklink.targetDocumentId);
-    if (!targetDocument || !isWritableTextDocument(targetDocument) || !isMarkdownDocument(targetDocument)) {
-      setPendingPdfBacklink(null);
-      window.alert("目标 Markdown 文档不可用，已取消 PDF 回链插入。");
-      return;
-    }
-    const visiblePanes = normalizeEditorPanes(editorPanes, (documentId) => data.documents.some((document) => document.id === documentId));
-    if (!visiblePanes.some((pane) => pane.documentId === pendingPdfBacklink.targetDocumentId)) {
-      setPendingPdfBacklink(null);
-      window.alert("目标 Markdown 文档已被切走，已取消 PDF 回链插入。");
-    }
-  }, [data, editorPanes, pendingPdfBacklink]);
 
   useEffect(() => {
     if (agentBusy) return;
@@ -11078,8 +10987,14 @@ export function App() {
     nextDocuments: InformioDocument[],
     activeDocumentId: string,
     cleanIds?: string[],
-    options: { syncData?: boolean } = {}
+    options: { syncData?: boolean; ignoreConflicts?: boolean } = {}
   ) => {
+    const targetIds = cleanIds?.length ? cleanIds : nextDocuments.map((doc) => doc.id);
+    const conflictedId = options.ignoreConflicts ? undefined : targetIds.find((id) => documentConflictsRef.current.has(id));
+    if (conflictedId) {
+      setActiveConflictDocumentId(conflictedId);
+      throw new Error("文档存在外部更改冲突，请先选择保留本地版本或采用外部版本。");
+    }
     if (!cleanIds?.length) pendingAutoSaveIdsRef.current.clear();
     const runSave = async () => {
       const result = await window.informio.saveNow(nextDocuments, activeDocumentId);
@@ -11133,6 +11048,15 @@ export function App() {
     latestDataRef.current = nextData;
     setData(nextData);
     setDirtyDocumentIds((items) => new Set(items).add(sourceDocument.id));
+    setDocumentConflicts((items) => {
+      const existing = items.get(sourceDocument.id);
+      if (!existing) return items;
+      const next = new Map(items);
+      const nextConflict = { ...existing, localMarkdown: markdown };
+      next.set(sourceDocument.id, nextConflict);
+      documentConflictsRef.current = next;
+      return next;
+    });
     if (!options?.composing) persistDocuments(sourceDocument.id);
   };
 
@@ -11141,44 +11065,6 @@ export function App() {
     setToolbarTranslate((current) =>
       current.status === "idle" && !current.response && !current.error ? current : { status: "idle", response: "" }
     );
-    if (!selection || selection.kind !== "markdown" || !selection.text) return;
-    const doc = latestDataRef.current?.documents.find((item) => item.id === selection.documentId);
-    if (!doc) return;
-    setLastMarkdownTarget({
-      documentId: doc.id,
-      title: doc.title,
-      filePath: doc.filePath,
-      from: selection.from,
-      to: selection.to,
-      text: selection.text
-    });
-  };
-
-  const registerPdfAnnotation = (annotation: PdfAnnotation) => {
-    setPdfAnnotationIndex((items) => {
-      if (items.get(annotation.id)?.updatedAt === annotation.updatedAt) return items;
-      const next = new Map(items);
-      next.set(annotation.id, annotation);
-      return next;
-    });
-  };
-
-  const unregisterPdfAnnotation = (annotationId: string) => {
-    setPdfAnnotationIndex((items) => {
-      if (!items.has(annotationId)) return items;
-      const next = new Map(items);
-      next.delete(annotationId);
-      return next;
-    });
-    if (focusPdfAnnotationId === annotationId) setFocusPdfAnnotationId(null);
-  };
-
-  const bumpPdfAnnotationRefresh = () => {
-    setPdfAnnotationRefreshToken((value) => value + 1);
-  };
-
-  const insertPdfBacklink = (_annotation?: PdfAnnotation) => {
-    bumpPdfAnnotationRefresh();
   };
 
   const openDocumentInLinkedPane = (
@@ -11220,90 +11106,6 @@ export function App() {
     setData(next);
     window.informio.saveDocuments(next.documents, documentId);
     return targetPaneId;
-  };
-
-  const openMarkdownTarget = (target: PdfMarkdownTarget, sourcePaneId: EditorPaneState["id"]) => {
-    openDocumentInLinkedPane(sourcePaneId, target.documentId);
-  };
-
-  const openPdfAnnotation = (annotationId: string, sourcePaneId: EditorPaneState["id"]) => {
-    setFocusPdfAnnotationId(annotationId);
-    void (async () => {
-      const cached = pdfAnnotationIndex.get(annotationId);
-      const annotation = cached ?? (await window.informio.findPdfAnnotation({ annotationId }));
-      if (!annotation) {
-        window.alert("找不到对应的 PDF 标注，可能已被删除或尚未同步。");
-        return;
-      }
-      if (!cached) registerPdfAnnotation(annotation);
-      const latest = latestDataRef.current;
-      if (!latest) return;
-      const doc = latest.documents.find((item) => item.filePath && normalizePath(item.filePath) === normalizePath(annotation.pdfPath));
-      if (!doc) {
-        window.alert("找到了 PDF 标注，但当前工作区里没有对应的 PDF 文档。");
-        return;
-      }
-      openDocumentInLinkedPane(sourcePaneId, doc.id);
-    })();
-  };
-
-  const requestPdfBacklink = (annotation: PdfAnnotation, sourcePaneId: EditorPaneState["id"]) => {
-    if (!writableMarkdownDocuments.length) {
-      window.alert("当前没有可用的 Markdown 文档，暂时无法创建 PDF 回链。");
-      return;
-    }
-    setPendingPdfBacklink({
-      step: "select-document",
-      annotation,
-      sourcePaneId
-    });
-  };
-
-  const choosePendingPdfBacklinkDocument = (documentId: string) => {
-    setPendingPdfBacklink((current) => {
-      if (!current || current.step !== "select-document") return current;
-      const targetPaneId = openDocumentInLinkedPane(current.sourcePaneId, documentId, { forceRichText: true });
-      if (!targetPaneId) return null;
-      return {
-        step: "choose-position",
-        annotation: current.annotation,
-        sourcePaneId: current.sourcePaneId,
-        targetDocumentId: documentId,
-        targetPaneId
-      };
-    });
-  };
-
-  const cancelPendingPdfBacklink = () => {
-    setPendingPdfBacklink(null);
-  };
-
-  const confirmPendingPdfBacklink = async (target: PdfMarkdownTarget) => {
-    const current = latestDataRef.current;
-    if (!current) return false;
-    const pending = pendingPdfBacklink;
-    if (!pending || pending.step !== "choose-position") return false;
-    setPendingPdfBacklink({ ...pending, step: "saving" });
-    try {
-      const result = await window.informio.savePdfAnnotation({
-        annotation: {
-          ...pending.annotation,
-          markdownTarget: target,
-          updatedAt: new Date().toISOString()
-        },
-        writeToSource: true
-      });
-      registerPdfAnnotation(result.annotation);
-      bumpPdfAnnotationRefresh();
-      if (result.sourceWrite?.attempted && !result.sourceWrite.ok) {
-        window.alert(result.sourceWrite.message ?? "源 PDF 写回失败，标注已保存在本地。");
-      }
-      return true;
-    } catch (error) {
-      setPendingPdfBacklink(pending);
-      window.alert(error instanceof Error ? error.message : "保存 PDF 标注失败。");
-      return false;
-    }
   };
 
   const handleEditorCompositionChange = (documentId: string, composing: boolean) => {
@@ -11856,8 +11658,63 @@ export function App() {
 
   const refreshAppDataFromDisk = async () => {
     const updated = await window.informio.loadApp();
-    latestDataRef.current = updated;
-    setData(updated);
+    const merged = mergeDiskDataWithLocalDrafts(
+      updated,
+      latestDataRef.current,
+      dirtyDocumentIdsRef.current,
+      documentConflictsRef.current
+    );
+    latestDataRef.current = merged.data;
+    documentConflictsRef.current = merged.conflicts;
+    setData(merged.data);
+    setDirtyDocumentIds(merged.dirtyIds);
+    setDocumentConflicts(merged.conflicts);
+    if (!merged.conflicts.has(activeConflictDocumentIdRef.current ?? "")) {
+      setActiveConflictDocumentId((id) => (id && merged.conflicts.has(id) ? id : null));
+    }
+  };
+
+  const openDocumentConflict = (documentId: string) => {
+    if (!documentConflictsRef.current.has(documentId)) return;
+    setActiveConflictDocumentId(documentId);
+  };
+
+  const clearDocumentConflict = (documentId: string) => {
+    setDocumentConflicts((items) => {
+      if (!items.has(documentId)) return items;
+      const next = new Map(items);
+      next.delete(documentId);
+      documentConflictsRef.current = next;
+      return next;
+    });
+    setActiveConflictDocumentId((id) => (id === documentId ? null : id));
+  };
+
+  const keepLocalConflictVersion = async (documentId: string) => {
+    const latest = latestDataRef.current;
+    if (!latest || !documentConflictsRef.current.has(documentId)) return;
+    await saveDocumentsNow(latest.documents, latest.activeDocumentId, [documentId], { syncData: true, ignoreConflicts: true });
+    clearDocumentConflict(documentId);
+  };
+
+  const useExternalConflictVersion = (documentId: string) => {
+    const latest = latestDataRef.current;
+    const conflict = documentConflictsRef.current.get(documentId);
+    if (!latest || !conflict) return;
+    const documents = latest.documents.map((doc) =>
+      doc.id === documentId
+        ? { ...doc, markdown: conflict.externalMarkdown, updatedAt: conflict.externalUpdatedAt ?? new Date().toISOString() }
+        : doc
+    );
+    const nextData = { ...latest, documents };
+    latestDataRef.current = nextData;
+    setData(nextData);
+    setDirtyDocumentIds((items) => {
+      const next = new Set(items);
+      next.delete(documentId);
+      return next;
+    });
+    clearDocumentConflict(documentId);
   };
 
   const saveAgentConversations = async (conversations: AgentConversation[]) => {
@@ -12325,6 +12182,16 @@ export function App() {
         ) : null}
         {document ? (
           <EditorSurfaceErrorBoundary documentId={document.id} onResetSelection={() => setAgentSelection(null)}>
+            {documentConflicts.has(document.id) ? (
+              <button
+                type="button"
+                className="mx-auto mt-2 flex w-[min(760px,calc(100%-32px))] shrink-0 items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[12px] font-semibold text-amber-900 shadow-sm"
+                onClick={() => openDocumentConflict(document.id)}
+              >
+                <span className="min-w-0 truncate">外部有新更改，自动保存已暂停。点击查看 Diff 并选择处理方式。</span>
+                <span className="shrink-0 text-amber-700">查看</span>
+              </button>
+            ) : null}
             <EditorPane
               key={`${pane.id}-${document.id}-${documentRefreshTokens[document.id] ?? 0}`}
               paneId={pane.id}
@@ -12340,19 +12207,6 @@ export function App() {
               }}
               onCreateInternalLink={createLinkedDocument}
               onSelection={handleAgentSelection}
-              markdownTarget={resolvedPdfMarkdownTarget}
-              focusPdfAnnotationId={focusPdfAnnotationId}
-              annotationRefreshToken={pdfAnnotationRefreshToken}
-              pendingPdfBacklink={pendingPdfBacklink?.step === "select-document" ? null : pendingPdfBacklink}
-              onRequestPdfBacklink={requestPdfBacklink}
-              onConfirmPendingPdfBacklink={confirmPendingPdfBacklink}
-              onCancelPendingPdfBacklink={cancelPendingPdfBacklink}
-              onPdfAnnotationStoreChanged={bumpPdfAnnotationRefresh}
-              onRegisterPdfAnnotation={registerPdfAnnotation}
-              onDeletePdfAnnotation={unregisterPdfAnnotation}
-              onInsertPdfBacklink={insertPdfBacklink}
-              onOpenPdfAnnotation={openPdfAnnotation}
-              onOpenMarkdownTarget={openMarkdownTarget}
               onCompositionChange={handleEditorCompositionChange}
               toolbarEnabled
               toolbarTranslate={toolbarTranslate}
@@ -12390,11 +12244,14 @@ export function App() {
   return (
     <Tooltip.Provider delayDuration={120} skipDelayDuration={80}>
       <div className={cn("app-shell h-screen overflow-hidden", `theme-${data.settings.appearance.theme}`)} style={shellStyle}>
-        <PdfBacklinkDocumentDialog
-          request={pendingPdfBacklink?.step === "select-document" ? pendingPdfBacklink : null}
-          documents={writableMarkdownDocuments}
-          onClose={cancelPendingPdfBacklink}
-          onSelect={choosePendingPdfBacklinkDocument}
+        <DocumentConflictDialog
+          conflict={activeConflict}
+          document={activeConflictDocument}
+          onClose={() => setActiveConflictDocumentId(null)}
+          onKeepLocal={(documentId) => {
+            void keepLocalConflictVersion(documentId);
+          }}
+          onUseExternal={useExternalConflictVersion}
         />
         <div className="flex h-full flex-col overflow-hidden">
 	          <header className="top-bar drag-region flex h-[42px] shrink-0 items-center border-b">
@@ -12407,6 +12264,7 @@ export function App() {
                 {openDocuments.map((doc) => {
                   const active = doc.id === activeOpenDoc?.id;
                   const dirty = dirtyDocumentIds.has(doc.id);
+                  const conflicted = documentConflicts.has(doc.id);
                   return (
                     <div
                       key={doc.id}
@@ -12422,6 +12280,17 @@ export function App() {
                         onClick={() => selectDocument(doc.id)}
 	                        className="no-drag flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2.5 pr-7 text-left transition-transform active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45"
                       >
+                        {conflicted ? (
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                            title="外部有新更改"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              openDocumentConflict(doc.id);
+                            }}
+                          />
+                        ) : null}
                         {dirty ? <span className="h-2 w-2 rounded-full bg-emerald-600" /> : null}
                         <span className="truncate">{doc.title}</span>
                       </button>

@@ -76,10 +76,10 @@ This avoids depending on a globally installed `pnpm` and keeps build cache insid
 
 After a successful build, `release/` will contain files such as:
 
-- `Informio-0.1.2-mac-arm64.dmg`
-- `Informio-0.1.2-mac-arm64.zip`
-- `Informio-0.1.2-win-x64.exe`
-- `Informio-0.1.2-linux-arm64.AppImage`
+- `Informio-1.0.3-mac-arm64.dmg`
+- `Informio-1.0.3-mac-arm64.zip`
+- `Informio-1.0.3-win-x64.exe`
+- `Informio-1.0.3-linux-arm64.AppImage`
 
 Exact filenames depend on version, OS, and architecture.
 
@@ -87,7 +87,7 @@ Exact filenames depend on version, OS, and architecture.
 
 1. Update the version in `package.json`.
 2. Run a local validation build for the platform you are currently using.
-3. Create and push a Git tag such as `v0.1.2`.
+3. Create and push a Git tag such as `v1.0.3`.
 4. Let GitHub Actions build macOS, Windows, and Linux artifacts.
 5. Download the generated artifacts from the workflow run or attach them to a GitHub Release.
 

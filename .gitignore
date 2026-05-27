@@ -9,3 +9,6 @@ output/playwright
 .cache
 .DS_Store
 *.log
+tmp-pdf-comment-test.pdf
+docs/assets/*.mp4
+!docs/assets/demo_informio.mp4

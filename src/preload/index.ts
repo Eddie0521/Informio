@@ -12,29 +12,18 @@ import type {
   AgentStreamEvent,
   AppData,
   AppSettings,
-  DeletePdfAnnotationInput,
-  DeletePdfAnnotationResult,
-  FindPdfAnnotationInput,
   FileSystemOperationInput,
   InformioDocument,
   MenuCommand,
-  LoadPdfAnnotationsInput,
   ListLocalFontsResult,
-  PdfAnnotation,
   SaveAttachmentInput,
-  SavePdfAnnotationInput,
-  SavePdfAnnotationResult,
   SaveAgentConversationsInput,
   SaveAttachmentResult,
   SaveResult,
   SendAgentMessageInput,
   SendAgentMessageResult,
   TranslateSelectionInput,
-  TranslateSelectionResult,
-  WritePdfAnnotationSourceInput,
-  WritePdfAnnotationSourceResult,
-  WritePdfDocumentBytesInput,
-  WritePdfDocumentBytesResult
+  TranslateSelectionResult
 } from "../shared/types.js";
 
 const api = {
@@ -59,18 +48,6 @@ const api = {
     ipcRenderer.invoke("app:filesystem-action", input) as Promise<AppData>,
   saveAttachment: (input: SaveAttachmentInput) =>
     ipcRenderer.invoke("app:save-attachment", input) as Promise<SaveAttachmentResult>,
-  loadPdfAnnotations: (input: LoadPdfAnnotationsInput) =>
-    ipcRenderer.invoke("pdf:load-annotations", input) as Promise<PdfAnnotation[]>,
-  findPdfAnnotation: (input: FindPdfAnnotationInput) =>
-    ipcRenderer.invoke("pdf:find-annotation", input) as Promise<PdfAnnotation | null>,
-  savePdfAnnotation: (input: SavePdfAnnotationInput) =>
-    ipcRenderer.invoke("pdf:save-annotation", input) as Promise<SavePdfAnnotationResult>,
-  deletePdfAnnotation: (input: DeletePdfAnnotationInput) =>
-    ipcRenderer.invoke("pdf:delete-annotation", input) as Promise<DeletePdfAnnotationResult>,
-  writePdfDocumentBytes: (input: WritePdfDocumentBytesInput) =>
-    ipcRenderer.invoke("pdf:write-document-bytes", input) as Promise<WritePdfDocumentBytesResult>,
-  writePdfAnnotationSource: (input: WritePdfAnnotationSourceInput) =>
-    ipcRenderer.invoke("pdf:write-annotation-source", input) as Promise<WritePdfAnnotationSourceResult>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("app:save-settings", settings) as Promise<AppSettings>,
   getAppInfo: () => ipcRenderer.invoke("app:get-info") as Promise<AppInfo>,
   saveDocuments: (documents: InformioDocument[], activeDocumentId: string) =>

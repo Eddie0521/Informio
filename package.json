@@ -1,6 +1,6 @@
 {
   "name": "informio",
-  "version": "0.1.2",
+  "version": "1.0.3",
   "description": "A minimal Markdown editor with contextual MCP Agent assistance.",
   "homepage": "https://github.com/Eddie0521/Informio",
   "repository": {
@@ -36,12 +36,12 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.144",
     "@anthropic-ai/sdk": "^0.96.0",
+    "@embedpdf/react-pdf-viewer": "^2.14.3",
     "@opencode-ai/sdk": "^1.15.5",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.6.2",
     "isexe": "^2.0.0",
     "path-key": "^3.1.1",
-    "pdf-lib": "^1.17.1",
     "shebang-command": "^2.0.0",
     "shebang-regex": "^3.0.0",
     "which": "^2.0.2",
@@ -87,7 +87,6 @@
     "lowlight": "^3.3.0",
     "lucide-react": "^0.552.0",
     "mermaid": "^11.15.0",
-    "pdfjs-dist": "^5.7.284",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "tailwind-merge": "^3.3.1",

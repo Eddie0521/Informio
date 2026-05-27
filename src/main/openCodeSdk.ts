@@ -59,6 +59,7 @@ type ActiveRun = {
   partTextById: Map<string, string>;
   permissionById: Map<string, { toolId: string; sessionId: string; directory: string; kind: "permission" | "question"; answers?: string[][] }>;
   hydratedMessageIds: Set<string>;
+  hydratingMessagesById: Map<string, Promise<void>>;
   idlePendingApproval: boolean;
   finalizing: boolean;
   completed: boolean;
@@ -82,6 +83,11 @@ const asString = (value: unknown) => (typeof value === "string" ? value : "");
 const asNumber = (value: unknown) => (typeof value === "number" ? value : undefined);
 const compactJson = (value: unknown) => JSON.stringify(value, null, 2);
 const truncate = (value: string, maxLength = 12000) => (value.length > maxLength ? `${value.slice(0, maxLength)}\n…` : value);
+const jsonIfMeaningful = (value: unknown) => {
+  const record = asRecord(value);
+  if (!Object.keys(record).length) return "";
+  return compactJson(record);
+};
 const partTextDelta = (previous: string, next: string, providedDelta?: string) => {
   if (providedDelta) return providedDelta;
   if (!next) return "";
@@ -117,6 +123,43 @@ const actionLabel = (tool: string, input: Record<string, unknown>, kind: AgentSe
   if (kind === "read") return path ? `读取 ${basename(path)}` : "读文件";
   if (kind === "search") return query ? `搜索 ${query}` : "搜索";
   return tool;
+};
+
+const approvalPayloadRecords = (properties: Record<string, unknown>) => [
+  properties,
+  asRecord(properties.tool),
+  asRecord(properties.input),
+  asRecord(asRecord(properties.tool).input),
+  asRecord(properties.metadata),
+  asRecord(properties.patterns)
+];
+
+const firstPayloadString = (records: Record<string, unknown>[], keys: string[]) => {
+  for (const record of records) {
+    for (const key of keys) {
+      const value = asString(record[key]);
+      if (value) return value;
+    }
+  }
+  return "";
+};
+
+const approvalCommand = (records: Record<string, unknown>[]) =>
+  firstPayloadString(records, ["command", "cmd", "script", "bash"]);
+
+const approvalCwd = (records: Record<string, unknown>[]) =>
+  firstPayloadString(records, ["cwd", "directory", "workdir"]);
+
+const approvalMessage = (properties: Record<string, unknown>) => {
+  const explicit = asString(properties.message) || asString(properties.description);
+  if (explicit) return explicit;
+  const pattern = asString(properties.pattern) || asString(properties.patterns);
+  if (pattern) return `permission: ${asString(properties.permission) || "unknown"}\npattern: ${pattern}`;
+  const metadata = jsonIfMeaningful(properties.metadata);
+  if (metadata) return metadata;
+  const patterns = jsonIfMeaningful(properties.patterns);
+  if (patterns) return patterns;
+  return "";
 };
 
 const summarizePatchFiles = (files: unknown) => {
@@ -372,6 +415,7 @@ export class OpenCodeSdkManager {
         partTextById: new Map(),
         permissionById: new Map(),
         hydratedMessageIds: new Set(),
+        hydratingMessagesById: new Map(),
         idlePendingApproval: false,
         finalizing: false,
         completed: false,
@@ -897,21 +941,27 @@ export class OpenCodeSdkManager {
     const toolInfo = asRecord(properties.tool);
     const callId = asString(properties.callID) || asString(toolInfo.callID) || approvalId;
     const title = asString(properties.title) || asString(properties.permission) || "权限请求";
-    const metadata = properties.metadata ?? properties.patterns ?? {};
+    const payloadRecords = approvalPayloadRecords(properties);
+    const command = approvalCommand(payloadRecords);
+    const cwd = approvalCwd(payloadRecords) || run.directory;
+    const message = approvalMessage(properties);
     run.permissionById.set(approvalId, { toolId: callId, sessionId, directory: run.directory, kind: "permission" });
     run.onEvent({
       type: "approval_request",
       action: {
-        tool: "permission",
+        tool: command ? "bash" : "permission",
         toolId: callId,
-        label: title,
+        label: command ? `命令 ${command}` : title,
         kind: "approval",
         status: "pending",
+        input: command || undefined,
         approval: {
           id: approvalId,
-          kind: "tool",
+          kind: command ? "command" : "tool",
           title,
-          message: compactJson(metadata),
+          message: message || undefined,
+          command: command || undefined,
+          cwd: cwd || undefined,
           availableDecisions: ["accept", "decline"]
         }
       }
@@ -967,20 +1017,28 @@ export class OpenCodeSdkManager {
 
   private async hydrateMessageSnapshot(session: OpenCodeSession, run: ActiveRun, messageId: string) {
     if (run.completed || run.hydratedMessageIds.has(messageId)) return;
-    run.hydratedMessageIds.add(messageId);
-    try {
-      const response = await session.client.session.message({
-        path: { id: run.sessionId, messageID: messageId },
-        query: { directory: session.provider.cwd || process.cwd() }
-      });
-      const data = asRecord(response.data);
-      const parts = Array.isArray(data.parts) ? data.parts : [];
-      for (const part of parts) {
-        this.applyPartUpdate(run, asRecord(part));
+    const existing = run.hydratingMessagesById.get(messageId);
+    if (existing) return existing;
+
+    const hydration = (async () => {
+      try {
+        const response = await session.client.session.message({
+          path: { id: run.sessionId, messageID: messageId },
+          query: { directory: session.provider.cwd || process.cwd() }
+        });
+        const data = asRecord(response.data);
+        const parts = Array.isArray(data.parts) ? data.parts : [];
+        for (const part of parts) {
+          this.applyPartUpdate(run, asRecord(part));
+        }
+        if (!run.completed) run.hydratedMessageIds.add(messageId);
+      } finally {
+        run.hydratingMessagesById.delete(messageId);
       }
-    } catch {
-      run.hydratedMessageIds.delete(messageId);
-    }
+    })();
+
+    run.hydratingMessagesById.set(messageId, hydration);
+    return hydration;
   }
 
   private async finalizeRun(session: OpenCodeSession, run: ActiveRun) {

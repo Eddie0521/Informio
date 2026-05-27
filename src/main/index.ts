@@ -8,38 +8,26 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { PDFDocument, rgb } from "pdf-lib";
 import type {
   ApiModelDetectionInput,
   AgentConversation,
   AppInfo,
   AppData,
   AppSettings,
-  DeletePdfAnnotationInput,
-  DeletePdfAnnotationResult,
-  FindPdfAnnotationInput,
   FileSystemOperationInput,
   InformioDocument,
   InformioFolder,
   InformioProject,
   ListLocalFontsResult,
   LocalFontOption,
-  LoadPdfAnnotationsInput,
-  PdfAnnotation,
   SaveAttachmentInput,
   SaveAttachmentResult,
   SaveAgentConversationsInput,
-  SavePdfAnnotationInput,
-  SavePdfAnnotationResult,
   SaveResult,
   AgentApprovalResponseInput,
   AgentSessionInput,
   SendAgentMessageInput,
-  TranslateSelectionInput,
-  WritePdfAnnotationSourceInput,
-  WritePdfAnnotationSourceResult,
-  WritePdfDocumentBytesInput,
-  WritePdfDocumentBytesResult
+  TranslateSelectionInput
 } from "../shared/types.js";
 import {
   createQuickDocument,
@@ -346,228 +334,6 @@ const pathContains = (folder: string, path: string) => {
   const normalizedFolder = normalizeForCompare(folder);
   const normalizedPath = normalizeForCompare(path);
   return normalizedPath === normalizedFolder || normalizedPath.startsWith(`${normalizedFolder}/`);
-};
-
-type PdfAnnotationStore = {
-  version: 1;
-  annotations: PdfAnnotation[];
-};
-
-const supportedPdfAnnotationTypes = new Set<PdfAnnotation["type"]>(["highlight", "comment", "link"]);
-
-const isSupportedPdfAnnotation = (value: unknown): value is PdfAnnotation => {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<PdfAnnotation>;
-  return (
-    typeof candidate.id === "string" &&
-    typeof candidate.pdfPath === "string" &&
-    typeof candidate.fingerprint === "string" &&
-    typeof candidate.page === "number" &&
-    typeof candidate.text === "string" &&
-    typeof candidate.color === "string" &&
-    Array.isArray(candidate.rects) &&
-    typeof candidate.type === "string" &&
-    supportedPdfAnnotationTypes.has(candidate.type as PdfAnnotation["type"])
-  );
-};
-
-const normalizePdfAnnotationPath = (value: string) => {
-  if (!value.startsWith("local-file://")) return normalizeForCompare(value);
-  return normalizeForCompare(localFilePathCandidates(value)[0] ?? value);
-};
-
-const pdfAnnotationStorePath = (pdfPath: string) => {
-  const normalized = normalizePdfAnnotationPath(pdfPath);
-  const project = appData.projects?.find((item) => pathContains(item.path, normalized));
-  const root = project?.path || dirname(normalized);
-  return join(root, ".informio", "pdf-annotations.json");
-};
-
-const readPdfAnnotationStore = async (pdfPath: string): Promise<PdfAnnotationStore> => {
-  try {
-    const raw = await readFile(pdfAnnotationStorePath(pdfPath), "utf8");
-    const parsed = JSON.parse(raw) as Partial<PdfAnnotationStore>;
-    return {
-      version: 1,
-      annotations: Array.isArray(parsed.annotations) ? parsed.annotations.filter((annotation) => isSupportedPdfAnnotation(annotation)) : []
-    };
-  } catch {
-    return { version: 1, annotations: [] };
-  }
-};
-
-const writePdfAnnotationStore = async (pdfPath: string, store: PdfAnnotationStore) => {
-  const path = pdfAnnotationStorePath(pdfPath);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(store, null, 2), "utf8");
-};
-
-const colorFromHex = (value: string) => {
-  const match = value.trim().match(/^#?([0-9a-f]{6})$/i);
-  const hex = match?.[1] ?? "fde047";
-  return rgb(
-    Number.parseInt(hex.slice(0, 2), 16) / 255,
-    Number.parseInt(hex.slice(2, 4), 16) / 255,
-    Number.parseInt(hex.slice(4, 6), 16) / 255
-  );
-};
-
-const bestEffortWritePdfAnnotationToSource = async (annotation: PdfAnnotation) => {
-  if (annotation.type === "link") {
-    return { attempted: false, ok: true, message: "PDF 与 Markdown 跳转是 Informio 专属数据，已保存在本地标注数据中。" };
-  }
-  if (!PDF_EXTENSIONS.has(extname(annotation.pdfPath).toLowerCase())) {
-    return { attempted: true, ok: false, message: "目标文件不是 PDF，已仅保存到本地标注数据。" };
-  }
-  try {
-    await stat(annotation.pdfPath);
-  } catch {
-    return { attempted: true, ok: false, message: "找不到源 PDF，已仅保存到本地标注数据。" };
-  }
-  try {
-    const bytes = await readFile(annotation.pdfPath);
-    const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
-    const page = pdf.getPage(annotation.page - 1);
-    const { width: pageWidth, height: pageHeight } = page.getSize();
-    const color = colorFromHex(annotation.color);
-    annotation.rects.forEach((rect) => {
-      const x = rect.x * pageWidth;
-      const y = pageHeight - (rect.y + rect.height) * pageHeight;
-      const width = rect.width * pageWidth;
-      const height = rect.height * pageHeight;
-      if (annotation.type === "highlight") {
-        page.drawRectangle({ x, y, width, height, color, opacity: 0.32, borderOpacity: 0 });
-      }
-      if (annotation.type === "comment") {
-        page.drawRectangle({
-          x,
-          y,
-          width,
-          height,
-          color,
-          opacity: 0.18,
-          borderColor: color,
-          borderOpacity: 0.9,
-          borderWidth: 1
-        });
-        page.drawRectangle({
-          x: Math.min(pageWidth - 8, x + width + 2),
-          y: Math.min(pageHeight - 8, y + height - 6),
-          width: 6,
-          height: 6,
-          color,
-          opacity: 0.95
-        });
-      }
-    });
-    await writeFile(annotation.pdfPath, await pdf.save());
-    return {
-      attempted: true,
-      ok: true,
-      message:
-        annotation.type === "comment"
-          ? "批注位置已写回 PDF；批注正文和跳转信息仍保存在 Informio 标注数据中。"
-          : "标注已写回 PDF，并同步保存在 Informio 标注数据中。"
-    };
-  } catch (error) {
-    return {
-      attempted: true,
-      ok: false,
-      message: `源 PDF 写回失败，已保存在本地标注数据中：${error instanceof Error ? error.message : String(error)}`
-    };
-  }
-};
-
-const loadPdfAnnotations = async (input: LoadPdfAnnotationsInput) => {
-  const pdfPath = normalizePdfAnnotationPath(input.pdfPath);
-  const store = await readPdfAnnotationStore(pdfPath);
-  return store.annotations.filter((annotation) => {
-    if (normalizePdfAnnotationPath(annotation.pdfPath) !== pdfPath) return false;
-    return !input.fingerprint || annotation.fingerprint === input.fingerprint;
-  });
-};
-
-const findPdfAnnotation = async (input: FindPdfAnnotationInput): Promise<PdfAnnotation | null> => {
-  const candidatePdfPaths = Array.from(
-    new Set(
-      appData.documents
-        .filter((document) => document.filePath && PDF_EXTENSIONS.has(extname(document.filePath).toLowerCase()))
-        .map((document) => normalizePdfAnnotationPath(document.filePath!))
-    )
-  );
-  for (const pdfPath of candidatePdfPaths) {
-    const store = await readPdfAnnotationStore(pdfPath);
-    const matched = store.annotations.find((annotation) => annotation.id === input.annotationId);
-    if (matched) return matched;
-  }
-  return null;
-};
-
-const savePdfAnnotation = async (input: SavePdfAnnotationInput): Promise<SavePdfAnnotationResult> => {
-  if (!supportedPdfAnnotationTypes.has(input.annotation.type)) {
-    throw new Error("PDF 下划线标注功能已移除，请改用高亮或批注。");
-  }
-  const pdfPath = normalizePdfAnnotationPath(input.annotation.pdfPath);
-  const now = new Date().toISOString();
-  const sourceWrite =
-    input.annotation.type === "link"
-      ? input.annotation.sourceWrite ?? {
-          attempted: false,
-          ok: true,
-          message: "PDF 与 Markdown 跳转是 Informio 专属数据，已保存在本地标注数据中。"
-        }
-      : input.annotation.sourceWrite ??
-        (input.writeToSource
-          ? {
-              attempted: true,
-              ok: false,
-              pending: true,
-              message: "正在后台写回源 PDF。"
-            }
-          : undefined);
-  const annotation: PdfAnnotation = {
-    ...input.annotation,
-    pdfPath,
-    updatedAt: now,
-    createdAt: input.annotation.createdAt || now,
-    sourceWrite
-  };
-  const store = await readPdfAnnotationStore(pdfPath);
-  const nextAnnotations = store.annotations.some((item) => item.id === annotation.id)
-    ? store.annotations.map((item) => (item.id === annotation.id ? annotation : item))
-    : [...store.annotations, annotation];
-  await writePdfAnnotationStore(pdfPath, { version: 1, annotations: nextAnnotations });
-  return { annotation, sourceWrite };
-};
-
-const deletePdfAnnotation = async (input: DeletePdfAnnotationInput): Promise<DeletePdfAnnotationResult> => {
-  const pdfPath = normalizePdfAnnotationPath(input.pdfPath);
-  const store = await readPdfAnnotationStore(pdfPath);
-  const nextAnnotations = store.annotations.filter((item) => {
-    if (item.id !== input.annotationId) return true;
-    if (input.fingerprint && item.fingerprint !== input.fingerprint) return true;
-    return false;
-  });
-  await writePdfAnnotationStore(pdfPath, { version: 1, annotations: nextAnnotations });
-  const sourceWrite = { attempted: false, ok: true };
-  return { annotationId: input.annotationId, sourceWrite };
-};
-
-const writePdfDocumentBytes = async (input: WritePdfDocumentBytesInput): Promise<WritePdfDocumentBytesResult> => {
-  const pdfPath = normalizePdfAnnotationPath(input.pdfPath);
-  if (!PDF_EXTENSIONS.has(extname(pdfPath).toLowerCase())) {
-    throw new Error("目标文件不是 PDF，无法写回。");
-  }
-  await writeFile(pdfPath, Buffer.from(input.bytes));
-  return { ok: true };
-};
-
-const writePdfAnnotationSource = async (input: WritePdfAnnotationSourceInput): Promise<WritePdfAnnotationSourceResult> => {
-  const sourceWrite = await bestEffortWritePdfAnnotationToSource({
-    ...input.annotation,
-    pdfPath: normalizePdfAnnotationPath(input.annotation.pdfPath)
-  });
-  return { sourceWrite };
 };
 
 const createFolderRecord = (path: string, updatedAt = new Date().toISOString()): InformioFolder => ({
@@ -990,14 +756,12 @@ const refreshWorkspaceFromDisk = async (options: { emit?: boolean } = {}) => {
   }
 
   const filePathSet = new Set(allFilePaths);
-  const existingByPath = new Map(appData.documents.filter((document) => document.filePath).map((document) => [document.filePath!, document]));
-  const newPaths = allFilePaths.filter((path) => !existingByPath.has(path));
-  const newDocuments = await readDocumentsFromPaths(newPaths);
+  const refreshedDocuments = await readDocumentsFromPaths(allFilePaths);
   const isInsideTrackedProject = (path: string) => projectPaths.some((projectPath) => pathContains(projectPath, path));
   const nextDocuments = [
-    ...newDocuments,
+    ...refreshedDocuments,
     ...appData.documents
-      .filter((document) => !document.filePath || !isInsideTrackedProject(document.filePath) || filePathSet.has(document.filePath))
+      .filter((document) => !document.filePath || !isInsideTrackedProject(document.filePath))
       .map((document) => (document.filePath ? { ...document, title: basename(document.filePath) } : document))
   ];
   const projectPathSet = new Set(projectPaths.map(normalizeForCompare));
@@ -1259,7 +1023,7 @@ const toggleProjectPinned = async (projectPath: string): Promise<AppData> => {
 const addProjectDialog = async (): Promise<AppData | null> => {
   const window = getFocusedMainWindow();
   if (!window) return null;
-  const result = await dialog.showOpenDialog(window, { properties: ["openDirectory"] });
+  const result = await dialog.showOpenDialog(window, { properties: ["openDirectory", "createDirectory"] });
   if (result.canceled) return null;
   return addProject(result.filePaths[0]);
 };
@@ -1374,7 +1138,13 @@ const createFilesystemFolder = async (folderOverride?: string) => {
   return appData;
 };
 
-const sanitizeFilesystemName = (value: string) => value.replace(/[\\/:*?"<>|]/g, "-").trim();
+const sanitizeFilesystemName = (value: string) =>
+  value
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .trim()
+    .replace(/^_+|_+$/g, "");
 
 const extensionFromMimeType = (mimeType: string) => {
   if (mimeType === "image/jpeg") return ".jpg";
@@ -2153,18 +1923,6 @@ ipcMain.handle("app:insert-asset", async (_event, kind: "image" | "video" | "aud
 ipcMain.handle("app:filesystem-action", async (_event, input: FileSystemOperationInput) => runFileSystemAction(input));
 
 ipcMain.handle("app:save-attachment", async (_event, input: SaveAttachmentInput) => saveAttachment(input));
-
-ipcMain.handle("pdf:load-annotations", async (_event, input: LoadPdfAnnotationsInput) => loadPdfAnnotations(input));
-
-ipcMain.handle("pdf:find-annotation", async (_event, input: FindPdfAnnotationInput) => findPdfAnnotation(input));
-
-ipcMain.handle("pdf:save-annotation", async (_event, input: SavePdfAnnotationInput) => savePdfAnnotation(input));
-
-ipcMain.handle("pdf:delete-annotation", async (_event, input: DeletePdfAnnotationInput) => deletePdfAnnotation(input));
-
-ipcMain.handle("pdf:write-document-bytes", async (_event, input: WritePdfDocumentBytesInput) => writePdfDocumentBytes(input));
-
-ipcMain.handle("pdf:write-annotation-source", async (_event, input: WritePdfAnnotationSourceInput) => writePdfAnnotationSource(input));
 
 ipcMain.handle("app:save-settings", async (_event, settings: AppSettings) => {
   const agentConversations = normalizeAgentConversations(

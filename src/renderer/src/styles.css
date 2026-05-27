@@ -173,6 +173,33 @@ button {
   --editor-font-size: 15px;
   --editor-line-height: 1.62;
   background: var(--surface-editor);
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+  transition: scrollbar-color 160ms ease;
+}
+
+.informio-editor-shell.is-scrolling {
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 72%, transparent) transparent;
+}
+
+.informio-editor-shell::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.informio-editor-shell::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.informio-editor-shell::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-color: transparent;
+  background-clip: content-box;
+}
+
+.informio-editor-shell.is-scrolling::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text-muted) 72%, transparent);
 }
 
 .settings-window {
@@ -1542,152 +1569,65 @@ textarea {
   min-height: 100%;
 }
 
-.informio-pdf-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 14;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 8px 0 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--divider) 92%, transparent);
-  background: color-mix(in srgb, var(--surface-editor) 96%, transparent);
-  box-shadow: none;
-  backdrop-filter: none;
-}
-
-.informio-pdf-toolbar-main,
-.informio-pdf-toolbar-sub,
-.informio-pdf-toolbar-strip,
-.informio-pdf-toolbar-cluster {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.informio-pdf-toolbar-main {
-  justify-content: center;
-}
-
-.informio-pdf-toolbar-strip {
-  width: 100%;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 0 10px;
-}
-
-.informio-pdf-toolbar-cluster {
-  gap: 3px;
-}
-
-.informio-pdf-toolbar-sub {
-  flex-wrap: wrap;
-  justify-content: center;
-  padding: 0 10px;
-}
-
-.informio-pdf-toolbar-divider {
-  width: 1px;
-  height: 24px;
-  background: color-mix(in srgb, var(--divider) 84%, transparent);
-}
-
-.informio-pdf-find-input {
-  min-width: 220px;
-  flex: 1;
-  max-width: 340px;
-  height: 28px;
-  border: 1px solid color-mix(in srgb, var(--divider) 86%, transparent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--surface-panel) 72%, white 28%);
-  padding: 0 10px;
-  color: var(--text-main);
-  font-size: 12px;
-  font-weight: 500;
-  outline: none;
-}
-
-.informio-pdf-find-input:focus {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--divider));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
-}
-
-.informio-pdf-find-status {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.informio-pdf-body {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  gap: 12px;
-}
-
-.informio-pdf-document-frame-shell {
+.informio-embedpdf-shell {
   position: relative;
-  flex: 1;
-  min-height: 0;
-}
-
-.informio-pdf-shell.is-compact .informio-pdf-document-frame-shell {
-  min-height: 520px;
-}
-
-.informio-pdf-corner {
-  position: relative;
-  z-index: 12;
-  margin-bottom: 8px;
-}
-
-.informio-pdf-document-toolbar {
-  position: sticky;
-  top: 8px;
-  display: flex;
-  justify-content: center;
-  margin-bottom: 10px;
-}
-
-.informio-pdf-document-toolbar .informio-pdf-menu-row {
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 0;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--divider) 88%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-elevated) 94%, white 6%);
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.14);
-  backdrop-filter: blur(10px);
-}
-
-.informio-pdf-corner-button {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid color-mix(in srgb, var(--divider) 80%, transparent);
   border-radius: 8px;
-  background: var(--surface-elevated);
-  color: var(--text-muted);
-  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.12);
-  transition:
-    background-color 150ms ease,
-    color 150ms ease,
-    transform 150ms ease,
-    box-shadow 150ms ease;
+  background: var(--surface-editor);
 }
 
-.informio-pdf-corner-button:hover,
-.informio-pdf-corner-button:focus-visible {
-  background: var(--accent);
-  color: white;
-  transform: translateY(-1px);
+.informio-embedpdf-shell.is-full {
+  flex: 1;
+  height: 100%;
+  min-height: calc(100vh - 96px);
+  border: 0;
+  border-radius: 0;
 }
 
-.informio-pdf-corner-button.is-active {
-  background: color-mix(in srgb, var(--accent) 92%, #0f172a 8%);
-  color: white;
+.informio-embedpdf-shell.is-compact {
+  height: min(72vh, 760px);
+}
+
+.informio-embedpdf-viewer,
+.informio-embedpdf-component {
+  min-height: 0;
+  flex: 1;
+}
+
+.informio-embedpdf-viewer {
+  display: flex;
+}
+
+.informio-embedpdf-component {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.informio-embedpdf-component > embedpdf-container {
+  --spacing: 0.22rem;
+  --text-xs: 0.68rem;
+  --text-xs--line-height: 1.25;
+  --text-sm: 0.76rem;
+  --text-sm--line-height: 1.32;
+  --text-base: 0.86rem;
+  --text-base--line-height: 1.4;
+  --default-font-family: var(--informio-font-family);
+  font-size: 12px;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+}
+
+.informio-embedpdf-floating-actions {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 18;
 }
 
 .informio-pdf-menu {
@@ -1744,42 +1684,6 @@ textarea {
   opacity: 0.34;
 }
 
-.informio-pdf-toolbar-meta {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 48px;
-  color: color-mix(in srgb, var(--text-muted) 86%, var(--text-main));
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.informio-pdf-shell .annotationEditorLayer .highlightEditor > .editToolbar {
-  width: max-content;
-  max-width: none;
-  height: auto;
-  min-height: var(--editor-toolbar-height);
-  overflow: visible;
-}
-
-.informio-pdf-shell .annotationEditorLayer .highlightEditor > .editToolbar .buttons {
-  width: max-content;
-  min-width: max-content;
-  height: var(--editor-toolbar-height);
-  flex-wrap: nowrap;
-}
-
-.informio-pdf-shell .annotationEditorLayer .highlightEditor > .editToolbar .buttons > * {
-  flex: 0 0 auto;
-}
-
-.informio-pdf-shell .annotationEditorLayer .highlightEditor > .editToolbar .deleteButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: var(--editor-toolbar-height);
-}
-
 .informio-editor-shell.is-pdf-document .informio-editor {
   min-height: 100%;
   width: 100%;
@@ -1806,162 +1710,6 @@ textarea {
   min-height: 100%;
 }
 
-.informio-pdf-frame {
-  position: absolute;
-  inset: 0;
-  max-height: 80vh;
-  overflow-y: auto;
-  overflow-x: auto;
-  padding: 0;
-  overscroll-behavior: contain;
-  touch-action: pan-x pan-y pinch-zoom;
-}
-
-.informio-pdf-shell.is-compact .informio-pdf-frame {
-  min-height: 520px;
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--surface-elevated) 98%, white 2%);
-}
-
-.informio-pdf-frame-full {
-  height: 100%;
-  min-height: 0;
-  max-height: none;
-}
-
-.informio-editor-shell.is-pdf-document .informio-pdf-frame {
-  width: 100%;
-  height: 100%;
-  min-height: 100%;
-  max-height: none;
-  overflow-y: auto;
-  overflow-x: auto;
-  padding: 0;
-}
-
-.informio-pdf-document-frame {
-  position: absolute;
-  inset: 0;
-  padding-bottom: 24px;
-}
-
-.informio-pdf-document-viewer {
-  position: relative;
-  min-height: 100%;
-}
-
-.informio-pdf-document-viewer.pdfViewer {
-  padding-bottom: 24px;
-}
-
-.informio-pdf-document-viewer .page {
-  margin-bottom: 12px;
-}
-
-.informio-pdf-document-viewer .textLayer ::selection {
-  background: transparent;
-}
-
-.informio-pdf-document-viewer .annotationLayer section,
-.informio-pdf-document-viewer .annotationLayer :is(.linkAnnotation, .buttonWidgetAnnotation.pushButton) > a {
-  pointer-events: none;
-}
-
-.informio-pdf-shell.is-native-highlight-mode .informio-pdf-document-viewer .annotationLayer section,
-.informio-pdf-shell.is-native-highlight-mode .informio-pdf-document-viewer .annotationLayer :is(.linkAnnotation, .buttonWidgetAnnotation.pushButton) > a {
-  pointer-events: auto;
-}
-
-.informio-pdf-overlay-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  pointer-events: none;
-}
-
-.informio-pdf-selection-visual-layer {
-  position: absolute;
-  left: 0;
-  top: 0;
-  z-index: 11;
-  width: 0;
-  height: 0;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.informio-pdf-selection-visual-rect {
-  position: absolute;
-  display: block;
-  border-radius: 2px;
-  background: rgba(37, 99, 235, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.08);
-}
-
-.informio-pdf-content-shell {
-  position: relative;
-  min-width: 100%;
-}
-
-.informio-pdf-content-inner {
-  position: absolute;
-  top: 0;
-  transform-origin: top left;
-  will-change: transform, left, width, height;
-}
-
-.informio-pdf-page-stack {
-  position: relative;
-}
-
-.informio-pdf-page {
-  position: absolute;
-  display: block;
-  overflow: hidden;
-  background: white;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.08);
-}
-
-.informio-pdf-page-surface {
-  position: absolute;
-  inset: 0;
-  transform-origin: top left;
-  will-change: transform;
-}
-
-.informio-pdf-page-surface.is-active {
-  opacity: 1;
-  visibility: visible;
-}
-
-.informio-pdf-page-surface.is-inactive {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.informio-pdf-page-surface.is-inactive,
-.informio-pdf-page-surface.is-inactive .informio-pdf-text-layer,
-.informio-pdf-page-surface.is-inactive .informio-pdf-text-layer :is(span, br) {
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.informio-pdf-page-placeholder {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(248, 250, 252, 0.96));
-}
-
-.informio-pdf-canvas {
-  display: block;
-  max-width: none;
-  background: white;
-}
-
-.informio-pdf-canvas.is-hidden {
-  display: none;
-}
-
 .informio-pdf-message {
   align-self: center;
   justify-self: center;
@@ -1972,230 +1720,6 @@ textarea {
 
 .informio-pdf-message.is-error {
   color: #b91c1c;
-}
-
-.informio-pdf-text-layer {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  opacity: 1;
-  line-height: 1;
-  text-align: initial;
-  text-size-adjust: none;
-  forced-color-adjust: none;
-  transform-origin: 0 0;
-  z-index: 2;
-}
-
-.informio-pdf-text-layer :is(span, br) {
-  position: absolute;
-  color: transparent;
-  white-space: pre;
-  cursor: text;
-  transform-origin: 0% 0%;
-}
-
-.informio-pdf-text-layer ::selection {
-  background: rgba(56, 189, 248, 0.32);
-}
-
-.informio-pdf-annotation-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  pointer-events: none;
-}
-
-.informio-pdf-frame.is-zoom-gesture-active .informio-pdf-text-layer,
-.informio-pdf-frame.is-zoom-gesture-active .informio-pdf-annotation-layer,
-.informio-pdf-frame.is-zoom-gesture-active .informio-pdf-selection-popover {
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.informio-pdf-frame.is-zoom-gesture-active .informio-pdf-text-layer :is(span, br) {
-  cursor: default;
-}
-
-.informio-pdf-annotation {
-  position: absolute;
-  display: block;
-  border-radius: 2px;
-  overflow: visible;
-  pointer-events: none;
-  cursor: pointer;
-}
-
-.informio-pdf-annotation.is-highlight {
-  background: color-mix(in srgb, var(--annotation-color) 48%, transparent);
-}
-
-.informio-pdf-annotation.is-comment,
-.informio-pdf-annotation.is-link {
-  background:
-    linear-gradient(
-      color-mix(in srgb, var(--annotation-color) 86%, #111827 6%),
-      color-mix(in srgb, var(--annotation-color) 86%, #111827 6%)
-    )
-    left calc(100% - 1px) / 100% 2px no-repeat,
-    color-mix(in srgb, var(--annotation-color) 28%, transparent);
-}
-
-.informio-pdf-annotation.is-comment::after {
-  content: "";
-  position: absolute;
-  right: -4px;
-  top: -4px;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--annotation-color) 86%, #111827 8%);
-}
-
-.informio-pdf-annotation.is-focused {
-  outline: 2px solid rgba(16, 185, 129, 0.72);
-  outline-offset: 2px;
-}
-
-.informio-pdf-viewer-hit-region {
-  background: transparent !important;
-  border-bottom-color: transparent !important;
-  opacity: 0;
-}
-
-.informio-pdf-viewer-hit-region.is-focused {
-  opacity: 1;
-}
-
-.informio-pdf-selection-popover {
-  position: absolute;
-  z-index: 12;
-  display: grid;
-  gap: 8px;
-  width: max-content;
-  min-width: 0;
-  max-width: min(360px, calc(100% - 16px));
-  padding: 8px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.08);
-  backdrop-filter: blur(12px);
-  transform: translateX(-50%);
-}
-
-.informio-pdf-selection-popover:has(.informio-pdf-translate-panel) {
-  width: min(360px, calc(100% - 16px));
-}
-
-.informio-pdf-translate-panel {
-  max-height: 224px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  border-radius: 10px;
-  background: #f8fafc;
-  padding: 10px 12px;
-  color: var(--text-main);
-  font-size: 12px;
-  line-height: 1.55;
-  user-select: text;
-  cursor: text;
-}
-
-.informio-pdf-translate-panel.is-error {
-  background: #fef2f2;
-  color: #b91c1c;
-}
-
-.informio-pdf-selection-popover button {
-  height: 24px;
-  border-radius: 5px;
-  padding: 0 7px;
-  color: #475569;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.informio-pdf-selection-popover button:hover:not(:disabled) {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-
-.informio-pdf-selection-popover button:disabled {
-  cursor: not-allowed;
-  opacity: 0.35;
-}
-
-.informio-pdf-selection-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.informio-pdf-action-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.informio-pdf-toolbar-button {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: 7px;
-  color: #475569;
-}
-
-.informio-pdf-toolbar-button:hover:not(:disabled) {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-
-.informio-pdf-toolbar-button.is-active {
-  background: #e2e8f0;
-  color: #0f172a;
-}
-
-.informio-pdf-inline-form {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.informio-pdf-inline-input {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  border: 1px solid rgba(148, 163, 184, 0.5);
-  border-radius: 7px;
-  padding: 0 10px;
-  color: #0f172a;
-  font-size: 12px;
-  background: rgba(248, 250, 252, 0.92);
-}
-
-.informio-pdf-inline-input:focus {
-  outline: none;
-  border-color: rgba(16, 185, 129, 0.7);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16);
-}
-
-.informio-pdf-notice {
-  position: sticky;
-  top: 8px;
-  z-index: 15;
-  max-width: min(620px, calc(100% - 24px));
-  align-self: center;
-  border-radius: 8px;
-  background: rgba(255, 247, 237, 0.96);
-  padding: 8px 10px;
-  color: #9a3412;
-  font-size: 12px;
-  line-height: 1.5;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(251, 146, 60, 0.22);
 }
 
 .informio-details-block summary {
@@ -2330,21 +1854,6 @@ textarea {
     font-size: 34px;
   }
 
-  .informio-pdf-body {
-    flex-direction: column;
-  }
-
-  .informio-pdf-toolbar-main {
-    align-items: stretch;
-  }
-
-  .informio-pdf-toolbar-strip {
-    width: 100%;
-  }
-
-  .informio-pdf-find-input {
-    min-width: 0;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -4,12 +4,8 @@ import type {
   AgentSessionInput,
   AppData,
   AppSettings,
-  DeletePdfAnnotationInput,
-  FindPdfAnnotationInput,
   InformioDocument,
-  LoadPdfAnnotationsInput,
   SaveAgentConversationsInput,
-  SavePdfAnnotationInput,
   SendAgentMessageInput
 } from "../../shared/types";
 import type { InformioApi } from "../../preload";
@@ -326,42 +322,13 @@ export function installDemoApi() {
       path: `/Users/acumen7/Documents/Informio Quick Notes/attachment/${input.fileName}`,
       fileName: input.fileName
     }),
-    loadPdfAnnotations: async (_input: LoadPdfAnnotationsInput) => [],
-    findPdfAnnotation: async (_input: FindPdfAnnotationInput) => null,
-    savePdfAnnotation: async (input: SavePdfAnnotationInput) => ({
-      annotation: {
-        ...input.annotation,
-        sourceWrite:
-          input.annotation.sourceWrite ??
-          (input.writeToSource
-            ? { attempted: true, ok: false, pending: true, message: "浏览器预览不会修改本地 PDF；Electron 中会在后台写回源文件。" }
-            : undefined)
-      },
-      sourceWrite:
-        input.annotation.sourceWrite ??
-        (input.writeToSource
-          ? { attempted: true, ok: false, pending: true, message: "浏览器预览不会修改本地 PDF；Electron 中会在后台写回源文件。" }
-          : undefined)
-    }),
-    deletePdfAnnotation: async (input: DeletePdfAnnotationInput) => ({
-      annotationId: input.annotationId,
-      sourceWrite: { attempted: false, ok: true }
-    }),
-    writePdfDocumentBytes: async () => ({ ok: false }),
-    writePdfAnnotationSource: async () => ({
-      sourceWrite: {
-        attempted: true,
-        ok: false,
-        message: "浏览器预览不会修改本地 PDF；Electron 中会在后台写回源文件。"
-      }
-    }),
     saveSettings: async (settings: AppSettings) => {
       state = { ...state, settings };
       return state.settings;
     },
     getAppInfo: async () => ({
       name: "Informio",
-      version: "0.1.2",
+      version: "1.0.3",
       githubUrl: ""
     }),
     saveDocuments: async (documents: InformioDocument[], activeDocumentId: string) => {

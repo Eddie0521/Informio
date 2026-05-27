@@ -20,6 +20,16 @@ export type InformioDocument = {
   pinned?: boolean;
 };
 
+export type DocumentConflict = {
+  documentId: string;
+  filePath: string;
+  baseMarkdown?: string;
+  localMarkdown: string;
+  externalMarkdown: string;
+  detectedAt: string;
+  externalUpdatedAt?: string;
+};
+
 export type InformioFolder = {
   id: string;
   title: string;
@@ -280,100 +290,11 @@ export type AgentSessionContext = {
   }>;
 };
 
-export type PdfAnnotationType = "highlight" | "comment" | "link";
-
-export type PdfAnnotationRect = {
+export type PdfSelectionRect = {
   x: number;
   y: number;
   width: number;
   height: number;
-};
-
-export type PdfMarkdownTarget = {
-  documentId: string;
-  title: string;
-  filePath?: string;
-  from?: number;
-  to?: number;
-  text?: string;
-};
-
-export type PdfAnnotation = {
-  id: string;
-  pdfPath: string;
-  fingerprint: string;
-  page: number;
-  type: PdfAnnotationType;
-  color: string;
-  rects: PdfAnnotationRect[];
-  text: string;
-  comment?: string;
-  markdownTarget?: PdfMarkdownTarget;
-  sourceAnnotationId?: string;
-  createdAt: string;
-  updatedAt: string;
-  sourceWrite?: {
-    attempted: boolean;
-    ok: boolean;
-    pending?: boolean;
-    message?: string;
-  };
-};
-
-export type PdfAnnotationSelection = {
-  pdfPath: string;
-  fingerprint: string;
-  title: string;
-  page: number;
-  text: string;
-  rects: PdfAnnotationRect[];
-};
-
-export type LoadPdfAnnotationsInput = {
-  pdfPath: string;
-  fingerprint?: string;
-};
-
-export type FindPdfAnnotationInput = {
-  annotationId: string;
-};
-
-export type SavePdfAnnotationInput = {
-  annotation: PdfAnnotation;
-  writeToSource: boolean;
-};
-
-export type SavePdfAnnotationResult = {
-  annotation: PdfAnnotation;
-  sourceWrite?: PdfAnnotation["sourceWrite"];
-};
-
-export type DeletePdfAnnotationInput = {
-  pdfPath: string;
-  fingerprint?: string;
-  annotationId: string;
-};
-
-export type DeletePdfAnnotationResult = {
-  annotationId: string;
-  sourceWrite?: PdfAnnotation["sourceWrite"];
-};
-
-export type WritePdfDocumentBytesInput = {
-  pdfPath: string;
-  bytes: Uint8Array;
-};
-
-export type WritePdfDocumentBytesResult = {
-  ok: boolean;
-};
-
-export type WritePdfAnnotationSourceInput = {
-  annotation: PdfAnnotation;
-};
-
-export type WritePdfAnnotationSourceResult = {
-  sourceWrite: PdfAnnotation["sourceWrite"];
 };
 
 export type AgentContextSelection =
@@ -391,7 +312,7 @@ export type AgentContextSelection =
       filePath?: string;
       page: number;
       text: string;
-      rects: PdfAnnotationRect[];
+      rects: PdfSelectionRect[];
     };
 
 export type AgentSessionInput = {
