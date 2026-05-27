@@ -21,13 +21,7 @@
 </p>
 
 <p align="center">
-  <a href="./docs/assets/demo_informio.mp4">
-    <img src="./docs/assets/demo_informio_preview.jpg" alt="查看 Informio 演示视频" />
-  </a>
-</p>
-
-<p align="center">
-  <a href="./docs/assets/demo_informio.mp4"><strong>查看演示视频</strong></a>
+  <img src="./docs/assets/image_informio.png" alt="Informio 界面预览" />
 </p>
 
 ## Features
@@ -37,10 +31,6 @@
 - **安全**：Local-first，无数据收集。通过口令锁定敏感笔记，让 Agent 能使用工作所需上下文，同时避免浏览你的私人内容。
 - **简单**：无数据库，无复杂引导。打开 Informio，导入项目，直接开始工作。Informio 完全依赖本地安装的 Agent，最大程度复用用户原本的设置。
 - **适合研究整理**：PDF 预览高亮、Markdown 编辑记录、Agent 直接看到完整上下文，让阅读、记录和后续执行连在一起。
-
-<p align="center">
-  <img src="./docs/assets/image_informio.png" alt="Informio 界面预览" />
-</p>
 
 ## Installation
 

@@ -21,13 +21,7 @@
 </p>
 
 <p align="center">
-  <a href="./docs/assets/demo_informio.mp4">
-    <img src="./docs/assets/demo_informio_preview.jpg" alt="Watch the Informio demo video" />
-  </a>
-</p>
-
-<p align="center">
-  <a href="./docs/assets/demo_informio.mp4"><strong>Watch demo video</strong></a>
+  <img src="./docs/assets/image_informio.png" alt="Informio interface preview" />
 </p>
 
 ## Features
@@ -37,10 +31,6 @@
 - **Safe**: Local-first, no data collection. Lock sensitive notes with a passphrase, so Agents can use the context they need while private content stays out of view.
 - **Simple**: No database, no complex guidance. Open Informio, import your project, start your work. Informio relies on locally installed Agents and reuses the setup you already have.
 - **Research-friendly**: Preview and highlight PDFs, keep Markdown records, and let Agents see the full working context directly.
-
-<p align="center">
-  <img src="./docs/assets/image_informio.png" alt="Informio interface preview" />
-</p>
 
 ## Installation
 
