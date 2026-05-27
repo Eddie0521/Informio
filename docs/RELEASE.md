@@ -61,6 +61,7 @@ Each runner:
 3. builds the Electron app
 4. packages its own platform
 5. uploads artifacts to the workflow run
+6. attaches all platform artifacts to the tagged GitHub Release
 
 ## Local Environment Notes
 
@@ -89,7 +90,7 @@ Exact filenames depend on version, OS, and architecture.
 2. Run a local validation build for the platform you are currently using.
 3. Create and push a Git tag such as `v1.0.3`.
 4. Let GitHub Actions build macOS, Windows, and Linux artifacts.
-5. Download the generated artifacts from the workflow run or attach them to a GitHub Release.
+5. Confirm the tagged GitHub Release contains the generated `.dmg`, `.zip`, `.exe`, and `.AppImage` assets.
 
 ## User-Facing Notes
 

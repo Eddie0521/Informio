@@ -17,11 +17,11 @@ jobs:
         include:
           - os: macos-15
             platform: mac
-            command: node scripts/run-electron-builder.cjs --mac dmg zip -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --publish always --config electron-builder.config.ts
+            command: node scripts/run-electron-builder.cjs --mac dmg zip -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --config electron-builder.config.ts
             artifact_glob: release/*mac*
           - os: windows-2025
             platform: win
-            command: node scripts/run-electron-builder.cjs --win nsis --publish always --config electron-builder.config.ts
+            command: node scripts/run-electron-builder.cjs --win nsis --config electron-builder.config.ts
             artifact_glob: release/*win*
 
     runs-on: ${{ matrix.os }}
@@ -51,8 +51,6 @@ jobs:
         run: pnpm build
 
       - name: Package desktop app
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ${{ matrix.command }}
 
       - name: Upload workflow artifacts
@@ -93,9 +91,7 @@ jobs:
         run: pnpm build
 
       - name: Package desktop app
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/run-electron-builder.cjs --linux AppImage --x64 --publish always --config electron-builder.config.ts
+        run: node scripts/run-electron-builder.cjs --linux AppImage --x64 --config electron-builder.config.ts
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -104,7 +100,7 @@ jobs:
           path: release/*.AppImage
           if-no-files-found: error
 
-  publish-linux-release:
+  publish-release:
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/')
     needs:
@@ -112,15 +108,16 @@ jobs:
       - build-linux
 
     steps:
-      - name: Download Linux artifacts
+      - name: Download desktop artifacts
         uses: actions/download-artifact@v4
         with:
-          name: informio-linux
+          pattern: informio-*
           path: release
+          merge-multiple: true
 
-      - name: Upload Linux assets to GitHub Release
+      - name: Upload desktop assets to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            release/*.AppImage
+            release/*
