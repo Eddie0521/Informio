@@ -542,6 +542,7 @@ textarea {
 .informio-code-block textarea,
 .informio-source-block textarea {
   display: block;
+  box-sizing: border-box;
   width: 100%;
   min-height: 1.55em;
   resize: none;

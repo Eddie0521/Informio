@@ -319,8 +319,9 @@ export function installDemoApi() {
     insertAsset: async () => undefined,
     runFileSystemAction: async () => state,
     saveAttachment: async (input) => ({
-      path: `/Users/acumen7/Documents/Informio Quick Notes/attachment/${input.fileName}`,
-      fileName: input.fileName
+      path: `/Users/acumen7/Documents/Informio Quick Notes/attachments/${input.fileName}`,
+      fileName: input.fileName,
+      markdownPath: `attachments/${input.fileName}`
     }),
     saveSettings: async (settings: AppSettings) => {
       state = { ...state, settings };

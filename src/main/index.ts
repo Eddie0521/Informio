@@ -5,7 +5,7 @@ import { existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import type {
@@ -68,6 +68,7 @@ const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
 const PDF_EXTENSIONS = new Set([".pdf"]);
 const EXTERNAL_MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
 const DEFAULT_WORKSPACE_PATH = join(homedir(), "Documents", "Informio Quick Notes");
+const ATTACHMENTS_DIR = "attachments";
 const execFileAsync = promisify(execFile);
 let localFontsCache: ListLocalFontsResult | null = null;
 
@@ -423,12 +424,12 @@ const replaceWikiLinkTargets = (markdown: string, oldTitle: string, newTitle: st
     return normalizeLinkTitle(target) === normalizeLinkTitle(oldTitle) ? `[[${newTitle}${alias ? `|${alias}` : ""}]]` : match;
   });
 
-const replaceLocalFileUrls = (markdown: string, resolveNextPath: (path: string) => string | null) =>
+const replaceLocalFileUrls = (markdown: string, documentFolder: string | undefined, resolveNextPath: (path: string) => string | null) =>
   markdown.replace(/local-file:\/\/[^\s)"'>]+/g, (value) => {
     for (const candidate of localFilePathCandidates(value)) {
       const nextPath = resolveNextPath(candidate);
       if (!nextPath || normalizeForCompare(nextPath) === normalizeForCompare(candidate)) continue;
-      return localFileUrl(nextPath);
+      return documentFolder ? markdownPathForFile(documentFolder, nextPath) : encodeURI(basename(nextPath));
     }
     return value;
   });
@@ -451,6 +452,132 @@ const uniquePath = async (folder: string, baseName: string, extension = ".md") =
   }
   return join(folder, `${cleanName}-${Date.now()}${extension}`);
 };
+
+const markdownPathForFile = (documentFolder: string, filePath: string) => {
+  const relativePath = relative(documentFolder, filePath).replace(/\\/g, "/");
+  return encodeURI(relativePath.startsWith(".") ? relativePath : relativePath || basename(filePath));
+};
+
+const markdownLink = (label: string, href: string) => `[${label.replace(/[\[\]\n]/g, " ").trim() || basename(href)}](${href})`;
+
+const markdownImage = (alt: string, href: string) => `![${alt.replace(/[\[\]\n]/g, " ").trim()}](${href})`;
+
+const parseHtmlAttr = (attributes: string, name: string) => {
+  const pattern = new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
+  const match = attributes.match(pattern);
+  return (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim();
+};
+
+const decodeHtmlEntities = (value: string) =>
+  value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number.parseInt(dec, 10)));
+
+const stripHtml = (value: string) => decodeHtmlEntities(value.replace(/<[^>]+>/g, "")).trim();
+
+const cleanAttachmentName = (filePath: string) => {
+  const extension = extname(filePath);
+  const baseName =
+    basename(filePath, extension)
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, "_")
+      .replace(/_+/g, "_")
+      .trim()
+      .replace(/^_+|_+$/g, "")
+    || `attachment-${Date.now()}`;
+  return { baseName, extension: extension || ".bin" };
+};
+
+const ensureAttachmentReference = async (documentFolder: string | undefined, source: string, fallbackName = "Attachment") => {
+  if (!source.trim()) return encodeURI(fallbackName);
+  if (!source.startsWith("local-file://")) return source;
+  if (!documentFolder) return encodeURI(basename(localFilePathCandidates(source)[0] ?? fallbackName));
+
+  const existingPath = localFilePathCandidates(source).find((candidate) => existsSync(candidate));
+  if (!existingPath) return encodeURI(basename(localFilePathCandidates(source)[0] ?? fallbackName));
+
+  const attachmentFolder = join(documentFolder, ATTACHMENTS_DIR);
+  await mkdir(attachmentFolder, { recursive: true });
+  const { baseName, extension } = cleanAttachmentName(existingPath);
+  const targetPath = await uniquePath(attachmentFolder, baseName, extension);
+  if (normalizeForCompare(existingPath) !== normalizeForCompare(targetPath)) await cp(existingPath, targetPath);
+  return markdownPathForFile(documentFolder, targetPath);
+};
+
+const backupMarkdownFile = async (path: string) => {
+  const backupPath = await uniquePath(dirname(path), `${basename(path)}.informio-clean-backup`, "");
+  await cp(path, backupPath);
+};
+
+const cleanMarkdownStorage = async (markdown: string, documentFolder?: string) => {
+  let cleaned = markdown;
+  cleaned = cleaned.replace(/<span\b(?=[^>]*\bdata-text-color=)[^>]*>([\s\S]*?)<\/span>/gi, (_, content: string) => decodeHtmlEntities(content));
+  cleaned = cleaned.replace(/<span\b(?=[^>]*\bstyle=["'][^"']*\bcolor\s*:)[^>]*>([\s\S]*?)<\/span>/gi, (_, content: string) => decodeHtmlEntities(content));
+
+  const replaceAsync = async (input: string, pattern: RegExp, replacer: (...args: string[]) => Promise<string>) => {
+    const matches = Array.from(input.matchAll(pattern));
+    if (!matches.length) return input;
+    let output = "";
+    let cursor = 0;
+    for (const match of matches) {
+      output += input.slice(cursor, match.index);
+      output += await replacer(...(match as unknown as string[]));
+      cursor = (match.index ?? 0) + match[0].length;
+    }
+    return output + input.slice(cursor);
+  };
+
+  cleaned = await replaceAsync(cleaned, /<iframe\b([^>]*)><\/iframe>/gi, async (raw, attrs) => {
+    if (parseHtmlAttr(attrs, "data-type") !== "pdf") return raw;
+    const src = await ensureAttachmentReference(documentFolder, parseHtmlAttr(attrs, "src"), parseHtmlAttr(attrs, "title") || "PDF");
+    return markdownLink(stripHtml(parseHtmlAttr(attrs, "title") || "PDF"), src);
+  });
+
+  cleaned = await replaceAsync(cleaned, /<(video|audio)\b([^>]*)><\/\1>/gi, async (raw, kind, attrs) => {
+    const src = await ensureAttachmentReference(documentFolder, parseHtmlAttr(attrs, "src"), parseHtmlAttr(attrs, "title") || kind);
+    return markdownLink(stripHtml(parseHtmlAttr(attrs, "title") || kind), src);
+  });
+
+  cleaned = await replaceAsync(cleaned, /<img\b([^>]*?)\/?>/gi, async (raw, attrs) => {
+    const src = await ensureAttachmentReference(documentFolder, parseHtmlAttr(attrs, "src"), parseHtmlAttr(attrs, "alt") || "image");
+    return markdownImage(stripHtml(parseHtmlAttr(attrs, "alt") || parseHtmlAttr(attrs, "title") || ""), src);
+  });
+
+  cleaned = await replaceAsync(cleaned, /local-file:\/\/[^\s)"'>]+/g, async (raw) => ensureAttachmentReference(documentFolder, raw));
+  cleaned = cleaned.replace(/<aside\b(?=[^>]*data-type=["']callout-block["'])[^>]*>\s*<strong[^>]*>([\s\S]*?)<\/strong>\s*<p[^>]*>([\s\S]*?)<\/p>\s*<\/aside>/gi, (_, title: string, body: string) => {
+    const lines = stripHtml(body).split("\n").map((line) => `> ${line}`.trimEnd()).join("\n");
+    return `> [!${stripHtml(title).toUpperCase() || "NOTE"}]\n${lines}`;
+  });
+  cleaned = cleaned.replace(/<section\b(?=[^>]*data-type=["']footnote-block["'])[^>]*>\s*<sup[^>]*>([\s\S]*?)<\/sup>\s*<span[^>]*>([\s\S]*?)<\/span>\s*<\/section>/gi, (_, index: string, body: string) => {
+    return `[^${stripHtml(index) || "1"}]: ${stripHtml(body)}`;
+  });
+  cleaned = cleaned.replace(/^<details(?:\s[^>]*)?>\s*<summary>([\s\S]*?)<\/summary>\s*([\s\S]*?)\s*<\/details>\s*$/gim, (_, summary: string, body: string) => {
+    const lines = stripHtml(body).split("\n").map((line) => `> ${line}`.trimEnd()).join("\n");
+    return `> [!note]- ${stripHtml(summary) || "Summary"}\n${lines}`;
+  });
+
+  return cleaned;
+};
+
+const cleanDocumentMarkdown = async (document: InformioDocument, options: { writeFile?: boolean } = {}) => {
+  if (!isWritableTextDocument(document)) return document;
+  const documentFolder = document.filePath ? dirname(document.filePath) : appData?.workspacePath || appData?.settings?.shortcuts.quickFolder;
+  const markdown = await cleanMarkdownStorage(document.markdown, documentFolder);
+  if (markdown === document.markdown) return document;
+  if (options.writeFile && document.filePath) {
+    await backupMarkdownFile(document.filePath);
+    await saveMarkdownFile(document.filePath, markdown);
+  }
+  return { ...document, markdown, updatedAt: new Date().toISOString() };
+};
+
+const cleanDocumentsMarkdown = async (documents: InformioDocument[], options: { writeFiles?: boolean } = {}) =>
+  Promise.all(documents.map((document) => cleanDocumentMarkdown(document, { writeFile: options.writeFiles })));
 
 const localDateStamp = () => {
   const date = new Date();
@@ -599,8 +726,6 @@ const exportHtmlToPdf = async (outputPath: string, html: string) => {
   }
 };
 
-const localFileUrl = (path: string) => `local-file://${encodeURI(path.replace(/\\/g, "/"))}`;
-
 const localFilePathCandidates = (url: string) => {
   try {
     const parsed = new URL(url);
@@ -613,20 +738,24 @@ const localFilePathCandidates = (url: string) => {
   }
 };
 
-const pdfMarkdown = (path: string) =>
-  `<iframe data-type="pdf" src="${localFileUrl(path)}" title="${escapeHtml(basename(path))}"></iframe>`;
+const documentFolderForPath = (path: string) => dirname(path);
 
-const generatedMarkdownForAssetPath = (path: string) => {
+const markdownPathFromDocumentPath = (documentPath: string, assetPath: string) =>
+  markdownPathForFile(documentFolderForPath(documentPath), assetPath);
+
+const pdfMarkdown = (path: string, documentPath = path) =>
+  markdownLink(basename(path), markdownPathFromDocumentPath(documentPath, path));
+
+const generatedMarkdownForAssetPath = (path: string, documentPath = path) => {
   const ext = extname(path).toLowerCase();
-  if (IMAGE_EXTENSIONS.has(ext)) return `![${basename(path)}](${localFileUrl(path)})`;
-  if (VIDEO_EXTENSIONS.has(ext)) return `<video controls src="${localFileUrl(path)}" title="${escapeHtml(basename(path))}"></video>`;
-  if (AUDIO_EXTENSIONS.has(ext)) return `<audio controls src="${localFileUrl(path)}" title="${escapeHtml(basename(path))}"></audio>`;
-  if (PDF_EXTENSIONS.has(ext)) return pdfMarkdown(path);
+  const href = markdownPathFromDocumentPath(documentPath, path);
+  if (IMAGE_EXTENSIONS.has(ext)) return markdownImage(basename(path), href);
+  if (VIDEO_EXTENSIONS.has(ext) || AUDIO_EXTENSIONS.has(ext) || PDF_EXTENSIONS.has(ext)) return markdownLink(basename(path), href);
   return null;
 };
 
 const withUpdatedLocalFileUrls = (document: InformioDocument, resolveNextPath: (path: string) => string | null) => {
-  const markdown = replaceLocalFileUrls(document.markdown, resolveNextPath);
+  const markdown = replaceLocalFileUrls(document.markdown, document.filePath ? dirname(document.filePath) : undefined, resolveNextPath);
   return markdown === document.markdown
     ? document
     : { ...document, markdown, updatedAt: new Date().toISOString() };
@@ -650,16 +779,23 @@ const readDocumentsFromPaths = async (paths: string[]) => {
           const isAudio = AUDIO_EXTENSIONS.has(ext);
           const isPdf = PDF_EXTENSIONS.has(ext);
           let markdown: string;
+          let sourceMarkdown: string | null = null;
           if (isImage) {
-            markdown = `![${basename(path)}](${localFileUrl(path)})`;
+            markdown = generatedMarkdownForAssetPath(path) ?? "";
           } else if (isVideo) {
-            markdown = `<video controls src="${localFileUrl(path)}" title="${escapeHtml(basename(path))}"></video>`;
+            markdown = generatedMarkdownForAssetPath(path) ?? "";
           } else if (isAudio) {
-            markdown = `<audio controls src="${localFileUrl(path)}" title="${escapeHtml(basename(path))}"></audio>`;
+            markdown = generatedMarkdownForAssetPath(path) ?? "";
           } else if (isPdf) {
             markdown = pdfMarkdown(path);
           } else {
             markdown = await readFile(path, "utf8");
+            sourceMarkdown = markdown;
+          }
+          markdown = await cleanMarkdownStorage(markdown, dirname(path));
+          if (sourceMarkdown !== null && markdown !== sourceMarkdown) {
+            await backupMarkdownFile(path);
+            await saveMarkdownFile(path, markdown);
           }
           return {
             id: existing?.id ?? `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -1161,7 +1297,7 @@ const saveAttachment = async (input: SaveAttachmentInput): Promise<SaveAttachmen
   const documentFolder = doc?.filePath ? dirname(doc.filePath) : (appData.workspacePath || appData.settings.shortcuts.quickFolder);
   if (!documentFolder) throw new Error("No folder is available for this document.");
 
-  const attachmentFolder = join(documentFolder, "attachment");
+  const attachmentFolder = join(documentFolder, ATTACHMENTS_DIR);
   await mkdir(attachmentFolder, { recursive: true });
 
   const requestedExtension = extname(input.fileName);
@@ -1176,7 +1312,7 @@ const saveAttachment = async (input: SaveAttachmentInput): Promise<SaveAttachmen
   });
   emitAppData();
 
-  return { path, fileName: basename(path) };
+  return { path, fileName: basename(path), markdownPath: markdownPathForFile(documentFolder, path) };
 };
 
 const copyAttachmentFromPath = async (sourcePath: string): Promise<SaveAttachmentResult> => {
@@ -1184,7 +1320,7 @@ const copyAttachmentFromPath = async (sourcePath: string): Promise<SaveAttachmen
   const documentFolder = doc?.filePath ? dirname(doc.filePath) : (appData.workspacePath || appData.settings.shortcuts.quickFolder);
   if (!documentFolder) throw new Error("No folder is available for this document.");
 
-  const attachmentFolder = join(documentFolder, "attachment");
+  const attachmentFolder = join(documentFolder, ATTACHMENTS_DIR);
   await mkdir(attachmentFolder, { recursive: true });
 
   const extension = extname(sourcePath) || ".png";
@@ -1198,19 +1334,13 @@ const copyAttachmentFromPath = async (sourcePath: string): Promise<SaveAttachmen
   });
   emitAppData();
 
-  return { path, fileName: basename(path) };
+  return { path, fileName: basename(path), markdownPath: markdownPathForFile(documentFolder, path) };
 };
 
 const resolveInsertedAssetFromPath = async (
   sourcePath: string,
-  mode: AppSettings["editor"]["assetImportMode"]
+  _mode: AppSettings["editor"]["assetImportMode"]
 ): Promise<SaveAttachmentResult> => {
-  if (mode === "link-original-file") {
-    return {
-      path: sourcePath,
-      fileName: basename(sourcePath)
-    };
-  }
   return copyAttachmentFromPath(sourcePath);
 };
 
@@ -1466,7 +1596,7 @@ const runFileSystemAction = async (input: FileSystemOperationInput): Promise<App
 
 const syncRendererDocuments = async (documents?: InformioDocument[], activeDocumentId?: string) => {
   if (!documents) return;
-  const mergedDocuments = mergeRendererDocuments(documents);
+  const mergedDocuments = await cleanDocumentsMarkdown(mergeRendererDocuments(documents));
   appData = await saveAppData({
     ...appData,
     documents: mergedDocuments,
@@ -1557,24 +1687,7 @@ const insertAsset = async (kind: "image" | "video" | "audio" | "pdf") => {
   });
   if (result.canceled) return;
   const attachment = await resolveInsertedAssetFromPath(result.filePaths[0], appData.settings.editor.assetImportMode);
-
-  if (kind === "video" || kind === "audio") {
-    const docMarkdown = kind === "video"
-      ? `<video controls src="${localFileUrl(attachment.path)}" title="${escapeHtml(attachment.fileName)}"></video>`
-      : `<audio controls src="${localFileUrl(attachment.path)}" title="${escapeHtml(attachment.fileName)}"></audio>`;
-    const document: InformioDocument = {
-      id: `media-${Date.now()}`,
-      title: attachment.fileName,
-      filePath: attachment.path,
-      collection: "writing",
-      updatedAt: new Date().toISOString(),
-      markdown: docMarkdown
-    };
-    appData = await saveAppData({ ...appData, documents: [document, ...appData.documents] });
-    updateApplicationMenu();
-  }
-
-  sendMenuCommand("insert:asset", { kind, path: attachment.path, name: attachment.fileName });
+  sendMenuCommand("insert:asset", { kind, path: attachment.markdownPath, name: attachment.fileName });
 };
 
 const handleWindowAction = (action: "fill" | "center" | "move-left" | "move-right" | "move-top" | "move-bottom" | "tile-left" | "tile-right") => {
@@ -1835,6 +1948,10 @@ app.whenReady().then(async () => {
   });
 
   appData = await loadAppData();
+  appData = await saveAppData({
+    ...appData,
+    documents: await cleanDocumentsMarkdown(appData.documents, { writeFiles: true })
+  });
   appDataLoaded = true;
   const startupFolder = appData.settings.shortcuts.quickFolder || appData.workspacePath || DEFAULT_WORKSPACE_PATH;
   appData = await saveAppData({
@@ -1954,7 +2071,7 @@ ipcMain.handle("app:save-documents", async (_event, _documents: InformioDocument
 });
 
 ipcMain.handle("app:save-now", async (_event, documents: InformioDocument[], activeDocumentId: string): Promise<SaveResult> => {
-  const mergedDocuments = mergeRendererDocuments(documents);
+  const mergedDocuments = await cleanDocumentsMarkdown(mergeRendererDocuments(documents));
   appData = await saveAppDataAndFiles({
     ...appData,
     documents: mergedDocuments,

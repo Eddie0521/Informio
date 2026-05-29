@@ -10,7 +10,7 @@ import type {
   WheelEvent as ReactWheelEvent
 } from "react";
 import type { Editor, MarkdownParseHelpers, MarkdownRendererHelpers } from "@tiptap/core";
-import { Extension, InputRule, Mark, mergeAttributes, Node, ResizableNodeView } from "@tiptap/core";
+import { Extension, InputRule, mergeAttributes, Node, ResizableNodeView } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { EditorContent, NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
@@ -319,7 +319,7 @@ const SECRET_ITERATIONS = 210000;
 const SECRET_ALGORITHM = "aes-gcm";
 const SECRET_KDF = "pbkdf2-sha256";
 
-type SidebarMode = "files" | "outline" | "properties";
+type SidebarMode = "files";
 
 type OutlineItem = {
   id: string;
@@ -654,22 +654,6 @@ const renderImageMarkdown = (attrs: { src?: string | null; alt?: string | null; 
   const src = attrs.src ?? "";
   const alt = attrs.alt ?? "";
   const title = attrs.title ?? "";
-  const width =
-    typeof attrs.width === "number"
-      ? Math.round(attrs.width)
-      : typeof attrs.width === "string" && attrs.width.trim()
-        ? Math.round(Number(attrs.width))
-        : null;
-
-  if (Number.isFinite(width) && width && width > 0) {
-    const attrPairs = [
-      `src="${escapeHtml(src)}"`,
-      alt ? `alt="${escapeHtml(alt)}"` : "",
-      title ? `title="${escapeHtml(title)}"` : "",
-      `width="${width}"`
-    ].filter(Boolean);
-    return `<img ${attrPairs.join(" ")} />`;
-  }
 
   return title ? `![${alt}](${src} "${title}")` : `![${alt}](${src})`;
 };
@@ -1191,11 +1175,6 @@ type SelectionToolbarAction = {
   icon: ToolbarIcon;
 };
 
-type TextColorOption = {
-  label: string;
-  value: string;
-};
-
 type InsertToolbarAction =
   | {
       id: string;
@@ -1235,42 +1214,6 @@ const selectionToolbarActions: SelectionToolbarAction[] = [
   { id: "link", label: "加链接", icon: Link2 }
 ];
 
-const textColorOptions: TextColorOption[] = [
-  { label: "默认颜色", value: "#111827" },
-  { label: "红色", value: "#dc2626" },
-  { label: "橙色", value: "#ea580c" },
-  { label: "金色", value: "#ca8a04" },
-  { label: "绿色", value: "#16a34a" },
-  { label: "青色", value: "#0891b2" },
-  { label: "蓝色", value: "#2563eb" },
-  { label: "紫色", value: "#7c3aed" },
-  { label: "粉色", value: "#db2777" }
-];
-
-const selectionToolbarPresetColors = textColorOptions;
-const defaultTextColorValue = textColorOptions[0]?.value ?? "#111827";
-const defaultTextColorAliases = new Set([
-  "#000",
-  "#000000",
-  "black",
-  "rgb(0,0,0)",
-  "rgba(0,0,0,1)",
-  "#111827",
-  "rgb(17,24,39)",
-  "rgba(17,24,39,1)"
-]);
-
-const compactCssColor = (color: string) => color.trim().toLowerCase().replace(/\s+/g, "");
-
-const normalizeTextColorMark = (color: unknown) => {
-  if (typeof color !== "string") return null;
-  const value = color.trim();
-  if (!value) return null;
-  const compact = compactCssColor(value);
-  if (compact === compactCssColor(defaultTextColorValue) || defaultTextColorAliases.has(compact)) return null;
-  return value;
-};
-
 const insertToolbarActions: InsertToolbarAction[] = [
   { id: "image", label: "插入图片", icon: ImageIcon, kind: "asset", assetKind: "image" },
   { id: "video", label: "插入视频", icon: Film, kind: "asset", assetKind: "video" },
@@ -1301,19 +1244,6 @@ type CommandPaletteItem = {
 };
 
 const shortcutDisplayPlatform = navigator.platform.toLowerCase().includes("mac") ? "mac" : "windows";
-
-const fileUrl = (path: string) => `local-file://${encodeURI(path.replace(/\\/g, "/"))}`;
-
-const localFilePathFromUrl = (value: string) => {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "local-file:") return value;
-    const pathname = decodeURIComponent(url.host ? `/${url.host}${url.pathname}` : url.pathname);
-    return pathname.startsWith("/users/") ? `/Users/${pathname.slice("/users/".length)}` : pathname;
-  } catch {
-    return value;
-  }
-};
 
 const normalizePath = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
 
@@ -1648,7 +1578,7 @@ const defaultBlockSource = (name: string) => {
   if (name === "mathBlock") return "$$\nE = mc^2\n$$";
   if (name === "chartBlock") return "```mermaid\nflowchart TD\n  A[Start] --> B[End]\n```";
   if (name === "footnoteBlock") return "[^1]: Footnote";
-  if (name === "detailsBlock") return "<details>\n<summary>Summary</summary>\n\nContent\n\n</details>";
+  if (name === "detailsBlock") return "> [!note]- Summary\n> Content";
   return "> [!NOTE]\n> Important note";
 };
 
@@ -1850,16 +1780,26 @@ const footnoteFromSource = (source: string) => {
 };
 
 const detailsFromSource = (source: string) => {
-  const match = source
-    .trim()
-    .match(/^<details(?:\s[^>]*)?>\s*<summary>([\s\S]*?)<\/summary>\s*([\s\S]*?)\s*<\/details>$/i);
-  return { summary: plainText(match?.[1] ?? "Summary"), text: plainText(match?.[2] ?? source.trim()) };
+  const trimmed = source.trim();
+  const calloutMatch = trimmed.match(/^>\s*\[![A-Za-z0-9_-]+]-\s*(.*?)\s*\n?([\s\S]*)$/);
+  if (calloutMatch) {
+    const text = calloutMatch[2]
+      .split("\n")
+      .map((line) => line.replace(/^>\s?/, ""))
+      .join("\n")
+      .trim();
+    return { summary: plainText(calloutMatch[1] || "Summary"), text };
+  }
+  const match = trimmed.match(/^<details(?:\s[^>]*)?>\s*<summary>([\s\S]*?)<\/summary>\s*([\s\S]*?)\s*<\/details>$/i);
+  return { summary: plainText(match?.[1] ?? "Summary"), text: plainText(match?.[2] ?? trimmed) };
 };
 
 const calloutFromSource = (source: string) => {
-  const match = source.trim().match(/^>\s*\[!([A-Za-z0-9_-]+)]\s*\n?([\s\S]*)$/);
+  const match = source.trim().match(/^>\s*\[!([A-Za-z0-9_-]+)]\s*(.*?)\s*\n?([\s\S]*)$/);
   const title = (match?.[1] ?? "NOTE").toUpperCase();
-  const text = (match?.[2] ?? source)
+  const firstLine = match?.[2]?.trim();
+  const body = match ? [firstLine, match[3]].filter(Boolean).join("\n") : source;
+  const text = body
     .split("\n")
     .map((line) => line.replace(/^>\s?/, ""))
     .join("\n")
@@ -1988,16 +1928,27 @@ function CodeBlockView({ editor, getPos, node, selected, updateAttributes }: Rea
   const sourceActive = useNodeLivePreviewState(editor, getPos, node, selected);
   const active = sourceActive || sourceFocused;
   const previewHtml = highlightedCodeHtml(language, node.textContent);
+  const resizeSourceTextarea = () => {
+    const textarea = sourceRef.current;
+    if (!textarea || !active) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  };
 
   useEffect(() => {
     if (!sourceFocused) setDraftSource(rawSource);
   }, [rawSource, sourceFocused]);
+
+  useLayoutEffect(() => {
+    resizeSourceTextarea();
+  }, [active, draftSource]);
 
   useEffect(() => {
     if (!active) return;
     window.setTimeout(() => {
       const textarea = sourceRef.current;
       if (!textarea) return;
+      resizeSourceTextarea();
       textarea.focus();
       textarea.setSelectionRange(Math.min(textarea.value.length, 4 + (language === "plaintext" ? 0 : language.length)), Math.min(textarea.value.length, 4 + (language === "plaintext" ? 0 : language.length)));
     }, 0);
@@ -2041,7 +1992,10 @@ function CodeBlockView({ editor, getPos, node, selected, updateAttributes }: Rea
           onMouseDown={(event) => {
             event.stopPropagation();
           }}
-          onFocus={() => setSourceFocused(true)}
+          onFocus={() => {
+            setSourceFocused(true);
+            window.setTimeout(resizeSourceTextarea, 0);
+          }}
           onBlur={() => setSourceFocused(false)}
           onChange={(event) => applyRawSource(event.currentTarget.value)}
           onKeyDown={(event) => event.stopPropagation()}
@@ -2569,55 +2523,6 @@ const WikiLink = Node.create<WikiLinkOptions>({
   }
 } as never);
 
-const TextColor = Mark.create({
-  name: "textColor",
-  priority: 1000,
-  addAttributes() {
-    return {
-      color: {
-        default: null,
-        parseHTML: (element: HTMLElement) => {
-          if (!(element instanceof HTMLElement)) return null;
-          return normalizeTextColorMark(element.getAttribute("data-text-color") || element.style.color);
-        },
-        renderHTML: (attributes: Record<string, unknown>) => {
-          const color = normalizeTextColorMark(attributes.color);
-          return color ? { "data-text-color": color, style: `color: ${color}` } : {};
-        }
-      }
-    };
-  },
-  parseHTML() {
-    return [
-      {
-        tag: "span[data-text-color]",
-        getAttrs: (element: string | HTMLElement) => {
-          if (!(element instanceof HTMLElement)) return false;
-          const color = normalizeTextColorMark(element.getAttribute("data-text-color") || element.style.color);
-          return color ? { color } : false;
-        }
-      },
-      {
-        style: "color",
-        getAttrs: (value: string) => {
-          const color = normalizeTextColorMark(value);
-          return color ? { color } : false;
-        }
-      }
-    ];
-  },
-  renderHTML({ HTMLAttributes }: { HTMLAttributes: Record<string, unknown> }) {
-    return ["span", mergeAttributes(HTMLAttributes), 0];
-  },
-  renderMarkdown(node: JSONContent, helpers: MarkdownRendererHelpers) {
-    const color = normalizeTextColorMark(node.attrs?.color);
-    const content = helpers.renderChildren(node.content ?? []);
-    if (!color) return content;
-    const escapedColor = escapeHtml(color);
-    return `<span data-text-color="${escapedColor}" style="color: ${escapedColor}">${content}</span>`;
-  }
-} as never);
-
 const UnderlineMark = UnderlineExtension.extend({
   addInputRules() {
     return [
@@ -3103,10 +3008,9 @@ const MediaBlock = Node.create({
     };
   },
   renderMarkdown(node: { attrs?: { kind?: string; src?: string; title?: string } }) {
-    const kind = node.attrs?.kind === "audio" ? "audio" : "video";
-    const title = escapeHtml(node.attrs?.title ?? "Media");
-    const src = escapeHtml(node.attrs?.src ?? "");
-    return `\n<${kind} controls src="${src}" title="${title}"></${kind}>\n`;
+    const title = (node.attrs?.title ?? "Media").replace(/[\[\]\n]/g, " ").trim() || "Media";
+    const src = node.attrs?.src ?? "";
+    return `\n[${title}](${src})\n`;
   }
 } as never);
 
@@ -3156,9 +3060,9 @@ const PdfBlock = Node.create({
     ];
   },
   renderMarkdown(node: { attrs?: { src?: string; title?: string } }) {
-    const title = escapeHtml(node.attrs?.title ?? "PDF");
-    const src = escapeHtml(node.attrs?.src ?? "");
-    return `\n<iframe data-type="pdf" src="${src}" title="${title}"></iframe>\n`;
+    const title = (node.attrs?.title ?? "PDF").replace(/[\[\]\n]/g, " ").trim() || "PDF";
+    const src = node.attrs?.src ?? "";
+    return `\n[${title}](${src})\n`;
   },
   addNodeView() {
     return ReactNodeViewRenderer(UnifiedPdfBlockView);
@@ -3183,9 +3087,22 @@ const DetailsBlock = Node.create({
     name: "detailsBlock",
     level: "block",
     start(src: string) {
-      return src.match(/^<details\b/im)?.index ?? -1;
+      return (src.match(/^>\s*\[![A-Za-z0-9_-]+]-/m) ?? src.match(/^<details\b/im))?.index ?? -1;
     },
     tokenize(src: string) {
+      const calloutMatch = src.match(/^>\s*\[!([A-Za-z0-9_-]+)]-\s*(.*?)\s*\n((?:>\s?.*(?:\n|$))+)/);
+      if (calloutMatch) {
+        return {
+          type: "detailsBlock",
+          raw: calloutMatch[0],
+          summary: calloutMatch[2] || calloutMatch[1],
+          text: calloutMatch[3]
+            .split("\n")
+            .map((line) => line.replace(/^>\s?/, ""))
+            .join("\n")
+            .trim()
+        };
+      }
       const match = src.match(/^<details(?:\s[^>]*)?>\s*<summary>([\s\S]*?)<\/summary>\s*([\s\S]*?)\s*<\/details>(?:\n|$)/i);
       if (!match) return undefined;
       return { type: "detailsBlock", raw: match[0], summary: plainText(match[1]), text: plainText(match[2]) };
@@ -3215,7 +3132,9 @@ const DetailsBlock = Node.create({
     ];
   },
   renderMarkdown(node: { attrs?: { summary?: string; text?: string } }) {
-    return `\n${jsonSourceText(node as JSONContent, "detailsBlock")}\n`;
+    const details = detailsFromSource(jsonSourceText(node as JSONContent, "detailsBlock"));
+    const body = details.text.split("\n").map((line) => `> ${line}`).join("\n");
+    return `\n> [!note]- ${details.summary || "Summary"}\n${body}\n`;
   },
   addNodeView() {
     return ReactNodeViewRenderer(EditableSourceBlockView);
@@ -3240,16 +3159,18 @@ const CalloutBlock = Node.create({
     name: "calloutBlock",
     level: "block",
     start(src: string) {
-      return src.match(/^>\s*\[![A-Za-z0-9_-]+]/m)?.index ?? -1;
+      return src.match(/^>\s*\[![A-Za-z0-9_-]+](?!-)/m)?.index ?? -1;
     },
     tokenize(src: string) {
-      const match = src.match(/^>\s*\[!([A-Za-z0-9_-]+)]\s*\n((?:>\s?.*(?:\n|$))+)/);
+      const match = src.match(/^>\s*\[!([A-Za-z0-9_-]+)]\s*(.*?)\s*\n((?:>\s?.*(?:\n|$))+)/);
       if (!match) return undefined;
       return {
         type: "calloutBlock",
         raw: match[0],
         title: match[1],
-        text: match[2]
+        text: [match[2], match[3]]
+          .filter(Boolean)
+          .join("\n")
           .split("\n")
           .map((line) => line.replace(/^>\s?/, ""))
           .join("\n")
@@ -3281,7 +3202,9 @@ const CalloutBlock = Node.create({
     ];
   },
   renderMarkdown(node: { attrs?: { title?: string; text?: string } }) {
-    return `\n${jsonSourceText(node as JSONContent, "calloutBlock")}\n`;
+    const callout = calloutFromSource(jsonSourceText(node as JSONContent, "calloutBlock"));
+    const body = callout.text.split("\n").map((line) => `> ${line}`).join("\n");
+    return `\n> [!${normalizeCalloutTitle(callout.title)}]\n${body}\n`;
   },
   addNodeView() {
     return ReactNodeViewRenderer(EditableSourceBlockView);
@@ -4611,7 +4534,6 @@ function FileList({
     const folderKey = normalizePath(node.folder.path || node.folder.id);
     const isProject = depth === 0 && projectPaths.has(normalizePath(node.folder.path));
     const collapsed = !expandedFolderKeys.has(folderKey);
-    const documentCount = node.documentCount;
     const isEditingFolder = inlineRename?.type === "folder" && normalizePath(inlineRename.path) === folderKey;
     const isEditingProject = inlineRename?.type === "project" && normalizePath(inlineRename.path) === folderKey;
     const isDropTarget = dropTarget?.path === folderKey;
@@ -4667,7 +4589,6 @@ function FileList({
               )
             : <span className="min-w-0 flex-1 truncate">{node.folder.title}</span>}
           {isProject && projectsByPath.get(folderKey)?.pinned ? <Pin size={11} className="shrink-0 text-slate-400" /> : null}
-          <span className="shrink-0 font-mono text-[10px] font-semibold text-[var(--text-muted)]">{documentCount}</span>
         </button>
         {collapsed ? null : (
           <div className="space-y-1">
@@ -5350,12 +5271,11 @@ function OutlineList({
               className={cn(
                 "w-full rounded-md px-3 py-2.5 text-left transition-[background-color,transform] duration-150 active:scale-[0.99]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
-                index === 0 ? "bg-white shadow-[0_1px_4px_rgba(15,23,42,0.10),inset_0_0_0_1px_rgba(15,23,42,0.10)]" : "hover:bg-white/70",
-                item.level > 1 && "pl-8"
+                index === 0 ? "bg-white shadow-[0_1px_4px_rgba(15,23,42,0.10),inset_0_0_0_1px_rgba(15,23,42,0.10)]" : "hover:bg-white/70"
               )}
+              style={{ paddingLeft: `${12 + Math.max(0, item.level - 1) * 28}px` }}
             >
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 font-mono text-[10px] font-extrabold text-[var(--text-muted)]">{`H${item.level}`}</span>
+              <div className="flex min-w-0 items-center">
                 <span className="min-w-0 truncate text-[13px] font-bold text-[var(--text-main)]">{item.title}</span>
               </div>
             </button>
@@ -5910,7 +5830,6 @@ function EditorPane({
       }),
       Highlight,
       InlineCodeTyping,
-      TextColor,
       ResizableImage.configure({
         HTMLAttributes: { class: "informio-image" },
         resize: {
@@ -6042,7 +5961,7 @@ function EditorPane({
               editor
                 ?.chain()
                 .focus()
-                .setImage({ src: fileUrl(result.path), alt: result.fileName, title: result.fileName })
+                .setImage({ src: result.markdownPath, alt: result.fileName, title: result.fileName })
                 .createParagraphNear()
                 .run();
             });
@@ -6685,25 +6604,15 @@ function EditorPane({
           const asset = payload as { kind?: string; path?: string; name?: string };
           if (!asset.path) return;
           const name = asset.name ?? asset.path.split(/[\\/]/).at(-1) ?? asset.kind ?? "asset";
-          const src = fileUrl(asset.path);
+          const src = asset.path;
           if (asset.kind === "image") {
             editor.chain().focus().setImage({ src, alt: name, title: name }).createParagraphNear().run();
           }
           if (asset.kind === "video" || asset.kind === "audio") {
-            editor
-              .chain()
-              .focus()
-              .insertContent({ type: "mediaBlock", attrs: { kind: asset.kind, src, title: name } })
-              .createParagraphNear()
-              .run();
+            editor.chain().focus().insertContent(`[${name}](${src})`).createParagraphNear().run();
           }
           if (asset.kind === "pdf") {
-            editor
-              .chain()
-              .focus()
-              .insertContent({ type: "pdfBlock", attrs: { src, title: name } })
-              .createParagraphNear()
-              .run();
+            editor.chain().focus().insertContent(`[${name}](${src})`).createParagraphNear().run();
           }
           return;
         }
@@ -6944,18 +6853,6 @@ function EditorPane({
     label: action.id === "link" && editor?.isActive("link") ? "去链接" : action.label,
     onClick: () => runSelectionToolbarAction(action.id)
   }));
-  const currentTextColor = (() => {
-    const color = editor?.getAttributes("textColor").color;
-    return typeof color === "string" && color.trim() ? color : null;
-  })();
-  const applySelectionTextColor = (color: string) => {
-    if (!editor || editor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
-    if (color === textColorOptions[0]?.value) {
-      editor.chain().focus().unsetMark("textColor").run();
-      return;
-    }
-    editor.chain().focus().setMark("textColor", { color }).run();
-  };
   const selectedText = () => {
     if (!editor || editor.isDestroyed) return "";
     const { from, to } = editor.state.selection;
@@ -7343,11 +7240,9 @@ function EditorPane({
           busy={toolbarTranslate.status === "loading"}
           left={markdownToolbar?.overlayLeft ?? 0}
           top={markdownToolbar?.overlayTop ?? 0}
-          currentTextColor={currentTextColor}
           formatActions={selectionToolbarFormatItems}
           response={toolbarTranslate.response}
           error={toolbarTranslate.error}
-          onApplyTextColor={applySelectionTextColor}
           onEncrypt={() => {
             void beginEncryptSelection();
           }}
@@ -9555,11 +9450,9 @@ function SelectionToolbar({
   busy,
   left,
   top,
-  currentTextColor,
   formatActions,
   response,
   error,
-  onApplyTextColor,
   onEncrypt,
   onTranslate,
   onClose
@@ -9569,46 +9462,16 @@ function SelectionToolbar({
   busy: boolean;
   left: number;
   top: number;
-  currentTextColor: string | null;
   formatActions: Array<SelectionToolbarAction & { pressed?: boolean; onClick: () => void }>;
   response: string;
   error?: string;
-  onApplyTextColor: (color: string) => void;
   onEncrypt?: () => void;
   onTranslate: () => void;
   onClose: () => void;
 }) {
-  const [colorMenuOpen, setColorMenuOpen] = useState(false);
-  const colorMenuRef = useRef<HTMLDivElement | null>(null);
-  const colorTriggerRef = useRef<HTMLDivElement | null>(null);
-  const customColorInputRef = useRef<HTMLInputElement | null>(null);
   const preserveSelection = (event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault();
   };
-  const customColorValue = currentTextColor ?? defaultTextColorValue;
-  const customColorActive = Boolean(currentTextColor && !selectionToolbarPresetColors.some((option) => option.value === currentTextColor));
-  const closeColorMenu = () => setColorMenuOpen(false);
-
-  useEffect(() => {
-    if (!colorMenuOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as globalThis.Node | null;
-      if (colorMenuRef.current?.contains(target) || colorTriggerRef.current?.contains(target)) return;
-      closeColorMenu();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeColorMenu();
-      }
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown, true);
-    };
-  }, [colorMenuOpen]);
 
   if (!visible) return null;
 
@@ -9623,99 +9486,6 @@ function SelectionToolbar({
         <div className={cn("space-y-2", response || error ? "w-[min(360px,calc(100vw-32px))]" : "w-fit")}>
           <div className="flex items-center gap-1">
             <div className="flex items-center gap-0.5">
-              <div ref={colorTriggerRef} className="relative">
-                <ToolbarGlyphButton
-                  label="字体颜色"
-                  icon={Palette}
-                  pressed={colorMenuOpen || Boolean(currentTextColor)}
-                  disabled={!enabled}
-                  onMouseDown={preserveSelection}
-                  onClick={() => {
-                    if (!enabled) return;
-                    if (colorMenuOpen) {
-                      closeColorMenu();
-                      return;
-                    }
-                    setColorMenuOpen(true);
-                  }}
-                  badgeColor={currentTextColor}
-                  ariaHasPopup="dialog"
-                  className={cn(
-                    "grid h-7 w-7 place-items-center rounded-md text-slate-600 transition-[background-color,color,transform] active:scale-95",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
-                    colorMenuOpen || currentTextColor
-                      ? "bg-emerald-50 text-emerald-700 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.22)]"
-                      : "hover:bg-slate-100 hover:text-slate-900",
-                    !enabled && "cursor-not-allowed opacity-35 active:scale-100"
-                  )}
-                />
-                {colorMenuOpen ? (
-                  <div
-                    ref={colorMenuRef}
-                    className="absolute left-0 top-[calc(100%+8px)] z-[95] min-w-[204px] rounded-xl bg-[var(--surface-elevated)] p-2 shadow-[0_14px_36px_rgba(15,23,42,0.18),0_0_0_1px_rgba(15,23,42,0.08)]"
-                  >
-                    <div className="grid grid-cols-5 gap-1.5">
-                      {selectionToolbarPresetColors.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          aria-label={option.label}
-                          title={option.label}
-                          onMouseDown={preserveSelection}
-                          onClick={() => {
-                            onApplyTextColor(option.value);
-                            closeColorMenu();
-                          }}
-                          className={cn(
-                            "grid h-7 w-7 place-items-center rounded-md transition-transform active:scale-95",
-                            ((!currentTextColor && option.value === textColorOptions[0]?.value) || currentTextColor === option.value)
-                              ? "bg-emerald-50 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.24)]"
-                              : "hover:bg-slate-100"
-                          )}
-                        >
-                          <span
-                            className="h-4 w-4 rounded-full shadow-[inset_0_0_0_1px_rgba(15,23,42,0.12)]"
-                            style={{ backgroundColor: option.value }}
-                          />
-                        </button>
-                      ))}
-                      <button
-                        type="button"
-                        aria-label="选择自定义字体颜色"
-                        title={`自定义颜色 ${customColorValue}`}
-                        disabled={!enabled}
-                        onMouseDown={preserveSelection}
-                        onClick={() => customColorInputRef.current?.click()}
-                        className={cn(
-                          "relative grid h-7 w-7 place-items-center rounded-md transition-transform active:scale-95",
-                          customColorActive
-                            ? "bg-emerald-50 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.24)]"
-                            : "hover:bg-slate-100",
-                          !enabled && "cursor-not-allowed opacity-35 active:scale-100"
-                        )}
-                      >
-                        <span
-                          className="h-4 w-4 rounded-full border border-dashed border-[rgba(15,23,42,0.22)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.24)]"
-                          style={{ backgroundColor: customColorValue }}
-                        />
-                        <span className="pointer-events-none absolute inset-0 rounded-md bg-[linear-gradient(135deg,rgba(255,255,255,0.22),rgba(255,255,255,0))]" />
-                        <span className="pointer-events-none absolute bottom-0 right-0 h-0 w-0 border-b-[9px] border-l-[9px] border-b-white/90 border-l-transparent" />
-                        <span className="pointer-events-none absolute bottom-[1px] right-[1px] h-0 w-0 border-b-[6px] border-l-[6px] border-b-slate-300/80 border-l-transparent" />
-                        <span className="pointer-events-none absolute bottom-[1px] right-[1px] h-0 w-0 border-t-[6px] border-r-[6px] border-t-transparent border-r-white/18" />
-                        <input
-                          ref={customColorInputRef}
-                          type="color"
-                          value={customColorValue}
-                          aria-label="选择自定义字体颜色"
-                          onChange={(event) => onApplyTextColor(event.target.value)}
-                          className="absolute h-0 w-0 opacity-0"
-                          tabIndex={-1}
-                        />
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
               {formatActions.map((action) => (
                 <ToolbarGlyphButton
                   key={action.id}
@@ -10708,48 +10478,6 @@ function SettingsView({
                           <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
                         </Switch.Root>
                       </SettingRow>
-                      <div className="grid gap-3 py-5">
-                        <div className="text-[15px] font-bold text-[var(--text-main)]">文件插入策略</div>
-                        <p className="text-[13px] text-[var(--text-muted)]">只影响从文件选择器插入图片、视频、音频和 PDF；粘贴图片仍会复制到 `attachment/`。</p>
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onChange({
-                                ...settings,
-                                editor: { ...settings.editor, assetImportMode: "copy-to-attachment" }
-                              })
-                            }
-                            className={cn(
-                              "rounded-xl border px-4 py-3 text-left transition-colors",
-                              settings.editor.assetImportMode === "copy-to-attachment"
-                                ? "border-emerald-500/45 bg-emerald-50"
-                                : "border-[var(--divider)] bg-white hover:bg-slate-50"
-                            )}
-                          >
-                            <div className="text-[14px] font-bold text-[var(--text-main)]">复制到 attachment</div>
-                            <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">更稳，文档迁移或分享时不容易丢资源。</div>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onChange({
-                                ...settings,
-                                editor: { ...settings.editor, assetImportMode: "link-original-file" }
-                              })
-                            }
-                            className={cn(
-                              "rounded-xl border px-4 py-3 text-left transition-colors",
-                              settings.editor.assetImportMode === "link-original-file"
-                                ? "border-emerald-500/45 bg-emerald-50"
-                                : "border-[var(--divider)] bg-white hover:bg-slate-50"
-                            )}
-                          >
-                            <div className="text-[14px] font-bold text-[var(--text-main)]">直接链接原文件</div>
-                            <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">更快；但原文件被移动或删除后会失效。</div>
-                          </button>
-                        </div>
-                      </div>
                       <SettingRow title="缩进宽度" description="用于 Markdown 列表与代码块">
                         <input
                           type="number"
@@ -12614,39 +12342,22 @@ export function App() {
 
 	          <div className="flex min-h-0 flex-1">
 	            {leftOpen ? (
-	              sidebarMode === "files" ? (
-	                <FileList
-	                  folders={data.folders}
-	                  documents={data.documents}
-	                  projects={data.projects ?? []}
-	                  activeDocumentId={activeOpenDoc?.id ?? ""}
-	                  onSelect={selectDocument}
-	                  onCreate={createDocument}
-	                  onCreateFolder={createFolder}
-	                  onFileAction={(input) => { void executeFileSystemAction(input); }}
-	                  onRenameProject={renameProject}
-	                  onToggleProjectPinned={toggleProjectPinned}
-	                  onRemoveProject={(path) => window.informio.removeProject(path).then(setData)}
-	                  onDocumentDragStart={startDocumentDrag}
-	                  width={leftPanelWidth}
-	                  creationSignal={fileListCreationSignal}
-	                />
-	              ) : sidebarMode === "outline" ? (
-	                activeOpenDoc ? (
-	                  <OutlineList document={activeOpenDoc} width={leftPanelWidth} onJump={(item) => jumpToOutlineItem(activeOpenDoc.id, item)} />
-	                ) : (
-	                  <aside className="side-rail flex h-full shrink-0 items-center justify-center border-r px-4 text-[12px] font-semibold text-[var(--text-muted)]" style={{ width: leftPanelWidth }}>
-	                    无打开文档
-	                  </aside>
-	                )
-	              ) : (
-	                <PropertiesList
-	                  documents={data.documents}
-	                  activeDocumentId={activeOpenDoc?.id ?? ""}
-	                  width={leftPanelWidth}
-	                  onSelect={selectDocument}
-	                />
-	              )
+	              <FileList
+	                folders={data.folders}
+	                documents={data.documents}
+	                projects={data.projects ?? []}
+	                activeDocumentId={activeOpenDoc?.id ?? ""}
+	                onSelect={selectDocument}
+	                onCreate={createDocument}
+	                onCreateFolder={createFolder}
+	                onFileAction={(input) => { void executeFileSystemAction(input); }}
+	                onRenameProject={renameProject}
+	                onToggleProjectPinned={toggleProjectPinned}
+	                onRemoveProject={(path) => window.informio.removeProject(path).then(setData)}
+	                onDocumentDragStart={startDocumentDrag}
+	                width={leftPanelWidth}
+	                creationSignal={fileListCreationSignal}
+	              />
 	            ) : null}
 	            {leftOpen ? <PanelResizeHandle label="Resize left panel" onPointerDown={(event) => startPanelResize("left", event)} /> : null}
 
@@ -12774,22 +12485,6 @@ export function App() {
 	                onClick={() => toggleBottomSidebar("files")}
 	              >
 	                <Folder size={14} />
-	              </IconButton>
-	              <IconButton
-	                label="大纲"
-	                className="h-6 w-6"
-	                pressed={sidebarMode === "outline" && leftOpen}
-	                onClick={() => toggleBottomSidebar("outline")}
-	              >
-	                <LayoutList size={14} />
-	              </IconButton>
-	              <IconButton
-	                label="属性"
-	                className="h-6 w-6"
-	                pressed={sidebarMode === "properties" && leftOpen}
-	                onClick={() => toggleBottomSidebar("properties")}
-	              >
-	                <Bookmark size={14} />
 	              </IconButton>
 	              <IconButton
 	                label="添加项目"

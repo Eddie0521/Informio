@@ -68,6 +68,7 @@ export type SaveAttachmentInput = {
 export type SaveAttachmentResult = {
   path: string;
   fileName: string;
+  markdownPath: string;
 };
 
 export type LocalFontOption = {

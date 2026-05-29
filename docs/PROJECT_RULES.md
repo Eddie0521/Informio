@@ -18,10 +18,11 @@ Informio is a minimal desktop Markdown editor with contextual Agent assistance. 
 ## UX Rules
 
 - The editor must be immediately usable after launch with a sample document.
+- Markdown files are the source of truth and must stay clean: do not write presentation-only HTML, text-color spans, app-private file URLs, or media iframe/video/audio tags by default. Use standard Markdown links/images and Obsidian-compatible block syntax; encrypted content is the only allowed Informio-specific Markdown extension because it needs cryptographic metadata.
 - The left library and right Agent panel are optional context. Users can collapse both.
 - AI actions should start from selected text or current document context.
 - Table controls should stay latent: show only the nearby `+` insertion affordance when the pointer is close to a table edge, and resize only the specific row or column being dragged.
-- Images in the editor should support direct drag-to-resize from the canvas, with aspect ratio preserved and the saved size surviving reopen.
+- Images in the editor should support direct drag-to-resize from the canvas when it can be represented without dirtying Markdown; the saved Markdown must remain a standard image reference.
 - PDF highlighting remains available through `pdf.js` native highlight mode from the PDF toolbar; default PDF mode remains plain browsing and text selection.
 - PDF annotation management surfaces such as comment dialogs, annotation side panels, and PDF-to-Markdown backlink management should stay out of the PDF viewer unless intentionally reintroduced with a new rule update first.
 - Settings must be discoverable from the main shell and should expose practical controls without forcing setup before writing.
