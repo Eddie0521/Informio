@@ -24,6 +24,14 @@
   <img src="./docs/assets/image_informio.png" alt="Informio 界面预览" />
 </p>
 
+## Quick Start
+
+1. 从 [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest) 下载最新版本。
+2. 打开 Informio，添加你正在使用的项目文件夹。Markdown 文件会留在原来的位置，不需要搬进固定目录。
+3. 直接在中间编辑区开始写作。只有需要文件、媒体或 Agent 上下文时，再展开两侧面板。
+4. 如果要使用 Agent，请先确认本地已经安装并登录对应的 Agent CLI，然后在 Informio 设置里选择它。
+5. 有任何需求，都可以让 Agent 基于当前工作区上下文处理。
+
 ## Features
 
 - **项目制**：不需要把所有资料都整理到同一个文件夹。用到哪个项目、哪个目录，直接添加进来就能开始。

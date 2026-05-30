@@ -24,6 +24,14 @@
   <img src="./docs/assets/image_informio.png" alt="Informio interface preview" />
 </p>
 
+## Quick Start
+
+1. Download the latest build from [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest).
+2. Open Informio and add the folder you are working in. Your Markdown files stay where they already are.
+3. Start writing in the center editor. Use the side panels only when you need files, media, or Agent context.
+4. To use Agent assistance, make sure your preferred local Agent CLI is already installed and signed in, then choose it from Informio settings.
+5. When you need anything, ask the Agent to work from the current workspace context.
+
 ## Features
 
 - **Project-based**: No need to move every file into one fixed directory. Add the folders you actually use, whenever you need them.
