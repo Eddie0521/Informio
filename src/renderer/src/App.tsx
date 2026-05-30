@@ -549,7 +549,21 @@ const upsertSessionAction = (actions: AgentSessionAction[], nextAction: AgentSes
     output: nextAction.output ?? current.output,
     path: nextAction.path ?? current.path
   };
-  return actions.map((action, actionIndex) => (actionIndex === index ? merged : action));
+  const next = actions.slice();
+  next[index] = merged;
+  return next;
+};
+
+const updateSessionActionByToolId = (
+  actions: AgentSessionAction[],
+  toolId: string,
+  updater: (action: AgentSessionAction) => AgentSessionAction
+) => {
+  const index = actions.findIndex((action) => action.toolId === toolId);
+  if (index === -1) return actions;
+  const next = actions.slice();
+  next[index] = updater(actions[index]);
+  return next;
 };
 
 type EditorPaneState = {
@@ -3926,6 +3940,12 @@ const fallbackFolder = (path: string): InformioFolder => ({
 
 const treeNode = (folder: InformioFolder): FileTreeNode => ({ folder, documents: [], children: [], documentCount: 0 });
 
+const documentStructureKey = (documents: InformioDocument[]) =>
+  documents.map((doc) => `${doc.id}:${doc.title}:${doc.filePath ?? ""}:${doc.collection}:${doc.pinned ? "1" : "0"}`).join("|");
+
+const documentLookupKey = (documents: InformioDocument[], excludedSuggestionDocumentId?: string) =>
+  `${excludedSuggestionDocumentId ?? ""}::${documentStructureKey(documents)}`;
+
 const folderChain = (path: string, projectPaths: string[]) => {
   const normalizedPath = normalizePath(path);
   if (!normalizedPath) return [];
@@ -4346,7 +4366,8 @@ function FileList({
   const [pendingCreation, setPendingCreation] = useState<PendingCreationState | null>(null);
   const [dropTarget, setDropTarget] = useState<TreeDropTarget | null>(null);
   const projectPaths = useMemo(() => new Set(projects.map((p) => normalizePath(p.path))), [projects]);
-  const tree = useMemo(() => buildFileTree(folders, documents, projects), [documents, folders, projects]);
+  const treeKey = useMemo(() => documentStructureKey(documents), [documents]);
+  const tree = useMemo(() => buildFileTree(folders, documents, projects), [treeKey, folders, projects]);
   const projectsByPath = useMemo(() => new Map(projects.map((project) => [normalizePath(project.path), project])), [projects]);
 
   useEffect(() => {
@@ -5002,6 +5023,18 @@ type MarkdownDiffHunk = {
   replacement: string[];
 };
 
+const MAX_DIFF_MATRIX_CELLS = 600_000;
+const MAX_CONFLICT_PREVIEW_LINES = 80;
+const MAX_CONFLICT_PREVIEW_CHARS = 4000;
+
+const canBuildDiffMatrix = (leftLength: number, rightLength: number) =>
+  (leftLength + 1) * (rightLength + 1) <= MAX_DIFF_MATRIX_CELLS;
+
+const conflictPreviewText = (lines: string[]) => {
+  const text = lines.slice(0, MAX_CONFLICT_PREVIEW_LINES).join(" / ");
+  return text.length > MAX_CONFLICT_PREVIEW_CHARS ? `${text.slice(0, MAX_CONFLICT_PREVIEW_CHARS)}...` : text;
+};
+
 const buildMarkdownDiffHunks = (base: string[], next: string[]): MarkdownDiffHunk[] => {
   const table = Array.from({ length: base.length + 1 }, () => Array(next.length + 1).fill(0) as number[]);
   for (let i = base.length - 1; i >= 0; i -= 1) {
@@ -5078,8 +5111,14 @@ const mergeMarkdownWithBase = (
   if (externalMarkdown === baseMarkdown) return { mergedMarkdown: localMarkdown, conflicted: false };
 
   const base = baseMarkdown.split("\n");
-  const localHunks = buildMarkdownDiffHunks(base, localMarkdown.split("\n"));
-  const externalHunks = buildMarkdownDiffHunks(base, externalMarkdown.split("\n"));
+  const localLines = localMarkdown.split("\n");
+  const externalLines = externalMarkdown.split("\n");
+  if (!canBuildDiffMatrix(base.length, localLines.length) || !canBuildDiffMatrix(base.length, externalLines.length)) {
+    return { mergedMarkdown: localMarkdown, conflicted: true };
+  }
+
+  const localHunks = buildMarkdownDiffHunks(base, localLines);
+  const externalHunks = buildMarkdownDiffHunks(base, externalLines);
   const merged: string[] = [];
   let baseIndex = 0;
   let localIndex = 0;
@@ -5119,6 +5158,17 @@ const mergeMarkdownWithBase = (
 const buildConflictDiffLines = (externalMarkdown: string, localMarkdown: string): ConflictDiffLine[] => {
   const removed = externalMarkdown.split("\n");
   const added = localMarkdown.split("\n");
+  if (!canBuildDiffMatrix(removed.length, added.length)) {
+    return [
+      {
+        key: "diff-too-large",
+        kind: "same",
+        text: `文档过长，已跳过逐行 Diff 以避免界面卡顿。外部版本 ${removed.length} 行，我的版本 ${added.length} 行。`
+      },
+      { key: "diff-too-large-external", kind: "removed", text: `外部版本预览：${conflictPreviewText(removed)}` },
+      { key: "diff-too-large-local", kind: "added", text: `我的版本预览：${conflictPreviewText(added)}` }
+    ];
+  }
   const table = Array.from({ length: removed.length + 1 }, () => Array(added.length + 1).fill(0) as number[]);
   for (let i = removed.length - 1; i >= 0; i -= 1) {
     for (let j = added.length - 1; j >= 0; j -= 1) {
@@ -5345,11 +5395,25 @@ const stringifyPropertyValue = (value: unknown) => {
   return String(value);
 };
 
+const propertyFrontmatterCache = new Map<string, { markdown: string; frontmatter: FrontmatterParseResult }>();
+
+const cachedDocumentFrontmatter = (document: InformioDocument) => {
+  const cached = propertyFrontmatterCache.get(document.id);
+  if (cached?.markdown === document.markdown) return cached.frontmatter;
+  const frontmatter = parseFrontmatter(document.markdown);
+  propertyFrontmatterCache.set(document.id, { markdown: document.markdown, frontmatter });
+  return frontmatter;
+};
+
 const buildPropertyGroups = (documents: InformioDocument[]): PropertyGroup[] => {
   const propertyMap = new Map<string, Map<string, InformioDocument[]>>();
+  const documentIds = new Set(documents.map((document) => document.id));
+  Array.from(propertyFrontmatterCache.keys()).forEach((id) => {
+    if (!documentIds.has(id)) propertyFrontmatterCache.delete(id);
+  });
 
   for (const document of documents) {
-    const frontmatter = parseFrontmatter(document.markdown);
+    const frontmatter = cachedDocumentFrontmatter(document);
     if (!frontmatter.hasFrontmatter || frontmatter.error) continue;
     const entries = Object.entries(frontmatter.values);
     if (!entries.length) continue;
@@ -5655,11 +5719,11 @@ function EditorPane({
   const editorMarkdown = frontmatter.body;
   const isReadOnlyDocument = isPdfFile(document.filePath ?? document.title);
   const isSourceMode = !isReadOnlyDocument && viewMode === "source";
-  const documentLookupIndex = useMemo(() => buildDocumentLookupIndex(documents, document.id), [document.id, documents]);
   const documentLinkIndexKey = useMemo(
-    () => documents.map((doc) => `${doc.id}:${doc.title}:${doc.filePath ?? ""}`).join("|"),
+    () => documentLookupKey(documents, document.id),
     [documents]
   );
+  const documentLookupIndex = useMemo(() => buildDocumentLookupIndex(documents, document.id), [documentLinkIndexKey]);
   const closeSecretPrompt = () => {
     pendingSecretActionRef.current = null;
     setSecretPromptRequest(null);
@@ -10836,11 +10900,13 @@ export function App() {
         if (!shouldAutoStart) return;
         const targetAgents = loaded.settings.agents.filter((agent) => agent.enabled);
         const activeAgentId = loaded.settings.activeAgentId;
+        const existingConnectionsByProviderId = new Map(existingConnections.map((item) => [item.providerId, item]));
         const disconnectedAgents = targetAgents.filter((agent) => {
-          const existing = existingConnections.find((item) => item.providerId === agent.id);
+          const existing = existingConnectionsByProviderId.get(agent.id);
           return existing?.status !== "connected";
         });
         if (!disconnectedAgents.length) return;
+        const disconnectedAgentIds = new Set(disconnectedAgents.map((agent) => agent.id));
 
         const prioritizedAgents = [
           ...disconnectedAgents.filter((agent) => agent.id === activeAgentId),
@@ -10848,7 +10914,7 @@ export function App() {
         ];
 
         setConnections((items) => [
-          ...items.filter((item) => !disconnectedAgents.some((agent) => agent.id === item.providerId)),
+          ...items.filter((item) => !disconnectedAgentIds.has(item.providerId)),
           ...disconnectedAgents.map((agent) => ({
             providerId: agent.id,
             status: "connecting" as const,
@@ -11053,10 +11119,11 @@ export function App() {
 
   const clearSavedDirtyIds = (cleanIds: string[], savedDocuments: InformioDocument[]) => {
     const savedById = new Map(savedDocuments.map((doc) => [doc.id, doc]));
+    const currentById = new Map((latestDataRef.current?.documents ?? []).map((doc) => [doc.id, doc]));
     updateDirtyDocumentIds((items) => {
       const next = new Set(items);
       cleanIds.forEach((id) => {
-        const current = latestDataRef.current?.documents.find((doc) => doc.id === id);
+        const current = currentById.get(id);
         const saved = savedById.get(id);
         if (current && saved && current.markdown === saved.markdown) {
           next.delete(id);
@@ -11126,7 +11193,7 @@ export function App() {
 
   const updateDocument = (documentId: string, markdown: string, options?: { composing?: boolean }) => {
     if (!data) return;
-    const sourceDocument = data.documents.find((doc) => doc.id === documentId);
+    const sourceDocument = documentsById.get(documentId);
     if (!sourceDocument) return;
     const documents = data.documents.map((doc) =>
       doc.id === documentId ? { ...doc, markdown, updatedAt: new Date().toISOString() } : doc
@@ -11694,10 +11761,11 @@ export function App() {
     if (!data?.settings.agentRuntime.enabled || checkingAgents) return;
     const targetAgents = data.settings.agents;
     if (!targetAgents.length) return;
+    const targetAgentIds = new Set(targetAgents.map((agent) => agent.id));
     setCheckingAgents(true);
     try {
       setConnections((items) => [
-        ...items.filter((item) => !targetAgents.some((agent) => agent.id === item.providerId)),
+        ...items.filter((item) => !targetAgentIds.has(item.providerId)),
         ...targetAgents.map((agent) => ({
           providerId: agent.id,
           status: "connecting" as const,
@@ -11711,8 +11779,9 @@ export function App() {
           connection: await window.informio.connectAgentRuntime(agent.id)
         }))
       );
+      const resultProviderIds = new Set(results.map((result) => result.providerId));
       setConnections((items) => [
-        ...items.filter((item) => !results.some((result) => result.providerId === item.providerId)),
+        ...items.filter((item) => !resultProviderIds.has(item.providerId)),
         ...results.map((result) => result.connection)
       ]);
     } finally {
@@ -12014,30 +12083,30 @@ export function App() {
             if (event.type === "tool_delta") {
               return {
                 ...item,
-                actions: item.actions.map((action) =>
-                  action.toolId === event.toolId
-                    ? { ...action, output: `${action.output ?? ""}${event.outputDelta}` }
-                    : action
+                actions: updateSessionActionByToolId(
+                  item.actions,
+                  event.toolId,
+                  (action) => ({ ...action, output: `${action.output ?? ""}${event.outputDelta}` })
                 )
               };
             }
             if (event.type === "tool_done") {
               return {
                 ...item,
-                actions: item.actions.map((action) =>
-                  action.toolId === event.toolId
-                    ? { ...action, status: event.status ?? "done", output: event.output ?? action.output }
-                    : action
+                actions: updateSessionActionByToolId(
+                  item.actions,
+                  event.toolId,
+                  (action) => ({ ...action, status: event.status ?? "done", output: event.output ?? action.output })
                 )
               };
             }
             if (event.type === "approval_resolved") {
               return {
                 ...item,
-                actions: item.actions.map((action) =>
-                  action.toolId === event.toolId
-                    ? { ...action, status: event.status, output: event.output ?? action.output }
-                    : action
+                actions: updateSessionActionByToolId(
+                  item.actions,
+                  event.toolId,
+                  (action) => ({ ...action, status: event.status, output: event.output ?? action.output })
                 )
               };
             }
@@ -12209,9 +12278,10 @@ export function App() {
       run: () => runAppCommand("file:close-workspace")
     }
   ];
+  const normalizedEditorPanes = normalizeEditorPanes(editorPanes, (documentId) => documentsById.has(documentId));
   const visibleEditorPanes =
-    normalizeEditorPanes(editorPanes, (documentId) => documentsById.has(documentId)).length > 0
-      ? normalizeEditorPanes(editorPanes, (documentId) => documentsById.has(documentId))
+    normalizedEditorPanes.length > 0
+      ? normalizedEditorPanes
       : openDocuments[0]
         ? [{ id: "main" as const, documentId: openDocuments[0].id }]
         : [];

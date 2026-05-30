@@ -54,6 +54,7 @@ let workspaceRefreshTimer: NodeJS.Timeout | null = null;
 let workspaceRefreshInFlight = false;
 let appDataLoaded = false;
 const pendingExternalOpenFiles = new Map<string, string>();
+const documentReadCache = new Map<string, { size: number; mtimeMs: number; document: InformioDocument }>();
 
 const agentRuntime = new AgentRuntimeManager();
 
@@ -330,6 +331,9 @@ const isWritableTextDocument = (document: InformioDocument) => {
   if (!document.filePath) return true;
   return TEXT_EXTENSIONS.has(extname(document.filePath).toLowerCase());
 };
+
+const cachedDocumentMatches = (cached: { size: number; mtimeMs: number } | undefined, fileStats: { size: number; mtimeMs: number }) =>
+  Boolean(cached && cached.size === fileStats.size && cached.mtimeMs === fileStats.mtimeMs);
 
 const pathContains = (folder: string, path: string) => {
   const normalizedFolder = normalizeForCompare(folder);
@@ -767,12 +771,19 @@ const readDocumentsFromPaths = async (paths: string[]) => {
       .filter((document) => document.filePath)
       .map((document) => [document.filePath!, document] as const)
   );
-
   return (
     await Promise.all(
       paths.map(async (path) => {
         try {
           const existing = existingByPath.get(path);
+          const fileStats = await stat(path);
+          if (!fileStats.isFile()) return null;
+          const cached = documentReadCache.get(path);
+          if (cachedDocumentMatches(cached, fileStats)) {
+            return existing
+              ? { ...cached!.document, id: existing.id, updatedAt: existing.updatedAt }
+              : cached!.document;
+          }
           const ext = extname(path).toLowerCase();
           const isImage = IMAGE_EXTENSIONS.has(ext);
           const isVideo = VIDEO_EXTENSIONS.has(ext);
@@ -797,7 +808,7 @@ const readDocumentsFromPaths = async (paths: string[]) => {
             await backupMarkdownFile(path);
             await saveMarkdownFile(path, markdown);
           }
-          return {
+          const document = {
             id: existing?.id ?? `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             title: basename(path),
             filePath: path,
@@ -805,7 +816,10 @@ const readDocumentsFromPaths = async (paths: string[]) => {
             updatedAt: new Date().toISOString(),
             markdown
           };
+          documentReadCache.set(path, { size: fileStats.size, mtimeMs: fileStats.mtimeMs, document });
+          return document;
         } catch {
+          documentReadCache.delete(path);
           return null;
         }
       })
@@ -892,6 +906,9 @@ const refreshWorkspaceFromDisk = async (options: { emit?: boolean } = {}) => {
   }
 
   const filePathSet = new Set(allFilePaths);
+  Array.from(documentReadCache.keys()).forEach((path) => {
+    if (!filePathSet.has(path)) documentReadCache.delete(path);
+  });
   const refreshedDocuments = await readDocumentsFromPaths(allFilePaths);
   const isInsideTrackedProject = (path: string) => projectPaths.some((projectPath) => pathContains(projectPath, path));
   const nextDocuments = [
