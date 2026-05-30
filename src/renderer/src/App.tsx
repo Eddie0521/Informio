@@ -319,7 +319,7 @@ const SECRET_ITERATIONS = 210000;
 const SECRET_ALGORITHM = "aes-gcm";
 const SECRET_KDF = "pbkdf2-sha256";
 
-type SidebarMode = "files";
+type SidebarMode = "files" | "outline" | "properties";
 
 type OutlineItem = {
   id: string;
@@ -327,6 +327,10 @@ type OutlineItem = {
   level: number;
   line: number;
   order: number;
+};
+
+type OutlineTreeItem = OutlineItem & {
+  children: OutlineTreeItem[];
 };
 
 type OutlineJumpRequest = {
@@ -3576,6 +3580,24 @@ function getDocumentOutline(markdown: string): OutlineItem[] {
     .map((item, order) => ({ ...item, order }));
 }
 
+function buildOutlineTree(items: OutlineItem[]): OutlineTreeItem[] {
+  const roots: OutlineTreeItem[] = [];
+  const stack: OutlineTreeItem[] = [];
+
+  for (const item of items) {
+    const next: OutlineTreeItem = { ...item, children: [] };
+    while (stack.length && stack[stack.length - 1].level >= next.level) {
+      stack.pop();
+    }
+    const parent = stack[stack.length - 1];
+    if (parent) parent.children.push(next);
+    else roots.push(next);
+    stack.push(next);
+  }
+
+  return roots;
+}
+
 function formatRelative(value: string) {
   const diff = Date.now() - new Date(value).getTime();
   const minutes = Math.max(1, Math.round(diff / 60000));
@@ -4545,7 +4567,7 @@ function FileList({
           data-file-path={node.folder.path}
           data-file-title={node.folder.title}
           className={cn(
-            "group flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-bold text-[var(--text-muted)] transition-[background-color,color] hover:bg-white/65 hover:text-[var(--text-main)] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
+            "group flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-semibold text-[var(--text-muted)] transition-[background-color,color] hover:bg-white/65 hover:text-[var(--text-main)] active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
             isDropTarget && "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500/35"
           )}
           style={{ paddingLeft: 8 + depth * 14 }}
@@ -4631,7 +4653,7 @@ function FileList({
                           inlineRename,
                           "min-w-0 flex-1 rounded-md bg-white px-2 py-1 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-2 ring-emerald-500/45"
                         )
-                      : <span className="min-w-0 truncate text-[13px] font-normal text-[var(--text-main)]">{doc.title}</span>}
+                      : <span className="min-w-0 truncate text-[13px] font-semibold text-[var(--text-main)]">{doc.title}</span>}
                   </div>
                 </button>
               );
@@ -5252,35 +5274,66 @@ function OutlineList({
   width: number;
   onJump: (item: OutlineItem) => void;
 }) {
-  const outline = getDocumentOutline(document.markdown);
+  const outline = useMemo(() => getDocumentOutline(document.markdown), [document.markdown]);
+  const outlineTree = useMemo(() => buildOutlineTree(outline), [outline]);
+  const [expandedOutlineItems, setExpandedOutlineItems] = useState<Set<string>>(() => new Set(outline.map((item) => item.id)));
+
+  useEffect(() => {
+    setExpandedOutlineItems((current) => {
+      const next = new Set(current);
+      outline.forEach((item) => next.add(item.id));
+      return next;
+    });
+  }, [outline]);
+
+  const toggleOutlineItem = (id: string) => {
+    setExpandedOutlineItems((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const renderOutlineItem = (item: OutlineTreeItem, depth: number): ReactNode => {
+    const hasChildren = item.children.length > 0;
+    const open = expandedOutlineItems.has(item.id);
+    return (
+      <div key={item.id} className="space-y-1">
+        <div className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] leading-5 transition-[background-color,transform] active:scale-[0.99] hover:bg-white/70 focus-within:ring-2 focus-within:ring-emerald-500/45">
+          <button
+            type="button"
+            aria-label={open ? "折叠标题" : "展开标题"}
+            disabled={!hasChildren}
+            onClick={() => toggleOutlineItem(item.id)}
+            className={cn(
+              "grid h-4 w-4 shrink-0 place-items-center rounded-sm text-slate-400 transition-colors focus-visible:outline-none",
+              hasChildren ? "hover:bg-white hover:text-slate-600" : "opacity-0"
+            )}
+          >
+            {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+          <button
+            type="button"
+            onClick={() => onJump(item)}
+            className="min-w-0 flex-1 truncate text-left font-semibold leading-5 text-[var(--text-main)] focus-visible:outline-none"
+            style={{ paddingLeft: depth * 14, fontSize: 13 }}
+          >
+            {item.title}
+          </button>
+          {hasChildren ? (
+            <span className="shrink-0 font-mono text-[10px] font-semibold text-[var(--text-muted)]">{item.children.length}</span>
+          ) : null}
+        </div>
+        {hasChildren && open ? <div className="space-y-1">{item.children.map((child) => renderOutlineItem(child, depth + 1))}</div> : null}
+      </div>
+    );
+  };
 
   return (
     <aside className="context-panel h-full shrink-0" style={{ width }}>
-      <div className="flex h-[48px] items-center justify-between gap-2 border-b px-3">
-        <div className="min-w-0 truncate text-[12px] font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]">Outline</div>
-        <ChevronDown size={16} className="text-slate-500" />
-      </div>
-
-      <div className="space-y-1.5 px-3 py-3">
-        {outline.length ? (
-          outline.map((item, index) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onJump(item)}
-              className={cn(
-                "w-full rounded-md px-3 py-2.5 text-left transition-[background-color,transform] duration-150 active:scale-[0.99]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
-                index === 0 ? "bg-white shadow-[0_1px_4px_rgba(15,23,42,0.10),inset_0_0_0_1px_rgba(15,23,42,0.10)]" : "hover:bg-white/70"
-              )}
-              style={{ paddingLeft: `${12 + Math.max(0, item.level - 1) * 28}px` }}
-            >
-              <div className="flex min-w-0 items-center">
-                <span className="min-w-0 truncate text-[13px] font-bold text-[var(--text-main)]">{item.title}</span>
-              </div>
-            </button>
-          ))
-        ) : null}
+      <div className="space-y-1.5 overflow-y-auto px-3 py-3">
+        {outlineTree.length ? outlineTree.map((item) => renderOutlineItem(item, 0)) : null}
       </div>
     </aside>
   );
@@ -5384,11 +5437,6 @@ function PropertiesList({
 
   return (
     <aside className="context-panel h-full shrink-0" style={{ width }}>
-      <div className="flex h-[48px] items-center justify-between gap-2 border-b px-3">
-        <div className="min-w-0 truncate text-[12px] font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]">Properties</div>
-        <Bookmark size={15} className="text-slate-500" />
-      </div>
-
       <div className="space-y-1.5 overflow-y-auto px-3 py-3">
         {groups.length ? (
           groups.map((group) => {
@@ -5401,7 +5449,7 @@ function PropertiesList({
                   className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-[background-color,transform] active:scale-[0.99] hover:bg-white/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45"
                 >
                   {propertyOpen ? <ChevronDown size={14} className="shrink-0 text-slate-400" /> : <ChevronRight size={14} className="shrink-0 text-slate-400" />}
-                  <span className="min-w-0 flex-1 truncate text-[12px] font-bold text-[var(--text-main)]">{group.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--text-main)]">{group.name}</span>
                   <span className="shrink-0 font-mono text-[10px] font-semibold text-[var(--text-muted)]">{group.values.length}</span>
                 </button>
 
@@ -5419,7 +5467,7 @@ function PropertiesList({
                             style={{ paddingLeft: 24 }}
                           >
                             {valueOpen ? <ChevronDown size={13} className="shrink-0 text-slate-400" /> : <ChevronRight size={13} className="shrink-0 text-slate-400" />}
-                            <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-slate-700">{valueGroup.value}</span>
+                            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-slate-700">{valueGroup.value}</span>
                             <span className="shrink-0 font-mono text-[10px] font-semibold text-[var(--text-muted)]">{valueGroup.files.length}</span>
                           </button>
                           {valueOpen ? (
@@ -5440,7 +5488,7 @@ function PropertiesList({
                                     style={{ paddingLeft: 40 }}
                                   >
                                     <FileText size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
-                                    <span className="min-w-0 truncate text-[12px] font-semibold text-[var(--text-main)]">{document.title}</span>
+                                    <span className="min-w-0 truncate text-[13px] font-semibold text-[var(--text-main)]">{document.title}</span>
                                   </button>
                                 );
                               })}
@@ -12342,22 +12390,39 @@ export function App() {
 
 	          <div className="flex min-h-0 flex-1">
 	            {leftOpen ? (
-	              <FileList
-	                folders={data.folders}
-	                documents={data.documents}
-	                projects={data.projects ?? []}
-	                activeDocumentId={activeOpenDoc?.id ?? ""}
-	                onSelect={selectDocument}
-	                onCreate={createDocument}
-	                onCreateFolder={createFolder}
-	                onFileAction={(input) => { void executeFileSystemAction(input); }}
-	                onRenameProject={renameProject}
-	                onToggleProjectPinned={toggleProjectPinned}
-	                onRemoveProject={(path) => window.informio.removeProject(path).then(setData)}
-	                onDocumentDragStart={startDocumentDrag}
-	                width={leftPanelWidth}
-	                creationSignal={fileListCreationSignal}
-	              />
+	              sidebarMode === "files" ? (
+	                <FileList
+	                  folders={data.folders}
+	                  documents={data.documents}
+	                  projects={data.projects ?? []}
+	                  activeDocumentId={activeOpenDoc?.id ?? ""}
+	                  onSelect={selectDocument}
+	                  onCreate={createDocument}
+	                  onCreateFolder={createFolder}
+	                  onFileAction={(input) => { void executeFileSystemAction(input); }}
+	                  onRenameProject={renameProject}
+	                  onToggleProjectPinned={toggleProjectPinned}
+	                  onRemoveProject={(path) => window.informio.removeProject(path).then(setData)}
+	                  onDocumentDragStart={startDocumentDrag}
+	                  width={leftPanelWidth}
+	                  creationSignal={fileListCreationSignal}
+	                />
+	              ) : sidebarMode === "outline" ? (
+	                activeOpenDoc ? (
+	                  <OutlineList document={activeOpenDoc} width={leftPanelWidth} onJump={(item) => jumpToOutlineItem(activeOpenDoc.id, item)} />
+	                ) : (
+	                  <aside className="side-rail flex h-full shrink-0 items-center justify-center border-r px-4 text-[12px] font-semibold text-[var(--text-muted)]" style={{ width: leftPanelWidth }}>
+	                    无打开文档
+	                  </aside>
+	                )
+	              ) : (
+	                <PropertiesList
+	                  documents={data.documents}
+	                  activeDocumentId={activeOpenDoc?.id ?? ""}
+	                  width={leftPanelWidth}
+	                  onSelect={selectDocument}
+	                />
+	              )
 	            ) : null}
 	            {leftOpen ? <PanelResizeHandle label="Resize left panel" onPointerDown={(event) => startPanelResize("left", event)} /> : null}
 
@@ -12485,6 +12550,22 @@ export function App() {
 	                onClick={() => toggleBottomSidebar("files")}
 	              >
 	                <Folder size={14} />
+	              </IconButton>
+	              <IconButton
+	                label="大纲"
+	                className="h-6 w-6"
+	                pressed={sidebarMode === "outline" && leftOpen}
+	                onClick={() => toggleBottomSidebar("outline")}
+	              >
+	                <LayoutList size={14} />
+	              </IconButton>
+	              <IconButton
+	                label="属性"
+	                className="h-6 w-6"
+	                pressed={sidebarMode === "properties" && leftOpen}
+	                onClick={() => toggleBottomSidebar("properties")}
+	              >
+	                <Bookmark size={14} />
 	              </IconButton>
 	              <IconButton
 	                label="添加项目"
