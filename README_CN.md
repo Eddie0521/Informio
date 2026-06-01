@@ -9,7 +9,7 @@
 <h1 align="center">Informio</h1>
 
 <p align="center">
-  <a href="https://github.com/Eddie0521/Informio/releases/latest"><img src="https://img.shields.io/github/v/release/Eddie0521/Informio?style=flat-square&label=release" alt="Release" /></a>
+  <a href="https://github.com/Eddie0521/Informio/releases/latest"><img src="https://img.shields.io/github/v/release/Eddie0521/Informio?style=flat-square&label=release&cacheSeconds=300&v=2" alt="Release" /></a>
   <img src="https://img.shields.io/badge/macOS-supported-111827?style=flat-square&logo=apple" alt="支持 macOS" />
   <img src="https://img.shields.io/badge/Windows-supported-2563eb?style=flat-square&logo=windows" alt="支持 Windows" />
   <img src="https://img.shields.io/badge/Linux-supported-f59e0b?style=flat-square&logo=linux" alt="支持 Linux" />
