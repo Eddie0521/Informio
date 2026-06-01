@@ -2,6 +2,7 @@
   "name": "informio",
   "version": "0.1.9",
   "description": "A minimal Markdown editor with contextual MCP Agent assistance.",
+  "license": "AGPL-3.0-only",
   "homepage": "https://github.com/Eddie0521/Informio",
   "repository": {
     "type": "git",

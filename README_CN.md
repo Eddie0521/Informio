@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/macOS-supported-111827?style=flat-square&logo=apple" alt="支持 macOS" />
   <img src="https://img.shields.io/badge/Windows-supported-2563eb?style=flat-square&logo=windows" alt="支持 Windows" />
   <img src="https://img.shields.io/badge/Linux-supported-f59e0b?style=flat-square&logo=linux" alt="支持 Linux" />
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-10b981?style=flat-square" alt="MIT License" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-10b981?style=flat-square" alt="AGPL-3.0-only License" /></a>
 </p>
 
 <p align="center">
@@ -62,4 +62,4 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 
 ## License
 
-MIT License - Feel free to use and contribute.
+Informio 使用 GNU Affero General Public License v3.0 only（`AGPL-3.0-only`）授权。你可以在该协议条款下使用、学习、修改和再分发本项目；如果分发修改版本，或通过网络向用户提供修改后的版本，需要按同一协议提供对应源代码。

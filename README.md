@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/macOS-supported-111827?style=flat-square&logo=apple" alt="macOS supported" />
   <img src="https://img.shields.io/badge/Windows-supported-2563eb?style=flat-square&logo=windows" alt="Windows supported" />
   <img src="https://img.shields.io/badge/Linux-supported-f59e0b?style=flat-square&logo=linux" alt="Linux supported" />
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-10b981?style=flat-square" alt="MIT License" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-10b981?style=flat-square" alt="AGPL-3.0-only License" /></a>
 </p>
 
 <p align="center">
@@ -62,4 +62,4 @@ Informio is vibe-coded to satisfy everyday recording and note-taking needs. If y
 
 ## License
 
-MIT License - Feel free to use and contribute.
+Informio is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). You may use, study, modify, and redistribute it under the terms of the license. Modified versions that are distributed or made available over a network must provide the corresponding source code under the same license.
