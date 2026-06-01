@@ -386,7 +386,11 @@ const mergeRendererDocuments = (documents: InformioDocument[]) => {
   return merged;
 };
 
-const normalizeActiveDocumentId = (documents: InformioDocument[], activeDocumentId: string) => {
+const normalizeActiveDocumentId = (
+  documents: InformioDocument[],
+  activeDocumentId: string
+) => {
+  if (!activeDocumentId) return "";
   if (documents.some((doc) => doc.id === activeDocumentId)) return activeDocumentId;
   return documents[0]?.id ?? "";
 };
@@ -484,6 +488,13 @@ const decodeHtmlEntities = (value: string) =>
 
 const stripHtml = (value: string) => decodeHtmlEntities(value.replace(/<[^>]+>/g, "")).trim();
 
+const escapeHtmlAttr = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
 const cleanAttachmentName = (filePath: string) => {
   const extension = extname(filePath);
   const baseName =
@@ -544,7 +555,8 @@ const cleanMarkdownStorage = async (markdown: string, documentFolder?: string) =
 
   cleaned = await replaceAsync(cleaned, /<(video|audio)\b([^>]*)><\/\1>/gi, async (raw, kind, attrs) => {
     const src = await ensureAttachmentReference(documentFolder, parseHtmlAttr(attrs, "src"), parseHtmlAttr(attrs, "title") || kind);
-    return markdownLink(stripHtml(parseHtmlAttr(attrs, "title") || kind), src);
+    const title = stripHtml(parseHtmlAttr(attrs, "title") || parseHtmlAttr(attrs, "aria-label") || kind);
+    return `<${kind.toLowerCase()} controls src="${escapeHtmlAttr(src)}" title="${escapeHtmlAttr(title)}"></${kind.toLowerCase()}>`;
   });
 
   cleaned = await replaceAsync(cleaned, /<img\b([^>]*?)\/?>/gi, async (raw, attrs) => {
@@ -754,8 +766,17 @@ const generatedMarkdownForAssetPath = (path: string, documentPath = path) => {
   const ext = extname(path).toLowerCase();
   const href = markdownPathFromDocumentPath(documentPath, path);
   if (IMAGE_EXTENSIONS.has(ext)) return markdownImage(basename(path), href);
-  if (VIDEO_EXTENSIONS.has(ext) || AUDIO_EXTENSIONS.has(ext) || PDF_EXTENSIONS.has(ext)) return markdownLink(basename(path), href);
+  if (VIDEO_EXTENSIONS.has(ext)) return `<video controls src="${escapeHtmlAttr(href)}" title="${escapeHtmlAttr(basename(path))}"></video>`;
+  if (AUDIO_EXTENSIONS.has(ext)) return `<audio controls src="${escapeHtmlAttr(href)}" title="${escapeHtmlAttr(basename(path))}"></audio>`;
+  if (PDF_EXTENSIONS.has(ext)) return markdownLink(basename(path), href);
   return null;
+};
+
+const normalizeAssetDocumentMarkdown = (document: InformioDocument) => {
+  if (!document.filePath) return document;
+  const markdown = generatedMarkdownForAssetPath(document.filePath);
+  if (!markdown || markdown === document.markdown) return document;
+  return { ...document, markdown };
 };
 
 const withUpdatedLocalFileUrls = (document: InformioDocument, resolveNextPath: (path: string) => string | null) => {
@@ -1967,7 +1988,7 @@ app.whenReady().then(async () => {
   appData = await loadAppData();
   appData = await saveAppData({
     ...appData,
-    documents: await cleanDocumentsMarkdown(appData.documents, { writeFiles: true })
+    documents: await cleanDocumentsMarkdown(appData.documents.map(normalizeAssetDocumentMarkdown), { writeFiles: true })
   });
   appDataLoaded = true;
   const startupFolder = appData.settings.shortcuts.quickFolder || appData.workspacePath || DEFAULT_WORKSPACE_PATH;

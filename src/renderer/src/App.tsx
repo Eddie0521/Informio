@@ -9,14 +9,14 @@ import type {
   ReactNode,
   WheelEvent as ReactWheelEvent
 } from "react";
-import type { Editor, MarkdownParseHelpers, MarkdownRendererHelpers } from "@tiptap/core";
-import { Extension, InputRule, mergeAttributes, Node, ResizableNodeView } from "@tiptap/core";
+import type { Editor, MarkdownParseHelpers, MarkdownRendererHelpers, PasteRuleMatch } from "@tiptap/core";
+import { Extension, InputRule, markPasteRule, mergeAttributes, Node, ResizableNodeView } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { EditorContent, NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Fragment as ProseMirrorFragment } from "@tiptap/pm/model";
-import { NodeSelection, TextSelection } from "@tiptap/pm/state";
+import { DOMSerializer, Fragment as ProseMirrorFragment } from "@tiptap/pm/model";
+import { NodeSelection, Plugin, TextSelection } from "@tiptap/pm/state";
 import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -677,6 +677,21 @@ const renderImageMarkdown = (attrs: { src?: string | null; alt?: string | null; 
 };
 
 const ResizableImage = Image.extend({
+  markdownTokenizer: {
+    name: "image",
+    level: "block",
+    start(src: string) {
+      return src.match(/^!\[/m)?.index ?? -1;
+    },
+    tokenize(src: string) {
+      const match = src.match(/^!\[([^\]\n]*)]\(([^)\s]+)(?:\s+["']([^"'\n]+)["'])?\)(?:\n|$)/);
+      if (!match) return undefined;
+      return { type: "image", raw: match[0], text: match[1], src: match[2], title: match[3] ?? "" };
+    }
+  },
+  parseMarkdown(token: MarkdownTokenLike, h: MarkdownHelperLike) {
+    return h.createNode("image", { src: token.src ?? "", alt: token.text ?? "", title: token.title ?? null }, []);
+  },
   renderMarkdown(node: { attrs?: { src?: string | null; alt?: string | null; title?: string | null; width?: number | string | null } }) {
     return renderImageMarkdown(node.attrs ?? {});
   },
@@ -702,7 +717,7 @@ const ResizableImage = Image.extend({
         }
       });
 
-      el.src = String(HTMLAttributes.src ?? "");
+      el.src = resolveMarkdownAssetSrc(String(HTMLAttributes.src ?? ""), this.options.assetBasePath);
       el.style.height = "auto";
 
       const nodeView = new ResizableNodeView({
@@ -1275,6 +1290,46 @@ const pathExtName = (path: string) => {
   return dotIndex > 0 ? base.slice(dotIndex) : "";
 };
 
+const isAbsoluteAssetPath = (path: string) => path.startsWith("/") || /^[A-Za-z]:\//.test(path);
+
+const hasRenderableScheme = (src: string) => /^(?:https?:|data:|blob:|local-file:)/i.test(src);
+
+const safeDecodeUri = (value: string) => {
+  try {
+    return decodeURI(value);
+  } catch {
+    return value;
+  }
+};
+
+const encodeLocalFilePath = (path: string) => normalizePath(path).split("/").map((part) => encodeURIComponent(part)).join("/");
+
+const joinAssetPath = (folder: string, assetPath: string) => {
+  const normalizedFolder = normalizePath(folder);
+  const normalizedAsset = normalizePath(assetPath).replace(/^\.?\//, "");
+  return `${normalizedFolder}/${normalizedAsset}`;
+};
+
+const resolveMarkdownAssetSrc = (src: string, basePath?: string) => {
+  const trimmed = src.trim();
+  if (!trimmed || hasRenderableScheme(trimmed)) return trimmed;
+  if (/^file:\/\//i.test(trimmed)) return trimmed.replace(/^file:\/\//i, "local-file://");
+  const [pathPart, suffix = ""] = trimmed.split(/([?#].*)/, 2);
+  const decodedPath = safeDecodeUri(pathPart);
+  const baseFolder = basePath ? (pathExtName(basePath) ? pathDirName(basePath) : normalizePath(basePath)) : "";
+  const absolutePath = isAbsoluteAssetPath(decodedPath)
+    ? decodedPath
+    : baseFolder
+      ? joinAssetPath(baseFolder, decodedPath)
+      : "";
+  return absolutePath ? `local-file://${encodeLocalFilePath(absolutePath)}${suffix}` : trimmed;
+};
+
+const assetExtensionFromSrc = (src: string) => {
+  const [pathPart] = src.trim().split(/[?#]/, 1);
+  return pathExtName(safeDecodeUri(pathPart)).slice(1).toLowerCase();
+};
+
 const pathContains = (folder: string, path: string) => {
   const normalizedFolder = normalizePath(folder);
   const normalizedPath = normalizePath(path);
@@ -1492,6 +1547,7 @@ const isMarkdownDocument = (document?: InformioDocument | null) => {
 
 const videoExtensions = new Set(["mp4", "mov", "webm"]);
 const audioExtensions = new Set(["mp3", "wav", "m4a", "ogg"]);
+const mediaExtensions = new Set([...videoExtensions, ...audioExtensions]);
 const lowlight = createLowlight(common);
 lowlight.registerAlias({
   javascript: ["js", "jsx"],
@@ -1513,7 +1569,6 @@ const codeLanguageAliases: Record<string, string> = {
   sh: "bash",
   yml: "yaml"
 };
-let mermaidInitialized = false;
 
 const isVideoFile = (path?: string) => {
   if (!path) return false;
@@ -1523,6 +1578,13 @@ const isVideoFile = (path?: string) => {
 const isAudioFile = (path?: string) => {
   if (!path) return false;
   return audioExtensions.has(path.split(".").pop()?.toLowerCase() ?? "");
+};
+
+const mediaKindFromSrc = (src: string) => {
+  const extension = assetExtensionFromSrc(src);
+  if (videoExtensions.has(extension)) return "video";
+  if (audioExtensions.has(extension)) return "audio";
+  return "";
 };
 
 const isEmbeddableAssetFile = (path?: string) =>
@@ -1618,6 +1680,14 @@ const jsonSourceText = (node: JSONContent, fallbackType: string) =>
     : nodeSourceAttr(node as { attrs?: { source?: string } }, fallbackType);
 
 const sourceContent = (source: string, h: MarkdownHelperLike) => [h.createTextNode(source)];
+
+const sourceBackedBlockContent = (source: string) => [{ type: "text", text: source }];
+
+const sourceBackedBlockJson = (type: string, source: string, focus = false): JSONContent => ({
+  type,
+  attrs: { source, focusKey: focus ? String(Date.now()) : "" },
+  content: sourceBackedBlockContent(source)
+});
 
 const bytesToBase64 = (bytes: Uint8Array) => {
   let binary = "";
@@ -1792,6 +1862,11 @@ const chartTextFromSource = (source: string) => {
   return (match?.[1] ?? source).trim();
 };
 
+const isDiscardableMermaidSource = (source: string) => {
+  const trimmed = source.trim();
+  return !trimmed || /^`{1,3}(?:\s*mermaid)?\s*`{0,3}$/i.test(trimmed) || /^mermaid\s*`{0,3}$/i.test(trimmed);
+};
+
 const footnoteFromSource = (source: string) => {
   const match = source.trim().match(/^\[\^([^\]]+)]:\s*([\s\S]*)$/);
   return { index: match?.[1] ?? "1", text: match?.[2]?.trim() ?? source.trim() };
@@ -1876,6 +1951,16 @@ const parseCodeBlockRawMarkdown = (value: string) => {
   };
 };
 
+const codeBlockEditableRange = (value: string) => {
+  const firstLineEnd = value.indexOf("\n");
+  const closingFenceStart = value.lastIndexOf("\n```");
+  if (firstLineEnd < 0 || closingFenceStart <= firstLineEnd) return null;
+  return {
+    from: firstLineEnd + 1,
+    to: closingFenceStart
+  };
+};
+
 const replaceNodeWithPlainText = (editor: Editor, getPos: NodeViewPositionGetter, node: NodeViewNode, text: string) => {
   const position = getPos();
   if (typeof position !== "number") return;
@@ -1939,12 +2024,15 @@ const markdownOffsetForLine = (markdown: string, line: number) => {
 
 function CodeBlockView({ editor, getPos, node, selected, updateAttributes }: ReactNodeViewProps) {
   const language = normalizeCodeLanguage(String(node.attrs.language || "plaintext"));
+  const displayLanguage = language === "plaintext" ? "" : language;
   const [sourceFocused, setSourceFocused] = useState(false);
-  const rawSource = codeBlockRawMarkdown(language, node.textContent);
-  const [draftSource, setDraftSource] = useState(rawSource);
+  const [draftCode, setDraftCode] = useState(node.textContent);
+  const [draftLanguage, setDraftLanguage] = useState(displayLanguage);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const sourceRef = useRef<HTMLTextAreaElement | null>(null);
+  const didAutoFocusSourceRef = useRef(false);
   const sourceActive = useNodeLivePreviewState(editor, getPos, node, selected);
-  const active = sourceActive || sourceFocused;
+  const active = sourceFocused;
   const previewHtml = highlightedCodeHtml(language, node.textContent);
   const resizeSourceTextarea = () => {
     const textarea = sourceRef.current;
@@ -1954,54 +2042,167 @@ function CodeBlockView({ editor, getPos, node, selected, updateAttributes }: Rea
   };
 
   useEffect(() => {
-    if (!sourceFocused) setDraftSource(rawSource);
-  }, [rawSource, sourceFocused]);
+    if (sourceFocused) return;
+    setDraftCode(node.textContent);
+    setDraftLanguage(displayLanguage);
+  }, [displayLanguage, node.textContent, sourceFocused]);
 
   useLayoutEffect(() => {
     resizeSourceTextarea();
-  }, [active, draftSource]);
+  }, [active, draftCode]);
+
+  const commitLanguage = (value = draftLanguage) => {
+    const position = getPos();
+    if (typeof position !== "number") return;
+    const nextLanguage = normalizeCodeLanguage(value || "plaintext");
+    if (nextLanguage === language) return;
+    editor.view.dispatch(editor.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, language: nextLanguage }));
+  };
 
   useEffect(() => {
-    if (!active) return;
+    if (!sourceFocused) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const wrapper = wrapperRef.current;
+      if (!wrapper || !(event.target instanceof globalThis.Node) || wrapper.contains(event.target)) return;
+      commitLanguage();
+      setSourceFocused(false);
+      sourceRef.current?.blur();
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [commitLanguage, sourceFocused]);
+
+  useEffect(() => {
+    if (!sourceActive || sourceFocused || !editor.view.hasFocus()) return;
+    setSourceFocused(true);
+  }, [editor, sourceActive, sourceFocused]);
+
+  const focusSourceBlock = () => {
+    setSourceFocused(true);
+    window.setTimeout(resizeSourceTextarea, 0);
+  };
+
+  const blurSourceBlockIfFocusLeft = () => {
+    window.setTimeout(() => {
+      const wrapper = wrapperRef.current;
+      const activeElement = document.activeElement;
+      if (wrapper && activeElement && wrapper.contains(activeElement)) return;
+      commitLanguage();
+      setSourceFocused(false);
+    }, 0);
+  };
+
+  useEffect(() => {
+    if (!active) {
+      didAutoFocusSourceRef.current = false;
+      return;
+    }
+    if (didAutoFocusSourceRef.current) return;
+    didAutoFocusSourceRef.current = true;
     window.setTimeout(() => {
       const textarea = sourceRef.current;
       if (!textarea) return;
       resizeSourceTextarea();
       textarea.focus();
-      textarea.setSelectionRange(Math.min(textarea.value.length, 4 + (language === "plaintext" ? 0 : language.length)), Math.min(textarea.value.length, 4 + (language === "plaintext" ? 0 : language.length)));
+      textarea.setSelectionRange(0, 0);
     }, 0);
-  }, [active, language]);
+  }, [active]);
 
-  const applyRawSource = (value: string) => {
-    setDraftSource(value);
-    const parsed = parseCodeBlockRawMarkdown(value);
-    if (!parsed) {
-      replaceNodeWithPlainText(editor, getPos, node, value);
-      return;
-    }
+  const applyCode = (value: string) => {
+    setDraftCode(value);
     const position = getPos();
     if (typeof position !== "number") return;
-    const textContent = parsed.code ? editor.schema.text(parsed.code) : ProseMirrorFragment.empty;
-    const tr = editor.state.tr
-      .setNodeMarkup(position, undefined, { ...node.attrs, language: parsed.language })
-      .replaceWith(position + 1, position + node.nodeSize - 1, textContent);
+    const textContent = value ? editor.schema.text(value) : ProseMirrorFragment.empty;
+    const tr = editor.state.tr.replaceWith(position + 1, position + node.nodeSize - 1, textContent);
     editor.view.dispatch(tr);
+  };
+
+  const applyLanguage = (value: string) => {
+    setDraftLanguage(value);
+  };
+
+  const handleSourceKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    event.stopPropagation();
+    const textarea = event.currentTarget;
+    const value = textarea.value;
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+
+    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && selectionStart === selectionEnd) {
+      const position = getPos();
+      if (typeof position !== "number") return;
+      const currentLineStart = value.lastIndexOf("\n", Math.max(0, selectionStart - 1)) + 1;
+      const currentLineEndIndex = value.indexOf("\n", selectionStart);
+      const currentLineEnd = currentLineEndIndex === -1 ? value.length : currentLineEndIndex;
+      const atFirstCodeLine = currentLineStart === 0;
+      const atLastCodeLine = currentLineEnd === value.length;
+      if ((event.key === "ArrowUp" && atFirstCodeLine) || (event.key === "ArrowDown" && atLastCodeLine)) {
+        event.preventDefault();
+        setSourceFocused(false);
+        textarea.blur();
+        editor
+          .chain()
+          .focus()
+          .setTextSelection(event.key === "ArrowUp" ? position : position + node.nodeSize)
+          .run();
+        return;
+      }
+    }
+
+    if (event.key === "Escape") {
+      const position = getPos();
+      if (typeof position !== "number") return;
+      event.preventDefault();
+      setSourceFocused(false);
+      textarea.blur();
+      editor.chain().focus().setTextSelection(position + node.nodeSize).run();
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+
+    event.preventDefault();
+    const lineStart = value.lastIndexOf("\n", Math.max(0, selectionStart - 1)) + 1;
+    const selectedText = value.slice(lineStart, selectionEnd);
+
+    if (event.shiftKey) {
+      const outdented = selectedText.replace(/^(?: {1,2}|\t)/gm, "");
+      const nextValue = `${value.slice(0, lineStart)}${outdented}${value.slice(selectionEnd)}`;
+      const removed = selectedText.length - outdented.length;
+      applyCode(nextValue);
+      window.setTimeout(() => {
+        textarea.setSelectionRange(Math.max(lineStart, selectionStart - Math.min(2, removed)), Math.max(lineStart, selectionEnd - removed));
+      }, 0);
+      return;
+    }
+
+    const indented = selectedText.includes("\n") ? selectedText.replace(/^/gm, "  ") : `  ${value.slice(selectionStart, selectionEnd)}`;
+    const replaceFrom = selectedText.includes("\n") ? lineStart : selectionStart;
+    const replaceTo = selectedText.includes("\n") ? selectionEnd : selectionEnd;
+    const nextValue = `${value.slice(0, replaceFrom)}${indented}${value.slice(replaceTo)}`;
+    applyCode(nextValue);
+    window.setTimeout(() => {
+      const added = indented.length - value.slice(replaceFrom, replaceTo).length;
+      textarea.setSelectionRange(selectionStart + 2, selectionEnd + added);
+    }, 0);
   };
 
   return (
     <NodeViewWrapper
+      ref={wrapperRef}
       className={cn("informio-code-block", active && "is-editing")}
       onMouseDown={(event: ReactMouseEvent) => {
         if (active) return;
         event.preventDefault();
+        setSourceFocused(true);
         focusNodeSource(editor, getPos);
       }}
     >
       <div className={cn("informio-code-source", !active && "is-hidden-source-content")}>
         <textarea
           ref={sourceRef}
-          value={draftSource}
-          rows={Math.max(3, draftSource.split("\n").length)}
+          value={draftCode}
+          rows={Math.max(3, draftCode.split("\n").length)}
           contentEditable={false}
           spellCheck={false}
           autoCapitalize="off"
@@ -2011,12 +2212,36 @@ function CodeBlockView({ editor, getPos, node, selected, updateAttributes }: Rea
             event.stopPropagation();
           }}
           onFocus={() => {
-            setSourceFocused(true);
-            window.setTimeout(resizeSourceTextarea, 0);
+            focusSourceBlock();
           }}
-          onBlur={() => setSourceFocused(false)}
-          onChange={(event) => applyRawSource(event.currentTarget.value)}
-          onKeyDown={(event) => event.stopPropagation()}
+          onBlur={blurSourceBlockIfFocusLeft}
+          onChange={(event) => applyCode(event.currentTarget.value)}
+          onKeyDown={handleSourceKeyDown}
+        />
+        <input
+          value={draftLanguage}
+          aria-label="代码语言"
+          placeholder="plain text"
+          spellCheck={false}
+          className="informio-code-language-widget"
+          onMouseDown={(event) => event.stopPropagation()}
+          onFocus={focusSourceBlock}
+          onBlur={blurSourceBlockIfFocusLeft}
+          onChange={(event) => applyLanguage(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key !== "Escape" && event.key !== "Enter") return;
+            event.preventDefault();
+            if (event.key === "Enter") {
+              commitLanguage(event.currentTarget.value);
+            } else {
+              setDraftLanguage(displayLanguage);
+            }
+            setSourceFocused(false);
+            event.currentTarget.blur();
+            const position = getPos();
+            if (typeof position === "number") editor.chain().focus().setTextSelection(position + node.nodeSize).run();
+          }}
         />
       </div>
       {!active ? (
@@ -2109,16 +2334,21 @@ function MathInlineView({ editor, getPos, node, selected, updateAttributes }: Re
 function ChartPreview({ source }: { source: string }) {
   const [result, setResult] = useState<{ svg?: string; error?: string }>({});
   const id = useMemo(() => `informio-mermaid-${Math.random().toString(36).slice(2)}`, []);
+  const diagram = chartTextFromSource(source);
+  const discardable = isDiscardableMermaidSource(source) || !diagram;
 
   useEffect(() => {
     let cancelled = false;
+    if (discardable) {
+      setResult({});
+      return () => {
+        cancelled = true;
+      };
+    }
     import("mermaid")
       .then(({ default: mermaid }) => {
-        if (!mermaidInitialized) {
-          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
-          mermaidInitialized = true;
-        }
-        return mermaid.render(id, chartTextFromSource(source));
+        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", suppressErrorRendering: true, theme: "neutral" });
+        return mermaid.render(id, diagram);
       })
       .then(({ svg }) => {
         if (!cancelled) setResult({ svg });
@@ -2129,8 +2359,9 @@ function ChartPreview({ source }: { source: string }) {
     return () => {
       cancelled = true;
     };
-  }, [id, source]);
+  }, [diagram, discardable, id]);
 
+  if (discardable) return <div className="informio-block-preview-muted">Empty diagram</div>;
   if (result.error) return <div className="informio-block-error">{result.error}</div>;
   if (!result.svg) return <div className="informio-block-preview-muted">Rendering diagram...</div>;
   return <div className="informio-mermaid-preview" dangerouslySetInnerHTML={{ __html: result.svg }} />;
@@ -2161,16 +2392,31 @@ function StructuredBlockPreview({ name, source }: { name: string; source: string
   return (
     <div className={cn("informio-callout-preview", `informio-callout-${normalizeCalloutTitle(callout.title).toLowerCase()}`)}>
       <strong>{normalizeCalloutTitle(callout.title)}</strong>
-      <p>{callout.text}</p>
+      <p>{callout.text || "\u00a0"}</p>
     </div>
   );
 }
+
+const replaceSourceBlockWithParagraph = (editor: Editor, getPos: NodeViewPositionGetter, node: NodeViewNode) => {
+  const position = getPos();
+  if (typeof position !== "number") return false;
+  const paragraph = editor.schema.nodes.paragraph?.create();
+  if (!paragraph) return false;
+  const tr = editor.state.tr.replaceWith(position, position + node.nodeSize, paragraph);
+  tr.setSelection(TextSelection.create(tr.doc, Math.min(position + 1, tr.doc.content.size)));
+  editor.view.dispatch(tr);
+  return true;
+};
+
+const isDiscardableSourceRemainder = (typeName: string, source: string) =>
+  source.trim() === "" || (typeName === "chartBlock" && isDiscardableMermaidSource(source));
 
 function EditableSourceBlockView({ editor, getPos, node, selected, updateAttributes }: ReactNodeViewProps) {
   const focusKey = (node.attrs as { focusKey?: string }).focusKey;
   const savedSource = (node.attrs as { source?: string }).source;
   const active = useNodeLivePreviewState(editor, getPos, node, selected);
   const source = sourceText(node);
+  const userEditedSourceRef = useRef(false);
 
   useEffect(() => {
     if (focusKey) {
@@ -2179,15 +2425,20 @@ function EditableSourceBlockView({ editor, getPos, node, selected, updateAttribu
   }, [editor, focusKey, getPos]);
 
   useEffect(() => {
+    if (active) userEditedSourceRef.current = true;
+  }, [active]);
+
+  useEffect(() => {
     const nextSource = node.textContent;
-    if (nextSource === "") {
+    if (nextSource.trim() === "") {
       const position = getPos();
       if (typeof position !== "number") return;
-      const paragraph = editor.schema.nodes.paragraph?.create();
-      if (!paragraph) return;
-      const tr = editor.state.tr.replaceWith(position, position + node.nodeSize, paragraph);
-      tr.setSelection(TextSelection.create(tr.doc, Math.min(position + 1, tr.doc.content.size)));
-      editor.view.dispatch(tr);
+      if (savedSource && !userEditedSourceRef.current) {
+        const tr = editor.state.tr.replaceWith(position + 1, position + node.nodeSize - 1, editor.schema.text(savedSource));
+        editor.view.dispatch(tr);
+        return;
+      }
+      replaceSourceBlockWithParagraph(editor, getPos, node);
       return;
     }
     if (savedSource === nextSource && !focusKey) return;
@@ -2197,6 +2448,12 @@ function EditableSourceBlockView({ editor, getPos, node, selected, updateAttribu
   return (
     <NodeViewWrapper
       className={cn("informio-source-block", active && "is-editing")}
+      onKeyDownCapture={(event: ReactKeyboardEvent) => {
+        if (!active || (event.key !== "Backspace" && event.key !== "Delete")) return;
+        if (!isDiscardableSourceRemainder(node.type.name, node.textContent)) return;
+        event.preventDefault();
+        replaceSourceBlockWithParagraph(editor, getPos, node);
+      }}
       onMouseDown={(event: ReactMouseEvent) => {
         if (active) return;
         event.preventDefault();
@@ -2563,15 +2820,181 @@ const UnderlineMark = UnderlineExtension.extend({
   }
 } as never);
 
-const MarkdownLink = Link.extend({
+const INVALID_AUTO_LINK_CHAR_PATTERN = /[\u3400-\u9fff\uf900-\ufaff，。！？；：、（）【】《》“”‘’]/;
+const URL_STOP_CHAR_PATTERN = /[\u3400-\u9fff\uf900-\ufaff，。！？；：、（）：【】《》“”‘’]/;
+const TRAILING_URL_PUNCTUATION_PATTERN = /[.,!?;:，。！？；：、]+$/;
+const PASTED_HTTP_URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
+
+const countUrlCharacters = (value: string, character: string) => value.split(character).length - 1;
+
+const trimUnmatchedTrailingClosers = (value: string) => {
+  let trimmed = value;
+  const pairs: Array<[string, string]> = [
+    ["(", ")"],
+    ["[", "]"]
+  ];
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [open, close] of pairs) {
+      if (trimmed.endsWith(close) && countUrlCharacters(trimmed, close) > countUrlCharacters(trimmed, open)) {
+        trimmed = trimmed.slice(0, -1);
+        changed = true;
+      }
+    }
+  }
+
+  return trimmed;
+};
+
+const cleanPastedHttpUrl = (value: string) => {
+  const stopIndex = value.search(URL_STOP_CHAR_PATTERN);
+  let cleaned = stopIndex >= 0 ? value.slice(0, stopIndex) : value;
+  cleaned = cleaned.replace(TRAILING_URL_PUNCTUATION_PATTERN, "");
+  cleaned = trimUnmatchedTrailingClosers(cleaned);
+  cleaned = cleaned.replace(TRAILING_URL_PUNCTUATION_PATTERN, "");
+
+  try {
+    const parsed = new URL(cleaned);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? cleaned : "";
+  } catch {
+    return "";
+  }
+};
+
+const findPastedHttpUrlMatches = (text: string): PasteRuleMatch[] => {
+  const matches: PasteRuleMatch[] = [];
+
+  for (const match of text.matchAll(PASTED_HTTP_URL_PATTERN)) {
+    const raw = match[0] ?? "";
+    const cleaned = cleanPastedHttpUrl(raw);
+    if (!cleaned) continue;
+    matches.push({
+      text: cleaned,
+      data: { href: cleaned },
+      index: match.index ?? 0
+    });
+  }
+
+  return matches;
+};
+
+const MarkdownLink = Link.extend({} as never);
+
+type MarkdownParserEditor = Editor & {
+  markdown?: {
+    parse: (markdown: string) => JSONContent | JSONContent[];
+  };
+};
+
+const MARKDOWN_PASTE_BLOCK_PATTERN =
+  /(^|\n)(#{1,6}\s+\S|>\s+\S|[-*+]\s+\S|\d+\.\s+\S|-\s+\[[ xX]\]\s+\S|```|~~~|\|.+\|(?:\n\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?)?|\$\$|\[\^[^\]]+]:\s+\S)/;
+const MARKDOWN_PASTE_INLINE_PATTERN =
+  /(\*\*[^*\n][\s\S]*?[^*\n]\*\*|__[^_\n][\s\S]*?[^_\n]__|`[^`\n]+`|!\[[^\]\n]*]\([^) \n]+(?:\s+["'][^"'\n]*["'])?\)|\[[^\]\n]+]\([^) \n]+(?:\s+["'][^"'\n]*["'])?\)|\[\[[^\]\n]+]])/;
+
+const looksLikeMarkdownPaste = (text: string) => {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return false;
+  if (cleanPastedHttpUrl(normalized) === normalized) return false;
+  return MARKDOWN_PASTE_BLOCK_PATTERN.test(normalized) || MARKDOWN_PASTE_INLINE_PATTERN.test(normalized);
+};
+
+const inlineMarkdownLinkPattern = /(^|[^!])\[([^\]\n]+)\]\((\S+?)(?:\s+["']([^"'\n]*)["'])?\)$/;
+const imageMarkdownPattern = /!\[([^\]\n]*)\]\((\S+?)(?:\s+["']([^"'\n]*)["'])?\)$/;
+
+const currentPlainParagraph = (editor: Editor) => {
+  const { selection } = editor.state;
+  if (!selection.empty) return null;
+  const parent = selection.$from.parent;
+  if (parent.type.name !== "paragraph") return null;
+  if (selection.$from.parentOffset !== parent.content.size) return null;
+  const from = selection.$from.before();
+  const to = selection.$from.after();
+  return { from, to, text: parent.textContent.trim() };
+};
+
+const tableJsonFromHeaderRow = (headerLine: string): JSONContent | null => {
+  if (!isExplicitMarkdownTableRow(headerLine)) return null;
+  const header = parseMarkdownTableRow(headerLine);
+  if (!header) return null;
+  const paragraph = (text?: string): JSONContent => (text ? { type: "paragraph", content: [{ type: "text", text }] } : { type: "paragraph" });
+  return {
+    type: "table",
+    content: [
+      {
+        type: "tableRow",
+        content: header.map((cell) => ({
+          type: "tableHeader",
+          content: [paragraph(cell)]
+        }))
+      },
+      {
+        type: "tableRow",
+        content: header.map(() => ({
+          type: "tableCell",
+          content: [paragraph()]
+        }))
+      }
+    ]
+  };
+};
+
+const sourceBlockContent = (source: string) => [{ type: "text", text: source }];
+
+const htmlFromSelection = (editor: Editor, from: number, to: number) => {
+  const serializer = DOMSerializer.fromSchema(editor.state.schema);
+  const container = document.createElement("div");
+  container.appendChild(serializer.serializeFragment(editor.state.doc.slice(from, to).content));
+  return container.innerHTML;
+};
+
+const markdownFromSelection = (editor: MarkdownParserEditor, from: number, to: number) => {
+  const blockLike = !editor.state.doc.resolve(from).sameParent(editor.state.doc.resolve(to));
+  return serializeSelectionFragmentToMarkdown(editor, from, to, blockLike ? "block" : "inline");
+};
+
+const sanitizeHtmlForPaste = (html: string) => {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  template.content.querySelectorAll("script, style, iframe, object, embed, link, meta").forEach((node) => node.remove());
+  template.content.querySelectorAll("*").forEach((node) => {
+    Array.from(node.attributes).forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (name.startsWith("on") || ((name === "href" || name === "src") && value.startsWith("javascript:"))) {
+        node.removeAttribute(attribute.name);
+      }
+    });
+  });
+  return template.innerHTML.trim();
+};
+
+const TyporaMarkdownInput = Extension.create({
+  name: "typoraMarkdownInput",
   addInputRules() {
     return [
       new InputRule({
-        find: /(^|[^!])\[([^\]\n]+)\]\((\S+?)(?:\s+["'][^"'\n]*["'])?\)$/,
+        find: imageMarkdownPattern,
+        handler: ({ match, range, chain }) => {
+          const alt = match[1] ?? "";
+          const src = match[2]?.trim() ?? "";
+          const title = match[3]?.trim() || alt;
+          if (!src) return;
+          chain()
+            .deleteRange(range)
+            .insertContentAt(range.from, { type: "image", attrs: { src, alt, title } })
+            .createParagraphNear()
+            .run();
+        }
+      }),
+      new InputRule({
+        find: inlineMarkdownLinkPattern,
         handler: ({ match, range, chain }) => {
           const prefix = match[1] ?? "";
           const text = match[2]?.trim() ?? "";
           const href = match[3]?.trim() ?? "";
+          const title = match[4]?.trim();
           if (!text || !href) return;
           const from = range.from + prefix.length;
           chain()
@@ -2579,20 +3002,12 @@ const MarkdownLink = Link.extend({
             .insertContentAt(from, {
               type: "text",
               text,
-              marks: [{ type: "link", attrs: { href } }]
+              marks: [{ type: "link", attrs: { href, title: title || null } }]
             })
             .setTextSelection(from + text.length)
             .run();
         }
-      })
-    ];
-  }
-} as never);
-
-const InlineCodeTyping = Extension.create({
-  name: "inlineCodeTyping",
-  addInputRules() {
-    return [
+      }),
       new InputRule({
         find: /(^|[^`])`([^`\n]+)`$/,
         handler: ({ match, range, chain }) => {
@@ -2605,6 +3020,130 @@ const InlineCodeTyping = Extension.create({
             .insertContentAt(from, { type: "text", text, marks: [{ type: "code" }] })
             .setTextSelection(from + text.length)
             .run();
+        }
+      })
+    ];
+  },
+  addPasteRules() {
+    return [
+      markPasteRule({
+        find: findPastedHttpUrlMatches,
+        type: this.editor.schema.marks.link,
+        getAttributes: (match) => ({
+          href: match.data?.href
+        })
+      })
+    ];
+  },
+  addProseMirrorPlugins() {
+    const editor = this.editor as MarkdownParserEditor;
+
+    return [
+      new Plugin({
+        props: {
+          handleKeyDown(_view, event) {
+            if (event.key !== "Enter" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return false;
+            if (editor.view.composing) return false;
+
+            const block = currentPlainParagraph(editor);
+            if (!block || !block.text) return false;
+
+            if (/^(?:---|\*\*\*)$/.test(block.text)) {
+              event.preventDefault();
+              editor
+                .chain()
+                .focus()
+                .deleteRange({ from: block.from, to: block.to })
+                .setHorizontalRule()
+                .run();
+              return true;
+            }
+
+            const codeFence = block.text.match(/^(```|~~~)([A-Za-z0-9_+.#-]*)\s*$/);
+            if (codeFence) {
+              event.preventDefault();
+              const language = normalizeCodeLanguage(codeFence[2] || "plaintext");
+              editor
+                .chain()
+                .focus()
+                .deleteRange({ from: block.from, to: block.to })
+                .insertContentAt(block.from, { type: "codeBlock", attrs: { language } })
+                .setTextSelection(block.from + 1)
+                .run();
+              return true;
+            }
+
+            if (block.text === "$$") {
+              event.preventDefault();
+              const source = "$$\n\n$$";
+              editor
+                .chain()
+                .focus()
+                .deleteRange({ from: block.from, to: block.to })
+                .insertContentAt(block.from, {
+                  type: "mathBlock",
+                  attrs: { source, focusKey: String(Date.now()) },
+                  content: sourceBlockContent(source)
+                })
+                .setTextSelection(block.from + 1)
+                .run();
+              return true;
+            }
+
+            const table = tableJsonFromHeaderRow(block.text);
+            if (table) {
+              event.preventDefault();
+              editor
+                .chain()
+                .focus()
+                .deleteRange({ from: block.from, to: block.to })
+                .insertContentAt(block.from, table)
+                .setTextSelection(block.from + 4)
+                .run();
+              return true;
+            }
+
+            return false;
+          },
+          handlePaste(_view, event) {
+            const clipboard = event.clipboardData;
+            if (!clipboard) return false;
+
+            const hasImageFile = Array.from(clipboard.files).some((file) => file.type.startsWith("image/"));
+            if (hasImageFile) return false;
+
+            const text = clipboard.getData("text/plain");
+            const html = clipboard.getData("text/html");
+            if (html) {
+              const safeHtml = sanitizeHtmlForPaste(html);
+              if (!safeHtml && !text.trim()) return false;
+              event.preventDefault();
+              if (safeHtml) editor.commands.insertContent(safeHtml);
+              else if (looksLikeMarkdownPaste(text) && editor.markdown) editor.commands.insertContent(editor.markdown.parse(text.trim()) as never);
+              else editor.commands.insertContent(text);
+              return true;
+            }
+
+            if (!text || !looksLikeMarkdownPaste(text) || !editor.markdown) return false;
+
+            event.preventDefault();
+            editor.commands.insertContent(editor.markdown.parse(text.trim()) as never);
+            return true;
+          },
+          handleDOMEvents: {
+            copy(_view, event: ClipboardEvent) {
+              const clipboard = event.clipboardData;
+              const { from, to, empty } = editor.state.selection;
+              if (!clipboard || empty) return false;
+
+              event.preventDefault();
+              const markdown = markdownFromSelection(editor, from, to);
+              clipboard.setData("text/plain", markdown);
+              clipboard.setData("text/markdown", markdown);
+              clipboard.setData("text/html", htmlFromSelection(editor, from, to));
+              return true;
+            }
+          }
         }
       })
     ];
@@ -2947,6 +3486,11 @@ const MediaBlock = Node.create({
   name: "mediaBlock",
   group: "block",
   atom: true,
+  addOptions() {
+    return {
+      assetBasePath: ""
+    };
+  },
   addAttributes() {
     return {
       kind: { default: "video" },
@@ -2958,17 +3502,29 @@ const MediaBlock = Node.create({
     name: "mediaBlock",
     level: "block",
     start(src: string) {
-      return src.match(/^<(video|audio)\b/im)?.index ?? -1;
+      return (src.match(/^<(video|audio)\b/im) ?? src.match(/^\[[^\]\n]+]\([^) \n]+\)/m))?.index ?? -1;
     },
     tokenize(src: string) {
       const match = src.match(/^<(video|audio)\b([^>]*)><\/\1>(?:\n|$)/i);
-      if (!match) return undefined;
+      if (match) {
+        return {
+          type: "mediaBlock",
+          raw: match[0],
+          kind: match[1].toLowerCase(),
+          src: parseHtmlAttr(match[2], "src"),
+          title: parseHtmlAttr(match[2], "title") || parseHtmlAttr(match[2], "aria-label") || "Media"
+        };
+      }
+      const linkMatch = src.match(/^\[([^\]\n]+)]\(([^)\s]+)(?:\s+["']([^"'\n]+)["'])?\)(?:\n|$)/);
+      const linkedSrc = linkMatch?.[2] ?? "";
+      const linkedKind = mediaKindFromSrc(linkedSrc);
+      if (!linkMatch || !linkedKind) return undefined;
       return {
         type: "mediaBlock",
-        raw: match[0],
-        kind: match[1].toLowerCase(),
-        src: parseHtmlAttr(match[2], "src"),
-        title: parseHtmlAttr(match[2], "title") || "Media"
+        raw: linkMatch[0],
+        kind: linkedKind,
+        src: linkedSrc,
+        title: linkMatch[3] || linkMatch[1] || "Media"
       };
     }
   },
@@ -2998,7 +3554,7 @@ const MediaBlock = Node.create({
       ["figcaption", { class: captionClassName }, title]
     ];
   },
-  addNodeView() {
+  addNodeView(this: any) {
     return ({ node }: { node: { attrs: { kind: string; src: string; title: string } } }) => {
       const kind = node.attrs.kind === "audio" ? "audio" : "video";
       const wrapper = document.createElement("figure");
@@ -3016,7 +3572,7 @@ const MediaBlock = Node.create({
 
       const media = document.createElement(kind);
       media.setAttribute("controls", "");
-      media.setAttribute("src", node.attrs.src || "");
+      media.setAttribute("src", resolveMarkdownAssetSrc(node.attrs.src || "", this.options.assetBasePath));
       media.className = `informio-media is-${kind}`;
       wrapper.appendChild(media);
 
@@ -3028,7 +3584,8 @@ const MediaBlock = Node.create({
   renderMarkdown(node: { attrs?: { kind?: string; src?: string; title?: string } }) {
     const title = (node.attrs?.title ?? "Media").replace(/[\[\]\n]/g, " ").trim() || "Media";
     const src = node.attrs?.src ?? "";
-    return `\n[${title}](${src})\n`;
+    const kind = node.attrs?.kind === "audio" ? "audio" : "video";
+    return `\n<${kind} controls src="${escapeHtml(src)}" title="${escapeHtml(title)}"></${kind}>\n`;
   }
 } as never);
 
@@ -3337,14 +3894,24 @@ const parseMarkdownTableRow = (line: string) => {
   return cells.length >= 2 ? cells : null;
 };
 
+const isExplicitMarkdownTableRow = (line: string) => /^\|.*\|$/.test(line.trim());
+
 const isMarkdownTableSeparator = (line: string, expectedCells: number) => {
   const cells = parseMarkdownTableRow(line);
   return Boolean(cells && cells.length === expectedCells && cells.every((cell) => /^:?-{3,}:?$/.test(cell)));
 };
 
+const markdownTableAlign = (separatorCell: string): HorizontalCellAlign => {
+  const trimmed = separatorCell.trim();
+  if (trimmed.startsWith(":") && trimmed.endsWith(":")) return "center";
+  if (trimmed.endsWith(":")) return "right";
+  return "left";
+};
+
 const createTableFromMarkdown = (schema: ProseMirrorSchemaLike, lines: string[]) => {
   const header = parseMarkdownTableRow(lines[0]);
   if (!header || !isMarkdownTableSeparator(lines[1], header.length)) return null;
+  const separator = parseMarkdownTableRow(lines[1]) ?? header.map(() => "---");
   const dataRows = lines.slice(2).map(parseMarkdownTableRow).filter((row): row is string[] => Boolean(row && row.length === header.length));
   const rows = [header, ...(dataRows.length ? dataRows : [header.map(() => "")])];
 
@@ -3353,9 +3920,9 @@ const createTableFromMarkdown = (schema: ProseMirrorSchemaLike, lines: string[])
     rows.map((cells, rowIndex) =>
       schema.nodes.tableRow.create(
         null,
-        cells.map((cell) => {
+        cells.map((cell, columnIndex) => {
           const cellType = rowIndex === 0 ? schema.nodes.tableHeader : schema.nodes.tableCell;
-          return cellType.create(null, schema.nodes.paragraph.create(null, textContentNode(schema, cell)));
+          return cellType.create({ align: markdownTableAlign(separator[columnIndex] ?? "---") }, schema.nodes.paragraph.create(null, textContentNode(schema, cell)));
         })
       )
     )
@@ -3878,6 +4445,14 @@ type LinkRequest = {
   to: number;
   text: string;
   url: string;
+  title?: string;
+};
+
+type ImageRequest = {
+  pos: number;
+  alt: string;
+  src: string;
+  title: string;
 };
 
 type EditorTextSearchIndex = {
@@ -4811,16 +5386,18 @@ function LinkDialog({
 }: {
   request: LinkRequest | null;
   onClose: () => void;
-  onConfirm: (input: { text: string; url: string }) => void;
+  onConfirm: (input: { text: string; url: string; title?: string }) => void;
 }) {
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
   const urlInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!request) return;
     setText(request.text || "链接文字");
     setUrl(request.url);
+    setTitle(request.title ?? "");
     window.setTimeout(() => {
       (request.url ? urlInputRef.current : urlInputRef.current)?.focus();
       urlInputRef.current?.select();
@@ -4842,7 +5419,7 @@ function LinkDialog({
             className="mt-4 space-y-3"
             onSubmit={(event) => {
               event.preventDefault();
-              if (canSubmit) onConfirm({ text: trimmedText, url: trimmedUrl });
+              if (canSubmit) onConfirm({ text: trimmedText, url: trimmedUrl, title: title.trim() || undefined });
             }}
           >
             <label className="grid gap-1.5">
@@ -4863,6 +5440,15 @@ function LinkDialog({
                 className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-[var(--divider)] focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
               />
             </label>
+            <label className="grid gap-1.5">
+              <span className="text-[12px] font-bold text-[var(--text-muted)]">标题</span>
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="可选"
+                className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-[var(--divider)] focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
+              />
+            </label>
             <div className="flex justify-end gap-2 pt-1">
               <button
                 type="button"
@@ -4876,6 +5462,88 @@ function LinkDialog({
                 disabled={!canSubmit}
                 className="h-8 rounded-md bg-emerald-600 px-3 text-[12px] font-bold text-white transition-[background-color,opacity,transform] hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-45"
               >
+                确认
+              </button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function ImageDialog({
+  request,
+  onClose,
+  onConfirm
+}: {
+  request: ImageRequest | null;
+  onClose: () => void;
+  onConfirm: (input: { alt: string; src: string; title: string }) => void;
+}) {
+  const [alt, setAlt] = useState("");
+  const [src, setSrc] = useState("");
+  const [title, setTitle] = useState("");
+  const srcInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!request) return;
+    setAlt(request.alt);
+    setSrc(request.src);
+    setTitle(request.title);
+    window.setTimeout(() => {
+      srcInputRef.current?.focus();
+      srcInputRef.current?.select();
+    }, 0);
+  }, [request]);
+
+  const canSubmit = Boolean(src.trim());
+
+  return (
+    <Dialog.Root open={Boolean(request)} onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/18" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-4 text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
+          <Dialog.Title className="text-[14px] font-extrabold">图片</Dialog.Title>
+          <Dialog.Description className="sr-only">编辑图片地址、替代文字和标题。</Dialog.Description>
+          <form
+            className="mt-4 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (canSubmit) onConfirm({ alt: alt.trim(), src: src.trim(), title: title.trim() });
+            }}
+          >
+            <label className="grid gap-1.5">
+              <span className="text-[12px] font-bold text-[var(--text-muted)]">地址</span>
+              <input
+                ref={srcInputRef}
+                value={src}
+                onChange={(event) => setSrc(event.target.value)}
+                className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-[var(--divider)] focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-[12px] font-bold text-[var(--text-muted)]">替代文字</span>
+              <input
+                value={alt}
+                onChange={(event) => setAlt(event.target.value)}
+                className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-[var(--divider)] focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-[12px] font-bold text-[var(--text-muted)]">标题</span>
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="可选"
+                className="h-9 w-full rounded-md bg-slate-50 px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-[var(--divider)] focus:bg-white focus:ring-2 focus:ring-emerald-500/45"
+              />
+            </label>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" className="h-8 rounded-md px-3 text-[12px] font-bold text-slate-600 transition-[background-color,transform] hover:bg-slate-100 active:scale-[0.99]" onClick={onClose}>
+                取消
+              </button>
+              <button type="submit" disabled={!canSubmit} className="h-8 rounded-md bg-emerald-600 px-3 text-[12px] font-bold text-white transition-[background-color,opacity,transform] hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-45">
                 确认
               </button>
             </div>
@@ -5325,65 +5993,39 @@ function OutlineList({
   onJump: (item: OutlineItem) => void;
 }) {
   const outline = useMemo(() => getDocumentOutline(document.markdown), [document.markdown]);
-  const outlineTree = useMemo(() => buildOutlineTree(outline), [outline]);
-  const [expandedOutlineItems, setExpandedOutlineItems] = useState<Set<string>>(() => new Set(outline.map((item) => item.id)));
+  const [activeOutlineId, setActiveOutlineId] = useState<string | null>(null);
+  const baseLevel = outline.reduce((level, item) => Math.min(level, item.level), 6);
 
   useEffect(() => {
-    setExpandedOutlineItems((current) => {
-      const next = new Set(current);
-      outline.forEach((item) => next.add(item.id));
-      return next;
-    });
-  }, [outline]);
-
-  const toggleOutlineItem = (id: string) => {
-    setExpandedOutlineItems((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const renderOutlineItem = (item: OutlineTreeItem, depth: number): ReactNode => {
-    const hasChildren = item.children.length > 0;
-    const open = expandedOutlineItems.has(item.id);
-    return (
-      <div key={item.id} className="space-y-1">
-        <div className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] leading-5 transition-[background-color,transform] active:scale-[0.99] hover:bg-white/70 focus-within:ring-2 focus-within:ring-emerald-500/45">
-          <button
-            type="button"
-            aria-label={open ? "折叠标题" : "展开标题"}
-            disabled={!hasChildren}
-            onClick={() => toggleOutlineItem(item.id)}
-            className={cn(
-              "grid h-4 w-4 shrink-0 place-items-center rounded-sm text-slate-400 transition-colors focus-visible:outline-none",
-              hasChildren ? "hover:bg-white hover:text-slate-600" : "opacity-0"
-            )}
-          >
-            {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
-          <button
-            type="button"
-            onClick={() => onJump(item)}
-            className="min-w-0 flex-1 truncate text-left font-semibold leading-5 text-[var(--text-main)] focus-visible:outline-none"
-            style={{ paddingLeft: depth * 14, fontSize: 13 }}
-          >
-            {item.title}
-          </button>
-          {hasChildren ? (
-            <span className="shrink-0 font-mono text-[10px] font-semibold text-[var(--text-muted)]">{item.children.length}</span>
-          ) : null}
-        </div>
-        {hasChildren && open ? <div className="space-y-1">{item.children.map((child) => renderOutlineItem(child, depth + 1))}</div> : null}
-      </div>
-    );
-  };
+    if (!activeOutlineId || outline.some((item) => item.id === activeOutlineId)) return;
+    setActiveOutlineId(null);
+  }, [activeOutlineId, outline]);
 
   return (
-    <aside className="context-panel h-full shrink-0" style={{ width }}>
-      <div className="space-y-1.5 overflow-y-auto px-3 py-3">
-        {outlineTree.length ? outlineTree.map((item) => renderOutlineItem(item, 0)) : null}
+    <aside className="context-panel informio-outline-panel h-full shrink-0" style={{ width }}>
+      <div className="informio-outline-list">
+        {outline.length ? (
+          outline.map((item) => {
+            const depth = Math.max(0, item.level - baseLevel);
+            const active = activeOutlineId === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setActiveOutlineId(item.id);
+                  onJump(item);
+                }}
+                className={cn("informio-outline-item", active && "is-active", `is-level-${item.level}`)}
+                style={{ paddingLeft: 18 + depth * 18 }}
+              >
+                <span>{item.title}</span>
+              </button>
+            );
+          })
+        ) : (
+          <div className="informio-outline-empty">暂无大纲</div>
+        )}
       </div>
     </aside>
   );
@@ -5461,23 +6103,20 @@ function PropertiesList({
   onSelect: (id: string) => void;
 }) {
   const groups = useMemo(() => buildPropertyGroups(documents), [documents]);
-  const [expandedProperties, setExpandedProperties] = useState<Set<string>>(() => new Set(groups.map((group) => group.name)));
-  const [expandedValues, setExpandedValues] = useState<Set<string>>(
-    () => new Set(groups.flatMap((group) => group.values.map((item) => `${group.name}::${item.value}`)))
-  );
+  const [expandedProperties, setExpandedProperties] = useState<Set<string>>(() => new Set());
+  const [expandedValues, setExpandedValues] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
+    const propertyNames = new Set(groups.map((group) => group.name));
+    const valueKeys = new Set(groups.flatMap((group) => group.values.map((item) => `${group.name}::${item.value}`)));
+
     setExpandedProperties((current) => {
-      const next = new Set(current);
-      groups.forEach((group) => next.add(group.name));
-      return next;
+      const next = new Set(Array.from(current).filter((name) => propertyNames.has(name)));
+      return next.size === current.size ? current : next;
     });
     setExpandedValues((current) => {
-      const next = new Set(current);
-      groups.forEach((group) => {
-        group.values.forEach((item) => next.add(`${group.name}::${item.value}`));
-      });
-      return next;
+      const next = new Set(Array.from(current).filter((key) => valueKeys.has(key)));
+      return next.size === current.size ? current : next;
     });
   }, [groups]);
 
@@ -5703,6 +6342,7 @@ function EditorPane({
   const pendingSecretActionRef = useRef<PendingSecretAction | null>(null);
   const requestDecryptSecretRef = useRef<(request: SecretDecryptRequest) => void>(() => undefined);
   const [linkRequest, setLinkRequest] = useState<LinkRequest | null>(null);
+  const [imageRequest, setImageRequest] = useState<ImageRequest | null>(null);
   const [secretPromptRequest, setSecretPromptRequest] = useState<SecretPromptRequest | null>(null);
   const [markdownToolbar, setMarkdownToolbar] = useState<AgentSelection | null>(null);
   const [propertiesOpen, setPropertiesOpen] = useState(false);
@@ -5941,8 +6581,9 @@ function EditorPane({
         tabSize: settings.markdown.tabSize
       }),
       Highlight,
-      InlineCodeTyping,
+      TyporaMarkdownInput,
       ResizableImage.configure({
+        assetBasePath: document.filePath || settings.shortcuts.quickFolder,
         HTMLAttributes: { class: "informio-image" },
         resize: {
           enabled: true,
@@ -5951,11 +6592,12 @@ function EditorPane({
           minHeight: 80,
           alwaysPreserveAspectRatio: true
         }
-      }),
+      } as never),
       MarkdownLink.configure({
         autolink: true,
         defaultProtocol: "https",
         enableClickSelection: true,
+        isAllowedUri: (url, context) => !INVALID_AUTO_LINK_CHAR_PATTERN.test(url) && context.defaultValidate(url),
         openOnClick: false
       }),
       EncryptedInline.configure({ onRequestDecrypt: (request) => requestDecryptSecretRef.current(request) }),
@@ -5985,7 +6627,7 @@ function EditorPane({
       MathInline,
       MathBlock,
       ChartBlock,
-      MediaBlock,
+      MediaBlock.configure({ assetBasePath: document.filePath || settings.shortcuts.quickFolder }),
       PdfBlock,
       DetailsBlock,
       CalloutBlock,
@@ -6095,6 +6737,39 @@ function EditorPane({
               return true;
             }
             return false;
+          },
+          dblclick: (view, event) => {
+            if (isReadOnlyDocument) return false;
+            const target = event.target as HTMLElement;
+            const image = target.closest("img.informio-image");
+            if (!image) return false;
+
+            let imagePos: number | null = null;
+            try {
+              const domPos = view.posAtDOM(image, 0);
+              for (const candidate of [domPos, domPos - 1, domPos + 1]) {
+                const node = candidate >= 0 ? view.state.doc.nodeAt(candidate) : null;
+                if (node?.type.name === "image") {
+                  imagePos = candidate;
+                  break;
+                }
+              }
+            } catch {
+              imagePos = null;
+            }
+            if (imagePos === null) return false;
+
+            const node = view.state.doc.nodeAt(imagePos);
+            if (node?.type.name !== "image") return false;
+            event.preventDefault();
+            editorInstanceRef.current?.chain().focus().setNodeSelection(imagePos).run();
+            setImageRequest({
+              pos: imagePos,
+              alt: String(node.attrs.alt ?? ""),
+              src: String(node.attrs.src ?? ""),
+              title: String(node.attrs.title ?? "")
+            });
+            return true;
           },
           keyup: () => {
             if (isReadOnlyDocument) return false;
@@ -6443,11 +7118,13 @@ function EditorPane({
     setFindMatch(null);
     setFindStatus(null);
     setShowReplace(false);
+    setImageRequest(null);
   }, [document.id]);
 
   useEffect(() => {
     setWikiSuggest(null);
     setLinkRequest(null);
+    setImageRequest(null);
     setFindMatch(null);
     setFindStatus(null);
     if (isSourceMode) {
@@ -6721,7 +7398,12 @@ function EditorPane({
             editor.chain().focus().setImage({ src, alt: name, title: name }).createParagraphNear().run();
           }
           if (asset.kind === "video" || asset.kind === "audio") {
-            editor.chain().focus().insertContent(`[${name}](${src})`).createParagraphNear().run();
+            editor
+              .chain()
+              .focus()
+              .insertContent({ type: "mediaBlock", attrs: { kind: asset.kind, src, title: name } })
+              .createParagraphNear()
+              .run();
           }
           if (asset.kind === "pdf") {
             editor.chain().focus().insertContent(`[${name}](${src})`).createParagraphNear().run();
@@ -6779,7 +7461,7 @@ function EditorPane({
             editor
               .chain()
               .focus()
-              .insertContent({ type: "footnoteBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+              .insertContent(sourceBackedBlockJson("footnoteBlock", source))
               .createParagraphNear()
               .run();
           }
@@ -6790,7 +7472,7 @@ function EditorPane({
             editor
               .chain()
               .focus()
-              .insertContent({ type: "detailsBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+              .insertContent(sourceBackedBlockJson("detailsBlock", source))
               .createParagraphNear()
               .run();
           }
@@ -6801,7 +7483,7 @@ function EditorPane({
             editor
               .chain()
               .focus()
-              .insertContent({ type: "calloutBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+              .insertContent(sourceBackedBlockJson("calloutBlock", source))
               .createParagraphNear()
               .run();
           }
@@ -6810,7 +7492,7 @@ function EditorPane({
           editor
             .chain()
             .focus()
-            .insertContent({ type: "mathBlock", attrs: { source: defaultBlockSource("mathBlock"), focusKey: String(Date.now()) } })
+            .insertContent(sourceBackedBlockJson("mathBlock", defaultBlockSource("mathBlock"), true))
             .createParagraphNear()
             .run();
           return;
@@ -6818,7 +7500,7 @@ function EditorPane({
           editor
             .chain()
             .focus()
-            .insertContent({ type: "chartBlock", attrs: { source: defaultBlockSource("chartBlock"), focusKey: String(Date.now()) } })
+            .insertContent(sourceBackedBlockJson("chartBlock", defaultBlockSource("chartBlock"), true))
             .createParagraphNear()
             .run();
           return;
@@ -6826,7 +7508,7 @@ function EditorPane({
           editor
             .chain()
             .focus()
-            .insertContent({ type: "footnoteBlock", attrs: { source: defaultBlockSource("footnoteBlock"), focusKey: String(Date.now()) } })
+            .insertContent(sourceBackedBlockJson("footnoteBlock", defaultBlockSource("footnoteBlock"), true))
             .createParagraphNear()
             .run();
           return;
@@ -6834,7 +7516,7 @@ function EditorPane({
           editor
             .chain()
             .focus()
-            .insertContent({ type: "detailsBlock", attrs: { source: defaultBlockSource("detailsBlock"), focusKey: String(Date.now()) } })
+            .insertContent(sourceBackedBlockJson("detailsBlock", defaultBlockSource("detailsBlock"), true))
             .createParagraphNear()
             .run();
           return;
@@ -6842,7 +7524,7 @@ function EditorPane({
           editor
             .chain()
             .focus()
-            .insertContent({ type: "calloutBlock", attrs: { source: defaultBlockSource("calloutBlock"), focusKey: String(Date.now()) } })
+            .insertContent(sourceBackedBlockJson("calloutBlock", defaultBlockSource("calloutBlock"), true))
             .createParagraphNear()
             .run();
           return;
@@ -6863,7 +7545,7 @@ function EditorPane({
 
   const normalizeLinkHref = (value: string) => (/^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`);
 
-  const applyLink = (input: { text: string; url: string }) => {
+  const applyLink = (input: { text: string; url: string; title?: string }) => {
     if (!editor || !linkRequest) return;
     const href = normalizeLinkHref(input.url.trim());
     editor
@@ -6874,11 +7556,25 @@ function EditorPane({
         {
           type: "text",
           text: input.text.trim(),
-          marks: [{ type: "link", attrs: { href } }]
+          marks: [{ type: "link", attrs: { href, title: input.title || null } }]
         }
       )
       .run();
     setLinkRequest(null);
+  };
+  const applyImage = (input: { alt: string; src: string; title: string }) => {
+    if (!editor || !imageRequest) return;
+    editor
+      .chain()
+      .focus()
+      .setNodeSelection(imageRequest.pos)
+      .updateAttributes("image", {
+        alt: input.alt,
+        src: input.src,
+        title: input.title || null
+      })
+      .run();
+    setImageRequest(null);
   };
   const closeMarkdownToolbar = () => {
     clearMarkdownToolbarState();
@@ -6893,14 +7589,51 @@ function EditorPane({
     if (!editor || editor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
     editor.chain().focus().redo().run();
   };
+  const linkRangeAtSelection = () => {
+    if (!editor?.isActive("link")) return null;
+    const { $from } = editor.state.selection;
+    const linkType = editor.state.schema.marks.link;
+    const linkMark = $from.marks().find((mark) => mark.type === linkType);
+    if (!linkMark) return null;
+    let from = $from.pos;
+    let to = $from.pos;
+
+    const parentStart = $from.start();
+    const parent = $from.parent;
+    parent.forEach((node, offset) => {
+      const start = parentStart + offset;
+      const end = start + node.nodeSize;
+      if (end < $from.pos || start > $from.pos) return;
+      if (linkMark.isInSet(node.marks)) {
+        from = start;
+        to = end;
+      }
+    });
+
+    for (let index = $from.index() - 1, pos = from; index >= 0; index -= 1) {
+      const node = parent.child(index);
+      pos -= node.nodeSize;
+      if (!linkMark.isInSet(node.marks)) break;
+      from = pos;
+    }
+    for (let index = $from.indexAfter(), pos = to; index < parent.childCount; index += 1) {
+      const node = parent.child(index);
+      if (!linkMark.isInSet(node.marks)) break;
+      to = pos + node.nodeSize;
+      pos = to;
+    }
+    return { from, to, attrs: linkMark.attrs };
+  };
   const openLinkDialogFromSelection = () => {
     if (!editor || editor.isDestroyed || isReadOnlyDocument || isSourceMode) return;
-    const { from, to } = editor.state.selection;
+    const linkRange = linkRangeAtSelection();
+    const { from, to } = linkRange ?? editor.state.selection;
     setLinkRequest({
       from,
       to,
       text: from === to ? "" : editor.state.doc.textBetween(from, to, "\n"),
-      url: String(editor.getAttributes("link").href ?? "")
+      url: String((linkRange?.attrs.href ?? editor.getAttributes("link").href) ?? ""),
+      title: String((linkRange?.attrs.title ?? editor.getAttributes("link").title) ?? "")
     });
   };
   const runSelectionToolbarAction = (actionId: SelectionToolbarAction["id"]) => {
@@ -6929,7 +7662,7 @@ function EditorPane({
         return;
       case "link":
         if (editor.isActive("link")) {
-          editor.chain().focus().unsetLink().run();
+          openLinkDialogFromSelection();
           return;
         }
         openLinkDialogFromSelection();
@@ -7090,7 +7823,7 @@ function EditorPane({
         editor
           .chain()
           .focus()
-          .insertContent({ type: "calloutBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+          .insertContent(sourceBackedBlockJson("calloutBlock", source))
           .createParagraphNear()
           .run();
         return;
@@ -7100,7 +7833,7 @@ function EditorPane({
         editor
           .chain()
           .focus()
-          .insertContent({ type: "footnoteBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+          .insertContent(sourceBackedBlockJson("footnoteBlock", source))
           .createParagraphNear()
           .run();
         return;
@@ -7110,7 +7843,7 @@ function EditorPane({
         editor
           .chain()
           .focus()
-          .insertContent({ type: "detailsBlock", attrs: { source, focusKey: String(Date.now()) }, content: [{ type: "text", text: source }] })
+          .insertContent(sourceBackedBlockJson("detailsBlock", source))
           .createParagraphNear()
           .run();
         return;
@@ -7302,6 +8035,7 @@ function EditorPane({
       ) : null}
       {isReadOnlyDocument || isSourceMode ? null : <TableControls editor={editor} containerRef={shellRef} />}
       {isReadOnlyDocument || isSourceMode ? null : <LinkDialog request={linkRequest} onClose={() => setLinkRequest(null)} onConfirm={applyLink} />}
+      {isReadOnlyDocument || isSourceMode ? null : <ImageDialog request={imageRequest} onClose={() => setImageRequest(null)} onConfirm={applyImage} />}
       {isReadOnlyDocument || isSourceMode ? null : (
         <SecretPassphraseDialog
           request={secretPromptRequest}
@@ -10985,7 +11719,9 @@ export function App() {
 
       if (!initializedTabsRef.current) {
         initializedTabsRef.current = true;
-        const seeded = [data.activeDocumentId, ...validIds, ...data.documents.slice(0, 2).map((doc) => doc.id)].filter(Boolean);
+        const seeded = data.activeDocumentId
+          ? [data.activeDocumentId, ...validIds, ...data.documents.slice(0, 2).map((doc) => doc.id)].filter(Boolean)
+          : validIds;
         const nextIds = Array.from(new Set(seeded));
         return nextIds.length === ids.length && nextIds.every((id, index) => id === ids[index]) ? ids : nextIds;
       }
@@ -11082,12 +11818,13 @@ export function App() {
   useEffect(() => {
     if (!data) return;
     setEditorPanes((panes) => {
+      if (initializedTabsRef.current && openDocumentIds.length === 0) return panes.length ? [] : panes;
       const normalized = normalizeEditorPanes(panes, (documentId) => data.documents.some((doc) => doc.id === documentId));
       if (!normalized.length) return data.activeDocumentId ? [{ id: "main", documentId: data.activeDocumentId }] : [];
       if (normalized.length === 1 && splitDirection !== "horizontal") setSplitDirection("horizontal");
       return normalized;
     });
-  }, [data?.activeDocumentId, data?.documents, splitDirection]);
+  }, [data?.activeDocumentId, data?.documents, openDocumentIds.length, splitDirection]);
 
   useEffect(() => {
     if (!editorPanes.some((pane) => pane.id === activePaneId)) {
@@ -12393,12 +13130,12 @@ export function App() {
           onUseExternal={useExternalConflictVersion}
         />
         <div className="flex h-full flex-col overflow-hidden">
-	          <header className="top-bar drag-region flex h-[42px] shrink-0 items-center border-b">
-	            <div
-	              className={cn("titlebar-left h-full shrink-0", leftOpen ? "border-r" : "w-[86px]")}
-	              style={leftOpen ? { width: leftPanelWidth + 1 } : undefined}
-	            />
-            <div className="flex h-full min-w-0 flex-1 items-center px-2">
+	          <header className="top-bar drag-region flex h-[42px] shrink-0 items-center">
+		            <div
+		              className={cn("titlebar-left h-full shrink-0", leftOpen ? undefined : "w-[86px]")}
+		              style={leftOpen ? { width: leftPanelWidth + 1 } : undefined}
+		            />
+	            <div className="flex h-full min-w-0 flex-1 items-center px-2">
               <div
                 ref={tabsScrollRef}
                 className="document-tabs-scroll no-drag flex h-full min-w-0 flex-1 items-center gap-2 overflow-x-auto overflow-y-hidden"
