@@ -81,7 +81,10 @@ const resolveTrackedPath = (rawPath: string, cwd: string, roots: string[]) => {
   return candidates[0] ? [candidates[0]] : [];
 };
 
-export const normalizeFsPath = (value: string) => normalize(resolve(value)).replace(/\\/g, "/");
+export const normalizeFsPath = (value: string) => {
+  const normalized = normalize(resolve(value)).replace(/\\/g, "/");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+};
 
 export const collectFileChangePaths = (value: unknown, pathKeysOnly = true, parentKey = ""): string[] => {
   if (!value) return [];

@@ -5,7 +5,26 @@ import type {
   SendAgentMessageInput
 } from "../shared/types.js";
 
-export const asErrorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+export const asErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (typeof error === "number" || typeof error === "boolean" || typeof error === "bigint") return String(error);
+  if (!error || typeof error !== "object") return String(error);
+  const record = error as Record<string, unknown>;
+  for (const key of ["message", "error", "detail", "reason", "code", "status"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value;
+    if (value && typeof value === "object") {
+      const nested = asErrorMessage(value);
+      if (nested && nested !== "[object Object]") return nested;
+    }
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return Object.prototype.toString.call(error);
+  }
+};
 
 export const modelId = (provider: AgentProvider, override?: string) => {
   const value = override || provider.model || provider.models?.[0]?.id || "";

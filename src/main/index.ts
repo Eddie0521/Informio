@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, net, protocol, screen, shell } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, screen, shell } from "electron";
 import type { MenuItemConstructorOptions, NativeImage, OpenDialogOptions } from "electron";
 import { execFile } from "node:child_process";
 import { existsSync, watch } from "node:fs";
@@ -6,7 +6,6 @@ import type { FSWatcher } from "node:fs";
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
-import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import type {
   ApiModelDetectionInput,
@@ -14,7 +13,9 @@ import type {
   AppInfo,
   AppData,
   AppSettings,
+  AssetDataResult,
   FileSystemOperationInput,
+  InformioDocumentKind,
   InformioDocument,
   InformioFolder,
   InformioProject,
@@ -29,6 +30,7 @@ import type {
   SendAgentMessageInput,
   TranslateSelectionInput
 } from "../shared/types.js";
+import { asErrorMessage } from "./agentRuntimeShared.js";
 import {
   createQuickDocument,
   loadAppData,
@@ -62,26 +64,62 @@ const MAIN_WINDOW_SIZE = { width: 1180, height: 840 };
 const QUICK_CAPTURE_WINDOW_SIZE = { width: 980, height: 700 };
 const TRAFFIC_LIGHT_POSITION = { x: 14, y: 15 };
 const OPENABLE_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4", ".mov", ".webm", ".mp3", ".wav", ".m4a", ".ogg", ".pdf"]);
-const TEXT_EXTENSIONS = new Set([".md", ".markdown", ".txt"]);
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
 const PDF_EXTENSIONS = new Set([".pdf"]);
-const EXTERNAL_MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
+const LOCAL_FILE_CONTENT_TYPES = new Map([
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
+  [".svg", "image/svg+xml"],
+  [".mp4", "video/mp4"],
+  [".mov", "video/quicktime"],
+  [".webm", "video/webm"],
+  [".mp3", "audio/mpeg"],
+  [".wav", "audio/wav"],
+  [".m4a", "audio/mp4"],
+  [".ogg", "audio/ogg"],
+  [".pdf", "application/pdf"],
+  [".md", "text/markdown; charset=utf-8"],
+  [".markdown", "text/markdown; charset=utf-8"],
+  [".txt", "text/plain; charset=utf-8"]
+]);
 const DEFAULT_WORKSPACE_PATH = join(homedir(), "Documents", "Informio Quick Notes");
 const ATTACHMENTS_DIR = "attachments";
 const execFileAsync = promisify(execFile);
+const isWindows = process.platform === "win32";
 let localFontsCache: ListLocalFontsResult | null = null;
 
 const getAppInfo = (): AppInfo => ({
   name: app.getName() || APP_NAME,
   version: app.getVersion(),
+  platform: process.platform,
   githubUrl: APP_GITHUB_URL,
   iconDataUrl: appIcon?.isEmpty() ? undefined : appIcon?.toDataURL()
 });
 
+const windowChromeOptions = () => {
+  if (process.platform === "darwin") {
+    return {
+      titleBarStyle: "hiddenInset" as const,
+      trafficLightPosition: TRAFFIC_LIGHT_POSITION
+    };
+  }
+  if (process.platform === "win32") {
+    return { frame: false };
+  }
+  return {};
+};
+
 const listSystemLocalFonts = async (): Promise<ListLocalFontsResult> => {
   if (localFontsCache) return localFontsCache;
+  if (process.platform !== "darwin") {
+    localFontsCache = { fonts: [] };
+    return localFontsCache;
+  }
   try {
     const { stdout } = await execFileAsync("system_profiler", ["SPFontsDataType", "-json"], {
       maxBuffer: 64 * 1024 * 1024
@@ -210,8 +248,7 @@ const createWindow = () => {
     minWidth: 560,
     minHeight: 420,
     title: "Informio",
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: TRAFFIC_LIGHT_POSITION,
+    ...windowChromeOptions(),
     backgroundColor: "#f6f8f7",
     ...(appIcon ? { icon: appIcon } : {}),
     webPreferences: {
@@ -261,8 +298,7 @@ const openSettingsWindow = () => {
     minWidth: 760,
     minHeight: 560,
     title: "Informio Settings",
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: TRAFFIC_LIGHT_POSITION,
+    ...windowChromeOptions(),
     backgroundColor: "#f7f7f2",
     ...(appIcon ? { icon: appIcon } : {}),
     webPreferences: {
@@ -293,21 +329,52 @@ const activeDocument = () => appData.documents.find((doc) => doc.id === appData.
 
 const sanitizeUpdatedAt = (value: string) => (Number.isNaN(Date.parse(value)) ? new Date().toISOString() : value);
 
-const normalizeForCompare = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
-const isExternalMarkdownPath = (path: string) => EXTERNAL_MARKDOWN_EXTENSIONS.has(extname(path).toLowerCase());
+const normalizeForCompare = (path: string) => {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return isWindows ? normalized.toLowerCase() : normalized;
+};
+const isExternalOpenablePath = (path: string) => OPENABLE_EXTENSIONS.has(extname(path).toLowerCase());
+
+const documentKindFromPath = (path?: string): InformioDocumentKind => {
+  if (!path) return "markdown";
+  const extension = extname(path).toLowerCase();
+  if (extension === ".md" || extension === ".markdown") return "markdown";
+  if (extension === ".txt") return "text";
+  if (IMAGE_EXTENSIONS.has(extension)) return "image";
+  if (VIDEO_EXTENSIONS.has(extension)) return "video";
+  if (AUDIO_EXTENSIONS.has(extension)) return "audio";
+  if (PDF_EXTENSIONS.has(extension)) return "pdf";
+  return "unknown";
+};
+
+const normalizeDocumentKind = (document: InformioDocument): InformioDocumentKind =>
+  document.kind ?? documentKindFromPath(document.filePath ?? document.title);
+
+const withDocumentKind = <T extends InformioDocument>(document: T): T => ({
+  ...document,
+  kind: normalizeDocumentKind(document)
+});
+
+const isTextDocumentKind = (kind: InformioDocumentKind) => kind === "markdown" || kind === "text";
+
+const localFileContentType = (path: string) => LOCAL_FILE_CONTENT_TYPES.get(extname(path).toLowerCase()) ?? "application/octet-stream";
 
 const enqueueExternalOpenFiles = (paths: string[]) => {
   paths.forEach((path) => {
-    if (!path || !isExternalMarkdownPath(path)) return;
+    if (!path || !isExternalOpenablePath(path)) return;
     pendingExternalOpenFiles.set(normalizeForCompare(path), path);
   });
+};
+
+const enqueueExternalOpenFileArgs = (argv: string[]) => {
+  enqueueExternalOpenFiles(argv.filter((arg) => !arg.startsWith("-")));
 };
 
 const openExternalMarkdownFiles = async (paths: string[]) => {
   const nextPaths = Array.from(
     new Map(
       paths
-        .filter((path) => path && isExternalMarkdownPath(path))
+        .filter((path) => path && isExternalOpenablePath(path))
         .map((path) => [normalizeForCompare(path), path])
     ).values()
   );
@@ -328,8 +395,7 @@ const flushPendingExternalOpenFiles = async () => {
 };
 
 const isWritableTextDocument = (document: InformioDocument) => {
-  if (!document.filePath) return true;
-  return TEXT_EXTENSIONS.has(extname(document.filePath).toLowerCase());
+  return isTextDocumentKind(normalizeDocumentKind(document));
 };
 
 const cachedDocumentMatches = (cached: { size: number; mtimeMs: number } | undefined, fileStats: { size: number; mtimeMs: number }) =>
@@ -360,9 +426,10 @@ const mergeRendererDocuments = (documents: InformioDocument[]) => {
   const merged = appData.documents.map((known) => {
     const doc = rendererDocuments.get(known.id);
     if (!doc) return known;
-    if (!isWritableTextDocument(known)) return known;
+    if (!isWritableTextDocument(known)) return withDocumentKind(known);
     return {
       ...known,
+      kind: normalizeDocumentKind(known),
       markdown: doc.markdown,
       updatedAt: sanitizeUpdatedAt(doc.updatedAt)
     };
@@ -375,6 +442,7 @@ const mergeRendererDocuments = (documents: InformioDocument[]) => {
         id: doc.id,
         title: basename(doc.title),
         filePath: doc.filePath,
+        kind: normalizeDocumentKind(doc),
         markdown: doc.markdown,
         collection: doc.collection === "knowledge" ? "knowledge" : "writing",
         updatedAt: sanitizeUpdatedAt(doc.updatedAt),
@@ -742,16 +810,85 @@ const exportHtmlToPdf = async (outputPath: string, html: string) => {
   }
 };
 
+const normalizeLocalFileCandidate = (path: string) => {
+  const normalizedHomePath = path.startsWith("/users/") ? `/Users/${path.slice("/users/".length)}` : path;
+  if (isWindows && /^\/[A-Za-z]:\//.test(normalizedHomePath)) return normalizedHomePath.slice(1);
+  return normalizedHomePath;
+};
+
 const localFilePathCandidates = (url: string) => {
   try {
     const parsed = new URL(url);
-    const pathname = decodeURIComponent(parsed.host ? `/${parsed.host}${parsed.pathname}` : parsed.pathname);
-    const normalizedHomePath = pathname.startsWith("/users/") ? `/Users/${pathname.slice("/users/".length)}` : pathname;
-    return Array.from(new Set([normalizedHomePath, pathname]));
+    const host = decodeURIComponent(parsed.host);
+    const pathname = decodeURIComponent(parsed.pathname);
+    const candidates = [];
+    if (isWindows && /^[A-Za-z]:?$/.test(host)) {
+      candidates.push(`${host.replace(/:$/, "")}:${pathname}`);
+    }
+    candidates.push(parsed.host ? `/${host}${pathname}` : pathname);
+    return Array.from(new Set(candidates.map(normalizeLocalFileCandidate)));
   } catch {
     const pathname = decodeURIComponent(url.slice("local-file://".length));
-    return [pathname.startsWith("/") ? pathname : `/${pathname}`];
+    return [normalizeLocalFileCandidate(pathname.startsWith("/") ? pathname : `/${pathname}`)];
   }
+};
+
+const parseRangeHeader = (rangeHeader: string | null, fileSize: number) => {
+  if (!rangeHeader) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!match) return "invalid" as const;
+  const [, rawStart, rawEnd] = match;
+  if (!rawStart && !rawEnd) return "invalid" as const;
+  if (!rawStart) {
+    const suffixLength = Number(rawEnd);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return "invalid" as const;
+    return { start: Math.max(fileSize - suffixLength, 0), end: fileSize - 1 };
+  }
+  const start = Number(rawStart);
+  const end = rawEnd ? Number(rawEnd) : fileSize - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= fileSize) {
+    return "invalid" as const;
+  }
+  return { start, end: Math.min(end, fileSize - 1) };
+};
+
+const localFileResponse = async (path: string, request: Request) => {
+  const fileStats = await stat(path);
+  if (!fileStats.isFile()) return null;
+  const baseHeaders = new Headers({
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "no-store",
+    "Content-Type": localFileContentType(path)
+  });
+  const range = parseRangeHeader(request.headers.get("Range"), fileStats.size);
+  if (range === "invalid") {
+    baseHeaders.set("Content-Range", `bytes */${fileStats.size}`);
+    return new Response(null, { status: 416, headers: baseHeaders });
+  }
+  const file = await readFile(path);
+  if (range) {
+    const chunk = file.subarray(range.start, range.end + 1);
+    baseHeaders.set("Content-Length", String(chunk.byteLength));
+    baseHeaders.set("Content-Range", `bytes ${range.start}-${range.end}/${fileStats.size}`);
+    return new Response(request.method === "HEAD" ? null : chunk, { status: 206, headers: baseHeaders });
+  }
+  baseHeaders.set("Content-Length", String(file.byteLength));
+  return new Response(request.method === "HEAD" ? null : file, { status: 200, headers: baseHeaders });
+};
+
+const loadAssetData = async (path: string): Promise<AssetDataResult> => {
+  const kind = documentKindFromPath(path);
+  if (kind !== "image" && kind !== "video" && kind !== "audio") {
+    throw new Error("Unsupported asset type");
+  }
+  const fileStats = await stat(path);
+  if (!fileStats.isFile()) throw new Error("Asset file not found");
+  const file = await readFile(path);
+  const data = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength);
+  return {
+    data,
+    mimeType: localFileContentType(path)
+  };
 };
 
 const documentFolderForPath = (path: string) => dirname(path);
@@ -774,9 +911,11 @@ const generatedMarkdownForAssetPath = (path: string, documentPath = path) => {
 
 const normalizeAssetDocumentMarkdown = (document: InformioDocument) => {
   if (!document.filePath) return document;
-  const markdown = generatedMarkdownForAssetPath(document.filePath);
-  if (!markdown || markdown === document.markdown) return document;
-  return { ...document, markdown };
+  const kind = normalizeDocumentKind(document);
+  if (kind !== "image" && kind !== "video" && kind !== "audio" && kind !== "pdf") return withDocumentKind(document);
+  const markdown = kind === "pdf" ? pdfMarkdown(document.filePath) : generatedMarkdownForAssetPath(document.filePath);
+  if (!markdown || markdown === document.markdown) return withDocumentKind(document);
+  return { ...document, kind, markdown };
 };
 
 const withUpdatedLocalFileUrls = (document: InformioDocument, resolveNextPath: (path: string) => string | null) => {
@@ -790,35 +929,31 @@ const readDocumentsFromPaths = async (paths: string[]) => {
   const existingByPath = new Map(
     appData.documents
       .filter((document) => document.filePath)
-      .map((document) => [document.filePath!, document] as const)
+      .map((document) => [normalizeForCompare(document.filePath!), document] as const)
   );
   return (
     await Promise.all(
       paths.map(async (path) => {
         try {
-          const existing = existingByPath.get(path);
+          const existing = existingByPath.get(normalizeForCompare(path));
           const fileStats = await stat(path);
           if (!fileStats.isFile()) return null;
           const cached = documentReadCache.get(path);
+          const kind = documentKindFromPath(path);
           if (cachedDocumentMatches(cached, fileStats)) {
             return existing
-              ? { ...cached!.document, id: existing.id, updatedAt: existing.updatedAt }
-              : cached!.document;
+              ? { ...cached!.document, id: existing.id, kind, updatedAt: existing.updatedAt }
+              : { ...cached!.document, kind };
           }
-          const ext = extname(path).toLowerCase();
-          const isImage = IMAGE_EXTENSIONS.has(ext);
-          const isVideo = VIDEO_EXTENSIONS.has(ext);
-          const isAudio = AUDIO_EXTENSIONS.has(ext);
-          const isPdf = PDF_EXTENSIONS.has(ext);
           let markdown: string;
           let sourceMarkdown: string | null = null;
-          if (isImage) {
+          if (kind === "image") {
             markdown = generatedMarkdownForAssetPath(path) ?? "";
-          } else if (isVideo) {
+          } else if (kind === "video") {
             markdown = generatedMarkdownForAssetPath(path) ?? "";
-          } else if (isAudio) {
+          } else if (kind === "audio") {
             markdown = generatedMarkdownForAssetPath(path) ?? "";
-          } else if (isPdf) {
+          } else if (kind === "pdf") {
             markdown = pdfMarkdown(path);
           } else {
             markdown = await readFile(path, "utf8");
@@ -833,6 +968,7 @@ const readDocumentsFromPaths = async (paths: string[]) => {
             id: existing?.id ?? `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             title: basename(path),
             filePath: path,
+            kind,
             collection: "writing" as const,
             updatedAt: new Date().toISOString(),
             markdown
@@ -852,6 +988,7 @@ const readDocumentsFromPaths = async (paths: string[]) => {
       id: string;
       title: string;
       filePath: string;
+      kind: InformioDocumentKind;
       collection: "writing";
       updatedAt: string;
       markdown: string;
@@ -1059,7 +1196,7 @@ const openFileDialog = async (): Promise<AppData | null> => {
   const result = await dialog.showOpenDialog(window, {
     properties: ["openFile", "multiSelections"],
     filters: [
-      { name: "Informio files", extensions: ["md", "markdown", "txt", "pdf"] },
+      { name: "Informio files", extensions: ["md", "markdown", "txt", "png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "mov", "webm", "mp3", "wav", "m4a", "ogg", "pdf"] },
       { name: "All Files", extensions: ["*"] }
     ]
   });
@@ -1218,6 +1355,7 @@ const createFilesystemDocument = async (folderOverride?: string) => {
     id: `file-${Date.now()}`,
     title: basename(path),
     filePath: path,
+    kind: "markdown",
     collection: "writing",
     updatedAt: new Date().toISOString(),
     markdown
@@ -1247,6 +1385,7 @@ const createDefaultMarkdownDocument = async () => {
     id: `file-${Date.now()}`,
     title: basename(path),
     filePath: path,
+    kind: "markdown",
     collection: "writing",
     updatedAt: new Date().toISOString(),
     markdown: ""
@@ -1274,6 +1413,7 @@ const createLinkedDocument = async (title: string) => {
     id: `file-${Date.now()}`,
     title: basename(path),
     filePath: path,
+    kind: "markdown",
     collection: "knowledge",
     updatedAt: new Date().toISOString(),
     markdown
@@ -1960,6 +2100,22 @@ const updateApplicationMenu = () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 };
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
+
+enqueueExternalOpenFileArgs(process.argv);
+
+app.on("second-instance", (_event, argv) => {
+  enqueueExternalOpenFileArgs(argv);
+  const window = getFocusedMainWindow();
+  if (window?.isMinimized()) window.restore();
+  window?.show();
+  window?.focus();
+  if (app.isReady()) void flushPendingExternalOpenFiles();
+});
+
 app.whenReady().then(async () => {
   await prepareRuntimeEnvironment();
   appIcon = loadAppIcon();
@@ -1976,8 +2132,8 @@ app.whenReady().then(async () => {
   protocol.handle("local-file", async (request) => {
     for (const pathname of localFilePathCandidates(request.url)) {
       try {
-        await stat(pathname);
-        return net.fetch(pathToFileURL(pathname).toString());
+        const response = await localFileResponse(pathname, request);
+        if (response) return response;
       } catch {
         // Try the next normalized form before returning 404.
       }
@@ -2053,6 +2209,26 @@ ipcMain.handle("app:new-window", async () => {
   createWindow();
 });
 
+ipcMain.handle("app:window-control", (event, action: "minimize" | "toggleMaximize" | "close") => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return;
+  if (action === "minimize") {
+    window.minimize();
+    return;
+  }
+  if (action === "toggleMaximize") {
+    if (window.isMaximized()) {
+      window.unmaximize();
+    } else {
+      window.maximize();
+    }
+    return;
+  }
+  if (action === "close") {
+    window.close();
+  }
+});
+
 ipcMain.handle("app:open-files", async () => openFileDialog());
 
 ipcMain.handle("app:open-workspace", async () => openWorkspaceDialog());
@@ -2078,6 +2254,8 @@ ipcMain.handle("app:insert-asset", async (_event, kind: "image" | "video" | "aud
 ipcMain.handle("app:filesystem-action", async (_event, input: FileSystemOperationInput) => runFileSystemAction(input));
 
 ipcMain.handle("app:save-attachment", async (_event, input: SaveAttachmentInput) => saveAttachment(input));
+
+ipcMain.handle("app:load-asset", async (_event, path: string): Promise<AssetDataResult> => loadAssetData(path));
 
 ipcMain.handle("app:save-settings", async (_event, settings: AppSettings) => {
   const agentConversations = normalizeAgentConversations(
@@ -2175,9 +2353,15 @@ ipcMain.handle("agent-runtime:send-stream", async (event, requestId: string, inp
 ipcMain.handle("agent:session-stream", async (event, requestId: string, input: AgentSessionInput) => {
   const provider = appData.settings.agents.find((agent) => agent.id === input.providerId);
   if (!provider) throw new Error("Agent provider was not found.");
-  return agentRuntime.runSessionStream(input, provider, (chunk) => {
-    event.sender.send("agent:session-event", requestId, chunk);
-  });
+  try {
+    return await agentRuntime.runSessionStream(input, provider, (chunk) => {
+      event.sender.send("agent:session-event", requestId, chunk);
+    });
+  } catch (error) {
+    const message = asErrorMessage(error);
+    event.sender.send("agent:session-event", requestId, { type: "error", message });
+    throw new Error(message);
+  }
 });
 
 ipcMain.handle("agent:approval-response", async (_event, input: AgentApprovalResponseInput) => {

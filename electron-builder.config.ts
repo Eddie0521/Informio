@@ -25,6 +25,30 @@ const config: Configuration = {
       name: "Markdown Document",
       description: "Markdown document",
       role: "Editor"
+    },
+    {
+      ext: ["png", "jpg", "jpeg", "gif", "webp", "svg"],
+      name: "Image",
+      description: "Image file",
+      role: "Viewer"
+    },
+    {
+      ext: ["mp4", "mov", "webm"],
+      name: "Video",
+      description: "Video file",
+      role: "Viewer"
+    },
+    {
+      ext: ["mp3", "wav", "m4a", "ogg"],
+      name: "Audio",
+      description: "Audio file",
+      role: "Viewer"
+    },
+    {
+      ext: "pdf",
+      name: "PDF Document",
+      description: "PDF document",
+      role: "Viewer"
     }
   ],
   publish: githubOwner && githubRepo
@@ -60,7 +84,7 @@ const config: Configuration = {
   win: {
     icon: "build/icon.ico",
     target: ["nsis"],
-    signAndEditExecutable: true
+    signAndEditExecutable: false
   },
   nsis: {
     oneClick: false,

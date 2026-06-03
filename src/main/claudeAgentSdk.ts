@@ -41,7 +41,7 @@ import {
   type FileChangeAudit,
   verifyFileChangeAudit
 } from "./fileChangeVerification.js";
-import { formatAgentLaunchError } from "./runtimeEnvironment.js";
+import { formatAgentLaunchError, resolveDirectRuntimeExecutable } from "./runtimeEnvironment.js";
 
 type PromptRunOptions = {
   model?: string;
@@ -196,15 +196,25 @@ const requestJson = async (url: string, init: RequestInit, fallbackMessage: stri
   }
 };
 
+type ClaudeModelOption = { id: string; label: string };
+
 const normalizeDiscoveredClaudeModels = (payload: unknown) => {
   if (!payload || typeof payload !== "object") return [];
   const candidate = payload as { data?: unknown; models?: unknown };
   const list = Array.isArray(candidate.data) ? candidate.data : (Array.isArray(candidate.models) ? candidate.models : []);
-  const byId = new Map<string, { id: string; label: string }>();
+  const byId = new Map<string, ClaudeModelOption>();
   list.forEach((item) => {
     if (!item || typeof item !== "object") return;
-    const model = item as { id?: unknown; name?: unknown; display_name?: unknown; displayName?: unknown };
-    const id = typeof model.id === "string" ? model.id.trim() : "";
+    const model = item as {
+      id?: unknown;
+      value?: unknown;
+      model?: unknown;
+      name?: unknown;
+      display_name?: unknown;
+      displayName?: unknown;
+    };
+    const idSource = [model.id, model.value, model.model].find((value) => typeof value === "string") as string | undefined;
+    const id = idSource?.trim() ?? "";
     if (!id || isClaudeRuntimeAlias(id)) return;
     const labelSource =
       [model.display_name, model.displayName, model.name].find((value) => typeof value === "string") as string | undefined;
@@ -217,10 +227,28 @@ const normalizeClaudeModels = (models: Array<{ value: string; displayName: strin
   const normalized = models
     .map((model) => ({
       id: model.value.trim(),
-      label: model.displayName?.trim() || model.value.trim()
+      label: model.displayName?.trim() || prettifyResolvedModelName(model.value.trim())
     }))
     .filter((model) => model.id);
   return Array.from(new Map(normalized.map((model) => [model.id, model])).values());
+};
+
+const isClaudeRuntimeAliasModel = (model: ClaudeModelOption) => {
+  if (isClaudeRuntimeAlias(model.id)) return true;
+  return /^(?:claude\s+)?(?:sonnet|opus|haiku)(?:\s*\([^)]*\))?$/i.test(model.label.trim());
+};
+
+const dedupeClaudeModels = (models: ClaudeModelOption[]) => {
+  const byId = new Map<string, ClaudeModelOption>();
+  models.forEach((model) => {
+    const id = model.id.trim();
+    if (!id || byId.has(id)) return;
+    byId.set(id, {
+      id,
+      label: model.label.trim() || prettifyResolvedModelName(id)
+    });
+  });
+  return Array.from(byId.values());
 };
 
 const buildResolvedClaudeModels = (settings: {
@@ -302,7 +330,10 @@ const withFallbackConversationHistory = (prompt: string, history: AgentConversat
   ].join("\n");
 };
 
-const normalizePath = (value: string) => normalize(resolve(value)).replace(/\\/g, "/");
+const normalizePath = (value: string) => {
+  const normalized = normalize(resolve(value)).replace(/\\/g, "/");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+};
 
 const pathInside = (root: string, target: string) => {
   const normalizedRoot = normalizePath(root);
@@ -567,11 +598,12 @@ export class ClaudeAgentSdkManager {
   async runPromptStream(provider: AgentProvider, prompt: string, options: PromptRunOptions): Promise<{ content: string; raw: unknown[] }> {
     let content = "";
     const raw: unknown[] = [];
+    const command = await resolveDirectRuntimeExecutable(provider.command);
     const instance = query({
       prompt,
       options: {
         cwd: options.cwd || provider.cwd || process.cwd(),
-        pathToClaudeCodeExecutable: provider.command,
+        pathToClaudeCodeExecutable: command,
         model: modelId(provider, options.model),
         includePartialMessages: true,
         persistSession: false,
@@ -579,7 +611,7 @@ export class ClaudeAgentSdkManager {
         tools: { type: "preset", preset: "claude_code" },
         env: {
           ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/1.0.3"
+          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/0.10.0"
         }
       }
     });
@@ -663,11 +695,12 @@ export class ClaudeAgentSdkManager {
   }
 
   private async runHealthCheck(provider: AgentProvider): Promise<AgentConnection> {
+    const command = await resolveDirectRuntimeExecutable(provider.command);
     const healthQuery = query({
       prompt: emptySdkPrompt(),
       options: {
         cwd: provider.cwd || process.cwd(),
-        pathToClaudeCodeExecutable: provider.command,
+        pathToClaudeCodeExecutable: command,
         model: modelId(provider),
         permissionMode: "plan",
         persistSession: false,
@@ -676,7 +709,7 @@ export class ClaudeAgentSdkManager {
         tools: [],
         env: {
           ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/1.0.3"
+          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/0.10.0"
         }
       }
     });
@@ -702,14 +735,14 @@ export class ClaudeAgentSdkManager {
       availableModels: resolvedSettings?.effective.availableModels,
       modelOverrides: resolvedSettings?.effective.modelOverrides
     });
-    const supportedModels =
-      discoveredModels.length
-        ? discoveredModels
-        : (resolvedModels.length ? resolvedModels : runtimeModels.filter((model) => !isClaudeRuntimeAlias(model.id)));
-    const selectedModel = modelId(provider);
-    if (selectedModel && supportedModels.length && !supportedModels.some((model) => model.id === selectedModel)) {
-      throw new Error(`Claude Code 可启动，但当前模型不可用：${selectedModel}`);
-    }
+    const concreteModels = dedupeClaudeModels([
+      ...resolvedModels,
+      ...discoveredModels,
+      ...runtimeModels.filter((model) => !isClaudeRuntimeAliasModel(model))
+    ]);
+    const supportedModels = concreteModels.length
+      ? concreteModels
+      : dedupeClaudeModels(runtimeModels.filter(isClaudeRuntimeAliasModel));
     const accountLabel = initializationAccount?.email || initializationAccount?.organization || initializationAccount?.apiProvider;
 
     return {
@@ -724,12 +757,13 @@ export class ClaudeAgentSdkManager {
   private async executeSessionRun(provider: AgentProvider, options: SessionRunOptions): Promise<AgentSessionResult> {
     const cwd = defaultCwd(options.context, provider);
     const roots = collectRoots(options.context, provider);
+    const command = await resolveDirectRuntimeExecutable(provider.command);
     const runQuery = query({
       prompt: options.prompt,
       options: {
         cwd,
         additionalDirectories: additionalDirectories(options.permissionMode, roots, cwd),
-        pathToClaudeCodeExecutable: provider.command,
+        pathToClaudeCodeExecutable: command,
         model: modelId(provider, options.model),
         permissionMode: sdkPermissionMode(options.permissionMode),
         allowDangerouslySkipPermissions: options.permissionMode === "full_access",
@@ -775,7 +809,7 @@ export class ClaudeAgentSdkManager {
         },
         env: {
           ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/1.0.3"
+          CLAUDE_AGENT_SDK_CLIENT_APP: "informio/0.10.0"
         }
       }
     });

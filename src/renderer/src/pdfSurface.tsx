@@ -7,14 +7,26 @@ import { MoreHorizontal } from "lucide-react";
 import type { AppSettings, InformioDocument, PdfSelectionRect } from "../../shared/types";
 import { cn } from "./lib/utils";
 
-const fileUrl = (path: string) => `local-file://${encodeURI(path.replace(/\\/g, "/"))}`;
+const normalizePdfPath = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
+
+const fileUrl = (path: string) => {
+  const encoded = encodeURI(normalizePdfPath(path));
+  return `local-file://${encoded.startsWith("/") ? encoded : `/${encoded}`}`;
+};
+
+const normalizeLocalFilePath = (path: string) => {
+  const normalizedHomePath = path.startsWith("/users/") ? `/Users/${path.slice("/users/".length)}` : path;
+  return /^\/[A-Za-z]:\//.test(normalizedHomePath) ? normalizedHomePath.slice(1) : normalizedHomePath;
+};
 
 const localFilePathFromUrl = (value: string) => {
   try {
     const url = new URL(value);
     if (url.protocol !== "local-file:") return value;
-    const pathname = decodeURIComponent(url.host ? `/${url.host}${url.pathname}` : url.pathname);
-    return pathname.startsWith("/users/") ? `/Users/${pathname.slice("/users/".length)}` : pathname;
+    const host = decodeURIComponent(url.host);
+    const pathname = decodeURIComponent(url.pathname);
+    if (/^[A-Za-z]:?$/.test(host)) return `${host.replace(/:$/, "")}:${pathname}`;
+    return normalizeLocalFilePath(url.host ? `/${host}${pathname}` : pathname);
   } catch {
     return value;
   }

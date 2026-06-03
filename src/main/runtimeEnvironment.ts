@@ -1,8 +1,8 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { constants } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -53,6 +53,15 @@ const fallbackPathEntries = () => {
     return ["/usr/local/bin", "/usr/local/sbin", join(homedir(), ".local", "bin"), join(homedir(), ".cargo", "bin"), join(homedir(), "bin")];
   }
 
+  if (process.platform === "win32") {
+    return [
+      join(homedir(), "AppData", "Roaming", "npm"),
+      join(homedir(), "AppData", "Local", "Microsoft", "WindowsApps"),
+      process.env.ProgramFiles ? join(process.env.ProgramFiles, "nodejs") : "",
+      process.env["ProgramFiles(x86)"] ? join(process.env["ProgramFiles(x86)"], "nodejs") : ""
+    ].filter(Boolean);
+  }
+
   return [];
 };
 
@@ -89,6 +98,96 @@ export const prepareRuntimeEnvironment = async () => {
   const [shellEntries, fallbackEntries] = await Promise.all([readLoginShellPath(), existingEntries(fallbackPathEntries())]);
   const merged = uniqueEntries([...shellEntries, ...splitPathEntries(process.env.PATH), ...fallbackEntries]);
   if (merged.length) process.env.PATH = merged.join(delimiter);
+};
+
+const windowsExecutableExtensions = () => {
+  const preferred = [".cmd", ".exe", ".bat", ".com", ".ps1"];
+  const fromEnv = (process.env.PATHEXT || "")
+    .split(";")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return uniqueEntries([...preferred, ...fromEnv, ""]);
+};
+
+const commandHasPath = (command: string) =>
+  command.includes("/") || command.includes("\\") || isAbsolute(command);
+
+const executableCandidates = (command: string) => {
+  if (process.platform !== "win32") return [command];
+  const trimmed = command.trim();
+  const extensions = extname(trimmed) ? [""] : windowsExecutableExtensions();
+  const directories = commandHasPath(trimmed) ? [""] : splitPathEntries(process.env.PATH);
+  return directories.flatMap((directory) =>
+    extensions.map((extension) => directory ? join(directory, `${trimmed}${extension}`) : `${trimmed}${extension}`)
+  );
+};
+
+export const resolveRuntimeCommand = async (command: string) => {
+  if (process.platform !== "win32") return command;
+  for (const candidate of executableCandidates(command)) {
+    try {
+      await access(candidate, constants.F_OK);
+      return candidate;
+    } catch {
+      // Try the next PATHEXT/PATH candidate.
+    }
+  }
+  return command;
+};
+
+const resolveWindowsShimExecutable = async (command: string) => {
+  const extension = extname(command).toLowerCase();
+  if (process.platform !== "win32" || (extension !== ".cmd" && extension !== ".bat")) return command;
+  try {
+    const body = await readFile(command, "utf8");
+    const shimDir = dirname(command);
+    const matches = Array.from(body.matchAll(/"([^"]+?\.exe)"|(\S+?\.exe)(?=\s|$)/gi));
+    for (const match of matches) {
+      const raw = (match[1] ?? match[2] ?? "").replace(/%dp0%/gi, `${shimDir}\\`);
+      if (!raw || raw.includes("%")) continue;
+      try {
+        await access(raw, constants.F_OK);
+        return raw;
+      } catch {
+        // Try the next executable mentioned by the shim.
+      }
+    }
+  } catch {
+    return command;
+  }
+  return command;
+};
+
+export const resolveDirectRuntimeExecutable = async (command: string) =>
+  resolveWindowsShimExecutable(await resolveRuntimeCommand(command));
+
+const quoteWindowsArgument = (value: string) => {
+  if (!value) return "\"\"";
+  if (!/[\s"&^<>|()]/.test(value)) return value;
+  return `"${value.replace(/(["^&<>|])/g, "^$1")}"`;
+};
+
+const windowsShellLine = (command: string, args: string[]) =>
+  [quoteWindowsArgument(command), ...args.map(quoteWindowsArgument)].join(" ");
+
+export const spawnRuntimeCommand = async (
+  command: string,
+  args: string[],
+  options: SpawnOptionsWithoutStdio
+): Promise<ChildProcessWithoutNullStreams> => {
+  if (process.platform !== "win32") {
+    return spawn(command, args, options);
+  }
+
+  const resolved = await resolveRuntimeCommand(command);
+  const extension = extname(resolved).toLowerCase();
+  if (extension === ".cmd" || extension === ".bat" || !extension) {
+    return spawn("cmd.exe", ["/d", "/s", "/c", windowsShellLine(resolved, args)], options);
+  }
+  if (extension === ".ps1") {
+    return spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolved, ...args], options);
+  }
+  return spawn(resolved, args, options);
 };
 
 export const isMissingCommandError = (error: unknown) => {

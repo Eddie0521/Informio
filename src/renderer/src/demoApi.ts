@@ -146,14 +146,8 @@ const demoData: AppData = {
         command: "codex",
         args: ["app-server", "--listen", "stdio://"],
         enabled: true,
-        model: "gpt-5.3-codex",
-        models: [
-          { id: "gpt-5.5", label: "GPT-5.5" },
-          { id: "gpt-5.4", label: "GPT-5.4" },
-          { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-          { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-          { id: "gpt-5.2", label: "GPT-5.2" }
-        ],
+        model: "",
+        models: [],
         runtimeSupportsResume: true,
         runtimePermissionModes: ["read_only", "default", "full_access"],
         description: "适合在当前工作区里分析、改写和执行开发任务。"
@@ -329,9 +323,13 @@ export function installDemoApi() {
     },
     getAppInfo: async () => ({
       name: "Informio",
-      version: "1.0.3",
+      version: "0.10.0",
+      platform: navigator.platform.toLowerCase().includes("win") ? "win32" : "darwin",
       githubUrl: ""
     }),
+    windowControl: async (action) => {
+      if (action === "close") window.close();
+    },
     saveDocuments: async (_documents: InformioDocument[], activeDocumentId: string) => {
       state = { ...state, activeDocumentId };
       return state;
@@ -450,6 +448,7 @@ export function installDemoApi() {
     },
     respondAgentApproval: async () => ({ ok: true }),
     cancelAgentRun: async () => ({ ok: true }),
+    loadAsset: async () => ({ data: new ArrayBuffer(0), mimeType: "application/octet-stream" }),
     openExternal: async (url: string) => {
       window.open(url, "_blank");
     },

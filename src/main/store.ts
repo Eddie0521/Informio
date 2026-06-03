@@ -8,6 +8,7 @@ import type {
   AgentProvider,
   AppData,
   AppSettings,
+  InformioDocumentKind,
   InformioDocument,
   InformioFolder,
   InformioProject
@@ -23,13 +24,40 @@ import { buildWorkspaceScopeId } from "../shared/workspaceScope.js";
 
 const now = () => new Date().toISOString();
 const quickFolder = () => join(homedir(), "Documents", "Informio Quick Notes");
-const defaultChineseFontFamily = "PingFang SC";
-const defaultEnglishFontFamily = "Helvetica Neue";
-const defaultCodeFontFamily = "SF Mono";
+const defaultChineseFontFamily = process.platform === "win32" ? "Microsoft YaHei UI" : "PingFang SC";
+const defaultEnglishFontFamily = process.platform === "win32" ? "Segoe UI" : "Helvetica Neue";
+const defaultCodeFontFamily = process.platform === "win32" ? "Consolas" : "SF Mono";
 const normalizeFontFamilySetting = (value: string | undefined, fallback: string) => {
   const trimmed = value?.trim();
   return trimmed ? trimmed : fallback;
 };
+
+const textDocumentKinds = new Set<InformioDocumentKind>(["markdown", "text"]);
+const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+const videoExtensions = new Set([".mp4", ".mov", ".webm"]);
+const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
+const pdfExtensions = new Set([".pdf"]);
+
+const documentKindFromPath = (path?: string): InformioDocumentKind => {
+  if (!path) return "markdown";
+  const extension = extname(path).toLowerCase();
+  if (extension === ".md" || extension === ".markdown") return "markdown";
+  if (extension === ".txt") return "text";
+  if (imageExtensions.has(extension)) return "image";
+  if (videoExtensions.has(extension)) return "video";
+  if (audioExtensions.has(extension)) return "audio";
+  if (pdfExtensions.has(extension)) return "pdf";
+  return "unknown";
+};
+
+const normalizeDocumentKind = (document: InformioDocument): InformioDocumentKind =>
+  document.kind ?? documentKindFromPath(document.filePath ?? document.title);
+
+const normalizeDocuments = (documents: InformioDocument[]) =>
+  documents.map((document) => ({
+    ...document,
+    kind: normalizeDocumentKind(document)
+  }));
 const normalizeAssetImportMode = (value: AppSettings["editor"]["assetImportMode"] | undefined): AppSettings["editor"]["assetImportMode"] =>
   value === "link-original-file" ? "link-original-file" : "copy-to-attachment";
 
@@ -102,7 +130,7 @@ export const defaultSettings: AppSettings = {
       command: "codex",
       args: ["app-server", "--listen", "stdio://"],
       enabled: true,
-      model: "gpt-5.3-codex",
+      model: "",
       models: [],
       runtimeSupportsResume: true,
       runtimePermissionModes: ["read_only", "default", "full_access"],
@@ -246,6 +274,7 @@ export const defaultData: AppData = {
     {
       id: "attention-budget",
       title: "注意力预算.md",
+      kind: "markdown",
       collection: "writing",
       updatedAt: now(),
       markdown: `# 注意力预算：写作者的最小系统
@@ -271,6 +300,7 @@ export const defaultData: AppData = {
     {
       id: "reading-notes",
       title: "读书摘录.md",
+      kind: "markdown",
       collection: "knowledge",
       pinned: true,
       updatedAt: now(),
@@ -279,6 +309,7 @@ export const defaultData: AppData = {
     {
       id: "inbox",
       title: "Inbox.md",
+      kind: "markdown",
       collection: "writing",
       updatedAt: now(),
       markdown: ""
@@ -352,21 +383,30 @@ const mergeAgent = (agent: Partial<AgentProvider>): AgentProvider => {
     agent.id === "claude-code" && agent.model && legacyClaudeModelAliases.has(agent.model)
       ? base.model
       : (agent.model ?? base.model);
-  const normalizedClaudeModels =
+  const normalizedCodexModel =
+    agent.id === "codex" && agent.model && legacyCodexModelIds.has(agent.model)
+      ? base.model
+      : (agent.model ?? base.model);
+  const normalizedModels =
     agent.id === "claude-code"
-    && Array.isArray(agent.models)
-    && agent.models.length > 0
-    && agent.models.every((model) => legacyClaudeModelAliases.has(model.id))
-      ? base.models
-      : (agent.models ?? base.models);
+      ? (
+          Array.isArray(agent.models)
+          && agent.models.length > 0
+          && agent.models.every((model) => legacyClaudeModelAliases.has(model.id))
+            ? base.models
+            : (agent.models ?? base.models)
+        )
+      : agent.id === "codex"
+        ? (normalizedCodexModels ?? base.models)
+        : (agent.models ?? base.models);
   return {
     ...base,
     ...agent,
     transport: legacyPreset || legacyCodexMcpPreset || legacyClaudeMcpPreset || legacyOpencodeCliPreset ? base.transport : (agent.transport ?? base.transport),
     command: legacyPreset || legacyCodexMcpPreset || legacyClaudeMcpPreset || legacyOpencodeCliPreset ? base.command : (agent.command ?? base.command),
     args: legacyPreset || legacyCodexMcpPreset || legacyClaudeMcpPreset || legacyOpencodeCliPreset ? base.args : (agent.args ?? base.args),
-    model: normalizedClaudeModel,
-    models: normalizedClaudeModels ?? normalizedCodexModels ?? base.models,
+    model: agent.id === "codex" ? normalizedCodexModel : normalizedClaudeModel,
+    models: normalizedModels,
     runtimeSupportsResume: agent.runtimeSupportsResume ?? base.runtimeSupportsResume,
     runtimePermissionModes: agent.runtimePermissionModes ?? base.runtimePermissionModes,
     description: defaultPreset || legacyPreset || legacyCodexMcpPreset || legacyClaudeMcpPreset || legacyOpencodeCliPreset ? base.description : (agent.description ?? base.description)
@@ -417,6 +457,7 @@ const mergeData = (value: Partial<AppData>): AppData => {
   return {
     ...defaultData,
     ...value,
+    documents: value.documents?.length ? normalizeDocuments(value.documents) : defaultData.documents,
     projects,
     agentConversations: normalizeAgentConversations(
       value.agentConversations,
@@ -492,9 +533,7 @@ async function saveDocumentFiles(documents: InformioDocument[]) {
     documents
       .filter((doc) => {
         if (!doc.filePath) return false;
-        const ext = extname(doc.filePath).toLowerCase();
-        if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4", ".mov", ".webm", ".mp3", ".wav", ".m4a", ".ogg", ".pdf"].includes(ext)) return false;
-        return true;
+        return textDocumentKinds.has(normalizeDocumentKind(doc));
       })
       .map(async (doc) => {
         const path = doc.filePath!;
@@ -539,6 +578,7 @@ export async function createQuickDocument(data: AppData): Promise<AppData> {
     id: `quick-${Date.now()}`,
     title: basename(filePath),
     filePath,
+    kind: "markdown",
     collection: "writing",
     updatedAt: now(),
     markdown: ""

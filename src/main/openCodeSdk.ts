@@ -88,6 +88,12 @@ const jsonIfMeaningful = (value: unknown) => {
   if (!Object.keys(record).length) return "";
   return compactJson(record);
 };
+const normalizeError = (error: unknown, fallback: string) => {
+  const message = asErrorMessage(error);
+  if (message && message !== "[object Object]") return new Error(message);
+  const details = jsonIfMeaningful(error);
+  return new Error(details || fallback);
+};
 const partTextDelta = (previous: string, next: string, providedDelta?: string) => {
   if (providedDelta) return providedDelta;
   if (!next) return "";
@@ -448,7 +454,7 @@ export class OpenCodeSdkManager {
       } catch (error) {
         clearTimeout(timer);
         this.activeRuns.delete(provider.id);
-        reject(error instanceof Error ? error : new Error(String(error)));
+        reject(normalizeError(error, "OpenCode session prompt failed."));
       }
     });
 
@@ -629,7 +635,7 @@ export class OpenCodeSdkManager {
       if (role !== "assistant") return;
       const error = info.error;
       if (error) {
-        this.finishRun(run, new Error(asErrorMessage(error)));
+        this.finishRun(run, normalizeError(error, "OpenCode assistant message failed."));
         return;
       }
       const completedAt = asNumber(asRecord(info.time).completed);
@@ -665,7 +671,7 @@ export class OpenCodeSdkManager {
     }
 
     if (type === "session.error") {
-      this.finishRun(run, new Error(asErrorMessage(properties.error) || "OpenCode session failed."));
+      this.finishRun(run, normalizeError(properties.error || properties, "OpenCode session failed."));
       return;
     }
 

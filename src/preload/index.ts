@@ -12,6 +12,7 @@ import type {
   AgentStreamEvent,
   AppData,
   AppSettings,
+  AssetDataResult,
   FileSystemOperationInput,
   InformioDocument,
   MenuCommand,
@@ -30,6 +31,8 @@ const api = {
   loadApp: () => ipcRenderer.invoke("app:load") as Promise<AppData>,
   openSettings: () => ipcRenderer.invoke("app:open-settings") as Promise<void>,
   newWindow: () => ipcRenderer.invoke("app:new-window") as Promise<void>,
+  windowControl: (action: "minimize" | "toggleMaximize" | "close") =>
+    ipcRenderer.invoke("app:window-control", action) as Promise<void>,
   openFiles: () => ipcRenderer.invoke("app:open-files") as Promise<AppData | null>,
   openWorkspace: () => ipcRenderer.invoke("app:open-workspace") as Promise<AppData | null>,
   addProject: () => ipcRenderer.invoke("app:add-project") as Promise<AppData | null>,
@@ -48,6 +51,7 @@ const api = {
     ipcRenderer.invoke("app:filesystem-action", input) as Promise<AppData>,
   saveAttachment: (input: SaveAttachmentInput) =>
     ipcRenderer.invoke("app:save-attachment", input) as Promise<SaveAttachmentResult>,
+  loadAsset: (path: string) => ipcRenderer.invoke("app:load-asset", path) as Promise<AssetDataResult>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("app:save-settings", settings) as Promise<AppSettings>,
   getAppInfo: () => ipcRenderer.invoke("app:get-info") as Promise<AppInfo>,
   saveDocuments: (documents: InformioDocument[], activeDocumentId: string) =>

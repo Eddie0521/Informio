@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type {
   AgentModel,
   AgentConversationMessage,
@@ -20,7 +20,7 @@ import {
   type FileChangeAudit,
   verifyFileChangeAudit
 } from "./fileChangeVerification.js";
-import { formatAgentLaunchError, summarizeAgentStderr } from "./runtimeEnvironment.js";
+import { formatAgentLaunchError, spawnRuntimeCommand, summarizeAgentStderr } from "./runtimeEnvironment.js";
 
 type JsonRpcId = string | number;
 
@@ -263,7 +263,7 @@ export class CodexAppServerManager {
 
     let session: CodexClientSession | null = null;
     try {
-      const child = spawn(provider.command, providerArgs(provider), {
+      const child = await spawnRuntimeCommand(provider.command, providerArgs(provider), {
         cwd: provider.cwd || undefined,
         env: process.env,
         stdio: ["pipe", "pipe", "pipe"],
@@ -303,7 +303,7 @@ export class CodexAppServerManager {
       this.sessions.set(provider.id, nextSession);
       const initialized = asRecord(
         await this.request(nextSession, "initialize", {
-          clientInfo: { name: "informio", version: "1.0.3" },
+          clientInfo: { name: "informio", version: "0.10.0" },
           capabilities: { experimentalApi: true }
         })
       );

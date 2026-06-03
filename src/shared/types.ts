@@ -10,14 +10,22 @@ export type AgentTransport = "codex-app-server" | "claude-agent-sdk" | "opencode
 
 export type ApiProviderKind = "openai-compatible" | "anthropic";
 
+export type InformioDocumentKind = "markdown" | "text" | "image" | "video" | "audio" | "pdf" | "unknown";
+
 export type InformioDocument = {
   id: string;
   title: string;
   markdown: string;
+  kind?: InformioDocumentKind;
   collection: "writing" | "knowledge";
   updatedAt: string;
   filePath?: string;
   pinned?: boolean;
+};
+
+export type AssetDataResult = {
+  data: ArrayBuffer;
+  mimeType: string;
 };
 
 export type DocumentConflict = {
@@ -100,6 +108,7 @@ export type AgentProvider = {
 export type AppInfo = {
   name: string;
   version: string;
+  platform: string;
   githubUrl: string;
   iconDataUrl?: string;
 };

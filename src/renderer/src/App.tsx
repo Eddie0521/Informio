@@ -128,6 +128,7 @@ import type {
   FileSystemOperationInput,
   InformioFolder,
   InformioDocument,
+  InformioDocumentKind,
   InformioProject,
   LocalFontOption,
   MenuCommand,
@@ -717,7 +718,31 @@ const ResizableImage = Image.extend({
         }
       });
 
-      el.src = resolveMarkdownAssetSrc(String(HTMLAttributes.src ?? ""), this.options.assetBasePath);
+      let objectUrl = "";
+      let disposed = false;
+      const applyImageSrc = async (rawSrc: string) => {
+        const localPath = resolveMarkdownAssetPath(rawSrc, this.options.assetBasePath);
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = "";
+        }
+        if (!localPath) {
+          el.src = resolveMarkdownAssetSrc(rawSrc, this.options.assetBasePath);
+          return;
+        }
+        try {
+          objectUrl = await loadLocalAssetObjectUrl(localPath);
+          if (disposed) {
+            URL.revokeObjectURL(objectUrl);
+            return;
+          }
+          el.src = objectUrl;
+        } catch {
+          el.src = resolveMarkdownAssetSrc(rawSrc, this.options.assetBasePath);
+        }
+      };
+      let currentSrc = String(HTMLAttributes.src ?? "");
+      void applyImageSrc(currentSrc);
       el.style.height = "auto";
 
       const nodeView = new ResizableNodeView({
@@ -739,6 +764,11 @@ const ResizableImage = Image.extend({
         },
         onUpdate: (updatedNode: any) => {
           if (updatedNode.type !== node.type) return false;
+          const nextSrc = String(updatedNode.attrs.src ?? "");
+          if (nextSrc !== currentSrc) {
+            currentSrc = nextSrc;
+            void applyImageSrc(currentSrc);
+          }
           const nextWidth = updatedNode.attrs.width;
           el.style.width =
             typeof nextWidth === "number"
@@ -771,6 +801,16 @@ const ResizableImage = Image.extend({
       el.onload = () => {
         dom.style.visibility = "";
         dom.style.pointerEvents = "";
+      };
+      el.onerror = () => {
+        dom.style.visibility = "";
+        dom.style.pointerEvents = "";
+      };
+      const originalDestroy = nodeView.destroy?.bind(nodeView);
+      nodeView.destroy = () => {
+        disposed = true;
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        originalDestroy?.();
       };
       return nodeView;
     };
@@ -1025,6 +1065,9 @@ const permissionModeLabel: Record<AgentPermissionMode, string> = {
 
 const agentPermissionModes: AgentPermissionMode[] = ["read_only", "default", "full_access"];
 
+const isCancelledAgentMessage = (message: Pick<AgentSessionMessage, "error">) =>
+  /取消|中断|cancel|cancelled|canceled|abort|aborted/i.test(message.error ?? "");
+
 const sessionStatusLabel: Record<AgentSessionStatus, string> = {
   idle: "空闲",
   thinking: "处理中",
@@ -1277,8 +1320,13 @@ type CommandPaletteItem = {
 };
 
 const shortcutDisplayPlatform = navigator.platform.toLowerCase().includes("mac") ? "mac" : "windows";
+const isWindowsPlatform = shortcutDisplayPlatform === "windows";
 
 const normalizePath = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
+const normalizePathForCompare = (path: string) => {
+  const normalized = normalizePath(path);
+  return isWindowsPlatform ? normalized.toLowerCase() : normalized;
+};
 
 const pathBaseName = (path: string) => normalizePath(path).split("/").filter(Boolean).at(-1) ?? path;
 
@@ -1304,6 +1352,11 @@ const safeDecodeUri = (value: string) => {
 
 const encodeLocalFilePath = (path: string) => normalizePath(path).split("/").map((part) => encodeURIComponent(part)).join("/");
 
+const localFileUrlForPath = (path: string) => {
+  const encoded = encodeLocalFilePath(path);
+  return `local-file://${encoded.startsWith("/") ? encoded : `/${encoded}`}`;
+};
+
 const joinAssetPath = (folder: string, assetPath: string) => {
   const normalizedFolder = normalizePath(folder);
   const normalizedAsset = normalizePath(assetPath).replace(/^\.?\//, "");
@@ -1322,17 +1375,49 @@ const resolveMarkdownAssetSrc = (src: string, basePath?: string) => {
     : baseFolder
       ? joinAssetPath(baseFolder, decodedPath)
       : "";
-  return absolutePath ? `local-file://${encodeLocalFilePath(absolutePath)}${suffix}` : trimmed;
+  return absolutePath ? `${localFileUrlForPath(absolutePath)}${suffix}` : trimmed;
 };
 
-const assetExtensionFromSrc = (src: string) => {
-  const [pathPart] = src.trim().split(/[?#]/, 1);
-  return pathExtName(safeDecodeUri(pathPart)).slice(1).toLowerCase();
+const resolveMarkdownAssetPath = (src: string, basePath?: string) => {
+  const trimmed = src.trim();
+  if (!trimmed || /^(?:https?:|data:|blob:)/i.test(trimmed)) return "";
+  if (/^(?:local-file:|file:)/i.test(trimmed)) return assetPathPartFromSrc(trimmed);
+  const [pathPart] = trimmed.split(/[?#]/, 1);
+  const decodedPath = safeDecodeUri(pathPart ?? "");
+  const baseFolder = basePath ? (pathExtName(basePath) ? pathDirName(basePath) : normalizePath(basePath)) : "";
+  if (isAbsoluteAssetPath(decodedPath)) return decodedPath;
+  return baseFolder ? joinAssetPath(baseFolder, decodedPath) : "";
 };
+
+const loadLocalAssetObjectUrl = async (path: string) => {
+  const asset = await window.informio.loadAsset(path);
+  return URL.createObjectURL(new Blob([asset.data], { type: asset.mimeType }));
+};
+
+const assetPathPartFromSrc = (src: string) => {
+  const trimmed = src.trim();
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol === "local-file:" || url.protocol === "file:") {
+      const host = decodeURIComponent(url.host);
+      const pathname = decodeURIComponent(url.pathname);
+      if (/^[A-Za-z]:?$/.test(host)) return `${host.replace(/:$/, "")}:${pathname}`;
+      return url.host ? `/${host}${pathname}` : pathname;
+    }
+    if (url.protocol === "http:" || url.protocol === "https:") return decodeURIComponent(url.pathname);
+  } catch {
+    // Fall back to path-style parsing below.
+  }
+  return safeDecodeUri(trimmed.split(/[?#]/, 1)[0] ?? "");
+};
+
+const assetExtensionFromSrc = (src: string) =>
+  pathExtName(assetPathPartFromSrc(src)).slice(1).toLowerCase();
 
 const pathContains = (folder: string, path: string) => {
-  const normalizedFolder = normalizePath(folder);
-  const normalizedPath = normalizePath(path);
+  const normalizedFolder = normalizePathForCompare(folder);
+  const normalizedPath = normalizePathForCompare(path);
   return normalizedPath === normalizedFolder || normalizedPath.startsWith(`${normalizedFolder}/`);
 };
 
@@ -1518,35 +1603,41 @@ const stringifyFrontmatter = (values: Record<string, unknown>) => {
 const composeMarkdownWithFrontmatter = (frontmatter: FrontmatterParseResult, body: string) =>
   frontmatter.hasFrontmatter ? `---\n${frontmatter.raw.trimEnd()}\n---\n${body.replace(/^\n+/, "")}` : body;
 
-const textExtensions = new Set(["md", "markdown", "txt"]);
 const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
 const pdfExtensions = new Set(["pdf"]);
+const videoExtensions = new Set(["mp4", "mov", "webm"]);
+const audioExtensions = new Set(["mp3", "wav", "m4a", "ogg"]);
 
-const isImageFile = (path?: string) => {
-  if (!path) return false;
-  return imageExtensions.has(path.split(".").pop()?.toLowerCase() ?? "");
+const documentKindFromPath = (path?: string): InformioDocumentKind => {
+  if (!path) return "markdown";
+  const extension = assetExtensionFromSrc(path);
+  if (extension === "md" || extension === "markdown") return "markdown";
+  if (extension === "txt") return "text";
+  if (imageExtensions.has(extension)) return "image";
+  if (videoExtensions.has(extension)) return "video";
+  if (audioExtensions.has(extension)) return "audio";
+  if (pdfExtensions.has(extension)) return "pdf";
+  return "unknown";
 };
 
-const isPdfFile = (path?: string) => {
-  if (!path) return false;
-  return pdfExtensions.has(path.split(".").pop()?.toLowerCase() ?? "");
-};
+const documentKind = (document?: InformioDocument | null): InformioDocumentKind =>
+  document ? (document.kind ?? documentKindFromPath(document.filePath ?? document.title)) : "unknown";
+
+const isImageFile = (path?: string) => Boolean(path && imageExtensions.has(assetExtensionFromSrc(path)));
+
+const isPdfFile = (path?: string) => Boolean(path && pdfExtensions.has(assetExtensionFromSrc(path)));
 
 const isWritableTextDocument = (document?: InformioDocument | null) => {
   if (!document) return false;
-  if (!document.filePath) return true;
-  return textExtensions.has(document.filePath.split(".").pop()?.toLowerCase() ?? "");
+  const kind = documentKind(document);
+  return kind === "markdown" || kind === "text";
 };
 
 const isMarkdownDocument = (document?: InformioDocument | null) => {
   if (!document) return false;
-  if (!document.filePath) return true;
-  const extension = document.filePath.split(".").pop()?.toLowerCase() ?? "";
-  return extension === "md" || extension === "markdown";
+  return documentKind(document) === "markdown";
 };
 
-const videoExtensions = new Set(["mp4", "mov", "webm"]);
-const audioExtensions = new Set(["mp3", "wav", "m4a", "ogg"]);
 const mediaExtensions = new Set([...videoExtensions, ...audioExtensions]);
 const lowlight = createLowlight(common);
 lowlight.registerAlias({
@@ -1570,15 +1661,9 @@ const codeLanguageAliases: Record<string, string> = {
   yml: "yaml"
 };
 
-const isVideoFile = (path?: string) => {
-  if (!path) return false;
-  return videoExtensions.has(path.split(".").pop()?.toLowerCase() ?? "");
-};
+const isVideoFile = (path?: string) => Boolean(path && videoExtensions.has(assetExtensionFromSrc(path)));
 
-const isAudioFile = (path?: string) => {
-  if (!path) return false;
-  return audioExtensions.has(path.split(".").pop()?.toLowerCase() ?? "");
-};
+const isAudioFile = (path?: string) => Boolean(path && audioExtensions.has(assetExtensionFromSrc(path)));
 
 const mediaKindFromSrc = (src: string) => {
   const extension = assetExtensionFromSrc(src);
@@ -1589,6 +1674,11 @@ const mediaKindFromSrc = (src: string) => {
 
 const isEmbeddableAssetFile = (path?: string) =>
   isPdfFile(path) || isImageFile(path) || isVideoFile(path) || isAudioFile(path);
+
+const isEmbeddableAssetDocument = (document?: InformioDocument | null) => {
+  const kind = documentKind(document);
+  return kind === "pdf" || kind === "image" || kind === "video" || kind === "audio";
+};
 
 const imageExtensionFromMimeType = (mimeType: string) => {
   if (mimeType === "image/jpeg") return "jpg";
@@ -3572,13 +3662,53 @@ const MediaBlock = Node.create({
 
       const media = document.createElement(kind);
       media.setAttribute("controls", "");
-      media.setAttribute("src", resolveMarkdownAssetSrc(node.attrs.src || "", this.options.assetBasePath));
+      let objectUrl = "";
+      let disposed = false;
+      const applyMediaSrc = async (rawSrc: string) => {
+        const localPath = resolveMarkdownAssetPath(rawSrc, this.options.assetBasePath);
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = "";
+        }
+        if (!localPath) {
+          media.setAttribute("src", resolveMarkdownAssetSrc(rawSrc, this.options.assetBasePath));
+          return;
+        }
+        try {
+          objectUrl = await loadLocalAssetObjectUrl(localPath);
+          if (disposed) {
+            URL.revokeObjectURL(objectUrl);
+            return;
+          }
+          media.setAttribute("src", objectUrl);
+        } catch {
+          media.setAttribute("src", resolveMarkdownAssetSrc(rawSrc, this.options.assetBasePath));
+        }
+      };
+      let currentSrc = node.attrs.src || "";
+      void applyMediaSrc(currentSrc);
       media.className = `informio-media is-${kind}`;
       wrapper.appendChild(media);
 
       appendCaption();
 
-      return { dom: wrapper };
+      return {
+        dom: wrapper,
+        update(updatedNode: { attrs: { kind: string; src: string; title: string }; type?: unknown }) {
+          const nextKind = updatedNode.attrs.kind === "audio" ? "audio" : "video";
+          if (nextKind !== kind) return false;
+          const nextSrc = updatedNode.attrs.src || "";
+          if (nextSrc !== currentSrc) {
+            currentSrc = nextSrc;
+            void applyMediaSrc(currentSrc);
+          }
+          return true;
+        },
+        destroy() {
+          disposed = true;
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
+        }
+      };
     };
   },
   renderMarkdown(node: { attrs?: { kind?: string; src?: string; title?: string } }) {
@@ -4239,6 +4369,44 @@ function IconButton({
   );
 }
 
+function WindowControls({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+  const runWindowControl = (action: "minimize" | "toggleMaximize" | "close") => {
+    void window.informio.windowControl(action);
+  };
+  return (
+    <div className="window-controls no-drag flex h-full shrink-0 items-stretch">
+      <button
+        type="button"
+        aria-label="最小化"
+        title="最小化"
+        className="window-control-button"
+        onClick={() => runWindowControl("minimize")}
+      >
+        <Minus size={14} strokeWidth={1.8} />
+      </button>
+      <button
+        type="button"
+        aria-label="最大化或还原"
+        title="最大化或还原"
+        className="window-control-button"
+        onClick={() => runWindowControl("toggleMaximize")}
+      >
+        <Square size={12} strokeWidth={1.8} />
+      </button>
+      <button
+        type="button"
+        aria-label="关闭"
+        title="关闭"
+        className="window-control-button is-close"
+        onClick={() => runWindowControl("close")}
+      >
+        <X size={15} strokeWidth={1.8} />
+      </button>
+    </div>
+  );
+}
+
 function ToolbarGlyphButton({
   label,
   icon: Icon,
@@ -4516,7 +4684,7 @@ const fallbackFolder = (path: string): InformioFolder => ({
 const treeNode = (folder: InformioFolder): FileTreeNode => ({ folder, documents: [], children: [], documentCount: 0 });
 
 const documentStructureKey = (documents: InformioDocument[]) =>
-  documents.map((doc) => `${doc.id}:${doc.title}:${doc.filePath ?? ""}:${doc.collection}:${doc.pinned ? "1" : "0"}`).join("|");
+  documents.map((doc) => `${doc.id}:${doc.title}:${doc.filePath ?? ""}:${documentKind(doc)}:${doc.collection}:${doc.pinned ? "1" : "0"}`).join("|");
 
 const documentLookupKey = (documents: InformioDocument[], excludedSuggestionDocumentId?: string) =>
   `${excludedSuggestionDocumentId ?? ""}::${documentStructureKey(documents)}`;
@@ -5235,11 +5403,11 @@ function FileList({
                   style={{ paddingLeft: 8 + (depth + 1) * 14 }}
                 >
                   <div className="flex items-center gap-2">
-                    {isVideoFile(doc.filePath) ? (
+                    {documentKind(doc) === "video" ? (
                       <Film size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
-                    ) : isAudioFile(doc.filePath) ? (
+                    ) : documentKind(doc) === "audio" ? (
                       <Music size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
-                    ) : isImageFile(doc.filePath) ? (
+                    ) : documentKind(doc) === "image" ? (
                       <ImageIcon size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
                     ) : (
                       <FileText size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
@@ -6357,7 +6525,10 @@ function EditorPane({
   const [editorScrolling, setEditorScrolling] = useState(false);
   const frontmatter = useMemo(() => parseFrontmatter(document.markdown), [document.markdown]);
   const editorMarkdown = frontmatter.body;
-  const isReadOnlyDocument = isPdfFile(document.filePath ?? document.title);
+  const activeDocumentKind = documentKind(document);
+  const isPdfDocument = activeDocumentKind === "pdf";
+  const isAssetDocument = isEmbeddableAssetDocument(document);
+  const isReadOnlyDocument = isAssetDocument;
   const isSourceMode = !isReadOnlyDocument && viewMode === "source";
   const documentLinkIndexKey = useMemo(
     () => documentLookupKey(documents, document.id),
@@ -7907,7 +8078,7 @@ function EditorPane({
         className={cn(
           "informio-editor-shell relative flex min-w-0 flex-1 justify-center",
           editorScrolling && "is-scrolling",
-          isReadOnlyDocument ? "is-pdf-document overflow-y-auto overflow-x-hidden" : "overflow-y-auto"
+          isPdfDocument ? "is-pdf-document overflow-y-auto overflow-x-hidden" : isAssetDocument ? "is-asset-document overflow-hidden" : "overflow-y-auto"
         )}
         onScroll={handleEditorScroll}
         onMouseUp={(event) => {
@@ -7944,8 +8115,10 @@ function EditorPane({
               onChange={(event) => onChange(document.id, event.target.value)}
               className="informio-editor informio-editor-source w-full resize-none border-0 bg-transparent p-0"
             />
-          ) : isReadOnlyDocument ? (
+          ) : isPdfDocument ? (
             <UnifiedPdfViewerSurface />
+          ) : isAssetDocument ? (
+            <AssetViewerSurface document={document} />
           ) : (
             <EditorContent editor={editor} className={isReadOnlyDocument ? "h-full" : undefined} />
           )}
@@ -8115,6 +8288,79 @@ function EmptyEditorPane({ defaultFolder, onCreate }: { defaultFolder: string; o
         Create in {defaultFolder}
       </button>
     </main>
+  );
+}
+
+function AssetViewerSurface({ document }: { document: InformioDocument }) {
+  const filePath = document.filePath ?? "";
+  const title = document.title || pathBaseName(filePath) || "Asset";
+  const kind = documentKind(document);
+  const [assetUrl, setAssetUrl] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  useEffect(() => {
+    if (!filePath || (kind !== "image" && kind !== "video" && kind !== "audio")) {
+      setAssetUrl("");
+      setLoadFailed(false);
+      setIsLoading(false);
+      return;
+    }
+    let disposed = false;
+    let objectUrl = "";
+    setIsLoading(true);
+    setLoadFailed(false);
+    window.informio.loadAsset(filePath)
+      .then((asset) => {
+        if (disposed) return;
+        objectUrl = URL.createObjectURL(new Blob([asset.data], { type: asset.mimeType }));
+        setAssetUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!disposed) setLoadFailed(true);
+      })
+      .finally(() => {
+        if (!disposed) setIsLoading(false);
+      });
+    return () => {
+      disposed = true;
+      setAssetUrl("");
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [filePath, kind]);
+  const openInSystem = () => {
+    if (filePath) void window.informio.openPath(filePath);
+  };
+
+  if (!filePath) {
+    return <div className="informio-asset-message is-error">文件路径缺失，无法打开。</div>;
+  }
+
+  const body = isLoading || (!assetUrl && !loadFailed) ? (
+    <div className="informio-asset-message">正在加载文件...</div>
+  ) : loadFailed ? (
+    <div className="informio-asset-message is-error">文件已识别为{kind === "image" ? "图片" : kind === "video" ? "视频" : "音频"}，但当前文件无法被内置预览器解码。</div>
+  ) : kind === "image" ? (
+    <img className="informio-asset-image" src={assetUrl} alt={title} onError={() => setLoadFailed(true)} />
+  ) : kind === "video" ? (
+    <video className="informio-asset-video" src={assetUrl} controls onError={() => setLoadFailed(true)} />
+  ) : kind === "audio" ? (
+    <audio className="informio-asset-audio" src={assetUrl} controls onError={() => setLoadFailed(true)} />
+  ) : null;
+
+  if (!body) {
+    return <div className="informio-asset-message is-error">当前文件类型无法预览。</div>;
+  }
+
+  return (
+    <div className="informio-asset-surface">
+      <div className={cn("informio-asset-stage", kind === "audio" && "is-audio")}>{body}</div>
+      <div className="informio-asset-footer">
+        <span>{title}</span>
+        <button type="button" onClick={openInSystem}>
+          在系统中打开
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -9435,7 +9681,7 @@ function OpenCodeExecutionFlow(props: ProviderExecutionFlowProps) {
         : message.status === "thinking"
           ? "生成中"
           : message.status === "error"
-            ? "已中断"
+            ? isCancelledAgentMessage(message) ? "已中断" : "运行失败"
             : "已完成";
   return (
     <div className="mb-3 px-0 py-1">
@@ -9524,7 +9770,7 @@ function ClaudeCodeExecutionFlow(props: ProviderExecutionFlowProps) {
   const reasoningPreview = firstProcessLine(message.reasoning);
   const actionError = hasVisibleActionError(visibleActions);
   const statusLabel =
-    pendingApprovalActions.length ? "等待授权" : actionError ? "部分失败" : message.status === "tool-executing" ? "执行中" : message.status === "thinking" ? "处理中" : message.status === "error" ? "已中断" : "完成";
+    pendingApprovalActions.length ? "等待授权" : actionError ? "部分失败" : message.status === "tool-executing" ? "执行中" : message.status === "thinking" ? "处理中" : message.status === "error" ? isCancelledAgentMessage(message) ? "已中断" : "运行失败" : "完成";
   return (
     <div className="mb-3 px-0 py-1">
       <button
@@ -10740,7 +10986,8 @@ function SettingsView({
   onCheckApiModels,
   checkingApiModels,
   apiCheckState,
-  appInfo
+  appInfo,
+  showWindowControls
 }: {
   settings: AppSettings;
   connections: AgentConnection[];
@@ -10751,6 +10998,7 @@ function SettingsView({
   checkingApiModels: boolean;
   apiCheckState: ApiCheckState;
   appInfo: AppInfo;
+  showWindowControls: boolean;
 }) {
   const apiSettings = normalizeApiSettings(settings.api);
   const customThemeColor = settings.appearance.customThemeColor || DEFAULT_CUSTOM_THEME_COLOR;
@@ -10859,7 +11107,10 @@ function SettingsView({
           </div>
 
           <div className="settings-main flex min-w-0 flex-col overflow-hidden">
-            <div className="settings-titlebar drag-region flex h-[42px] shrink-0 items-center justify-center border-b">
+            <div className="settings-titlebar drag-region relative flex h-[42px] shrink-0 items-center justify-center border-b">
+              <div className="absolute right-0 top-0 h-full">
+                <WindowControls visible={showWindowControls} />
+              </div>
               <h1 className="text-[12px] font-bold">设置</h1>
             </div>
             <div className="no-drag overflow-y-auto px-10 py-7">
@@ -11424,7 +11675,13 @@ export function App() {
   const [checkingAgents, setCheckingAgents] = useState(false);
   const [checkingApiModels, setCheckingApiModels] = useState(false);
   const [apiCheckState, setApiCheckState] = useState<ApiCheckState>({ status: "idle" });
-  const [appInfo, setAppInfo] = useState<AppInfo>({ name: "Informio", version: "", githubUrl: "", iconDataUrl: undefined });
+  const [appInfo, setAppInfo] = useState<AppInfo>({
+    name: "Informio",
+    version: "",
+    platform: navigator.platform.toLowerCase().includes("win") ? "win32" : "darwin",
+    githubUrl: "",
+    iconDataUrl: undefined
+  });
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
   const [openDocumentIds, setOpenDocumentIds] = useState<string[]>([]);
   const [editorPanes, setEditorPanes] = useState<EditorPaneState[]>([]);
@@ -11691,7 +11948,13 @@ export function App() {
 
   useEffect(() => {
     window.informio.getAppInfo().then(setAppInfo).catch(() => {
-      setAppInfo({ name: "Informio", version: "", githubUrl: "", iconDataUrl: undefined });
+      setAppInfo({
+        name: "Informio",
+        version: "",
+        platform: navigator.platform.toLowerCase().includes("win") ? "win32" : "darwin",
+        githubUrl: "",
+        iconDataUrl: undefined
+      });
     });
   }, []);
 
@@ -11766,6 +12029,11 @@ export function App() {
         ];
     return Array.from(new Map(merged.filter((item) => item.id).map((item) => [item.id, item])).values());
   }, [activeAgent?.model, activeAgent?.models, activeConnection?.models]);
+  const activeModelSelection = useMemo(() => {
+    const configuredModel = activeAgent?.model?.trim() ?? "";
+    if (configuredModel && (!activeModels.length || activeModels.some((model) => model.id === configuredModel))) return configuredModel;
+    return activeModels[0]?.id || configuredModel;
+  }, [activeAgent?.model, activeModels]);
   const providerAgentConversations = useMemo(
     () =>
       (data?.agentConversations ?? [])
@@ -11777,10 +12045,18 @@ export function App() {
     () => providerAgentConversations.find((conversation) => conversation.id === activeConversationId) ?? null,
     [activeConversationId, providerAgentConversations]
   );
-  const activeModel = useMemo(() => {
-    if (activeAgent?.model?.trim()) return activeAgent.model;
-    return activeModels[0]?.id || "";
-  }, [activeAgent?.model, activeModels]);
+  const activeModel = activeModelSelection;
+  useEffect(() => {
+    if (!data || !activeAgent || !activeConnection?.models?.length) return;
+    const configuredModel = activeAgent.model?.trim() ?? "";
+    if (!configuredModel || activeConnection.models.some((model) => model.id === configuredModel)) return;
+    const fallbackModel = activeConnection.models[0]?.id;
+    if (!fallbackModel) return;
+    updateSettings({
+      ...data.settings,
+      agents: data.settings.agents.map((agent) => (agent.id === activeAgent.id ? { ...agent, model: fallbackModel } : agent))
+    });
+  }, [activeAgent?.id, activeAgent?.model, activeConnection?.models, data?.settings]);
   const documentLookupIndex = useMemo(
     () => (data ? buildDocumentLookupIndex(data.documents) : null),
     [data?.documents]
@@ -12234,7 +12510,7 @@ export function App() {
       input.action === "move" || input.action === "rename"
         ? data.documents
             .filter((doc) => {
-              if (!doc.filePath || !isEmbeddableAssetFile(doc.filePath)) return false;
+              if (!doc.filePath || !isEmbeddableAssetDocument(doc)) return false;
               if (input.targetType === "file") {
                 return doc.id === input.documentId || normalizePath(doc.filePath) === normalizePath(input.path);
               }
@@ -12874,7 +13150,7 @@ export function App() {
       applySessionMessageUpdate((item) => ({
         ...item,
         status: "error",
-        error: error instanceof Error ? error.message : String(error),
+        error: item.error || (error instanceof Error ? error.message : String(error)),
         completedAt: item.completedAt ?? Date.now()
       }));
       await persistConversationSnapshot(baseRuntimeThreadId);
@@ -12938,10 +13214,11 @@ export function App() {
   const leftPanelWidth = clamp(data.settings.appearance.leftPanelWidth, LEFT_PANEL_MIN_WIDTH, LEFT_PANEL_MAX_WIDTH);
   const rightPanelWidth = clamp(data.settings.appearance.rightPanelWidth, RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH);
   const isSettingsWindow = window.location.hash === "#settings";
+  const showWindowControls = appInfo.platform === "win32";
   const shellStyle = buildShellStyle(data.settings.appearance);
   const lineCount = activeOpenDoc ? countLines(activeOpenDoc.markdown) : 0;
   const activePaneViewMode = editorViewModes[activePaneId] ?? "rich-text";
-  const canToggleMarkdownSource = Boolean(activeOpenDoc) && !isPdfFile(activeOpenDoc.filePath ?? activeOpenDoc.title);
+  const canToggleMarkdownSource = Boolean(activeOpenDoc) && !isEmbeddableAssetDocument(activeOpenDoc);
   const canExportActiveDocument = isWritableTextDocument(activeOpenDoc);
   const toggleActivePaneViewMode = () => {
     if (!canToggleMarkdownSource) return;
@@ -13100,7 +13377,10 @@ export function App() {
   if (isSettingsWindow) {
     return (
       <Tooltip.Provider delayDuration={120} skipDelayDuration={80}>
-        <div className={cn("app-shell h-screen overflow-hidden", `theme-${data.settings.appearance.theme}`)} style={shellStyle}>
+        <div
+          className={cn("app-shell h-screen overflow-hidden", `theme-${data.settings.appearance.theme}`, showWindowControls && "is-frameless")}
+          style={shellStyle}
+        >
           <SettingsView
             settings={data.settings}
             connections={connections}
@@ -13111,6 +13391,7 @@ export function App() {
             checkingApiModels={checkingApiModels}
             apiCheckState={apiCheckState}
             appInfo={appInfo}
+            showWindowControls={showWindowControls}
           />
         </div>
       </Tooltip.Provider>
@@ -13119,7 +13400,10 @@ export function App() {
 
   return (
     <Tooltip.Provider delayDuration={120} skipDelayDuration={80}>
-      <div className={cn("app-shell h-screen overflow-hidden", `theme-${data.settings.appearance.theme}`)} style={shellStyle}>
+      <div
+        className={cn("app-shell h-screen overflow-hidden", `theme-${data.settings.appearance.theme}`, showWindowControls && "is-frameless")}
+        style={shellStyle}
+      >
         <DocumentConflictDialog
           conflict={activeConflict}
           document={activeConflictDocument}
@@ -13193,6 +13477,7 @@ export function App() {
                 })}
               </div>
 	            </div>
+              <WindowControls visible={showWindowControls} />
 	          </header>
 
 	          <div className="flex min-h-0 flex-1">
