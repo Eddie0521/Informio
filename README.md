@@ -24,6 +24,14 @@
   <img src="./docs/assets/image_informio.png" alt="Informio interface preview" />
 </p>
 
+## Features
+
+- **Project-based**: No need to move every file into one fixed directory. Add the folders you actually use, whenever you need them.
+- **Focused**: Review Markdown, PDF, image, video, and audio in one workspace; mark key points, write notes, and assign tasks to Agents without switching context.
+- **Safe**: Local-first, no data collection. Lock sensitive notes with a passphrase, so Agents can use the context they need while private content stays out of view.
+- **Simple**: No database, no complex guidance. Open Informio, import your project, start your work. Informio relies on locally installed Agents and reuses the setup you already have.
+- **Research-friendly**: Preview and highlight PDFs, keep Markdown records, and let Agents see the full working context directly.
+
 ## Quick Start
 
 1. Download the latest build from [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest).
@@ -32,13 +40,16 @@
 4. To use Agent assistance, make sure your preferred local Agent CLI is already installed and signed in, then choose it from Informio settings.
 5. When you need anything, ask the Agent to work from the current workspace context.
 
-## Features
+## Development
 
-- **Project-based**: No need to move every file into one fixed directory. Add the folders you actually use, whenever you need them.
-- **Focused**: Review Markdown, PDF, image, video, and audio in one workspace; mark key points, write notes, and assign tasks to Agents without switching context.
-- **Safe**: Local-first, no data collection. Lock sensitive notes with a passphrase, so Agents can use the context they need while private content stays out of view.
-- **Simple**: No database, no complex guidance. Open Informio, import your project, start your work. Informio relies on locally installed Agents and reuses the setup you already have.
-- **Research-friendly**: Preview and highlight PDFs, keep Markdown records, and let Agents see the full working context directly.
+Informio uses the `pnpm` version declared in `package.json`. On macOS or Windows, run these commands from the repository root:
+
+```bash
+corepack pnpm install
+corepack pnpm run dev
+```
+
+On Windows, use PowerShell.
 
 ## Installation
 
@@ -55,6 +66,16 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 ### Windows and Linux
 
 Informio has only been carefully tested on macOS for now. If you find any problem on Windows or Linux, please open an issue or PR.
+
+## Tech Stack
+
+- **Desktop shell**: Electron, Electron Vite, Vite, TypeScript
+- **Interface**: React, Tailwind CSS, Radix UI, Lucide React
+- **Editor**: Tiptap, ProseMirror, Tiptap Markdown
+- **Preview and rendering**: EmbedPDF, Mermaid, KaTeX, Lowlight
+- **Local app layer**: Electron Store, Electron Updater, Zod
+- **Agent integrations**: Claude Agent SDK, OpenCode SDK, local Agent CLI discovery
+- **Packaging**: Electron Builder for macOS, Windows, and Linux builds
 
 ## Notes
 

@@ -24,6 +24,14 @@
   <img src="./docs/assets/image_informio.png" alt="Informio 界面预览" />
 </p>
 
+## Features
+
+- **项目制**：不需要把所有资料都整理到同一个文件夹。用到哪个项目、哪个目录，直接添加进来就能开始。
+- **专注**：Markdown、PDF、图片、视频、音频都可以在一个工作区里审阅。标记重点、记录想法、安排 Agent 执行任务，不用在一堆工具之间来回切换。
+- **安全**：Local-first，无数据收集。通过口令锁定敏感笔记，让 Agent 能使用工作所需上下文，同时避免浏览你的私人内容。
+- **简单**：无数据库，无复杂引导。打开 Informio，导入项目，直接开始工作。Informio 完全依赖本地安装的 Agent，最大程度复用用户原本的设置。
+- **适合研究整理**：PDF 预览高亮、Markdown 编辑记录、Agent 直接看到完整上下文，让阅读、记录和后续执行连在一起。
+
 ## Quick Start
 
 1. 从 [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest) 下载最新版本。
@@ -32,13 +40,16 @@
 4. 如果要使用 Agent，请先确认本地已经安装并登录对应的 Agent CLI，然后在 Informio 设置里选择它。
 5. 有任何需求，都可以让 Agent 基于当前工作区上下文处理。
 
-## Features
+## Development
 
-- **项目制**：不需要把所有资料都整理到同一个文件夹。用到哪个项目、哪个目录，直接添加进来就能开始。
-- **专注**：Markdown、PDF、图片、视频、音频都可以在一个工作区里审阅。标记重点、记录想法、安排 Agent 执行任务，不用在一堆工具之间来回切换。
-- **安全**：Local-first，无数据收集。通过口令锁定敏感笔记，让 Agent 能使用工作所需上下文，同时避免浏览你的私人内容。
-- **简单**：无数据库，无复杂引导。打开 Informio，导入项目，直接开始工作。Informio 完全依赖本地安装的 Agent，最大程度复用用户原本的设置。
-- **适合研究整理**：PDF 预览高亮、Markdown 编辑记录、Agent 直接看到完整上下文，让阅读、记录和后续执行连在一起。
+Informio 使用 `package.json` 中声明的 `pnpm` 版本。macOS 和 Windows 都在仓库根目录运行下面的命令：
+
+```bash
+corepack pnpm install
+corepack pnpm run dev
+```
+
+Windows 请使用 PowerShell。
 
 ## Installation
 
@@ -55,6 +66,16 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 ### Windows 和 Linux
 
 当前仅在 macOS 仔细测试过，Windows 和 Linux 有任何问题，请提 issue 和 PR。
+
+## 技术栈
+
+- **桌面外壳**：Electron、Electron Vite、Vite、TypeScript
+- **界面**：React、Tailwind CSS、Radix UI、Lucide React
+- **编辑器**：Tiptap、ProseMirror、Tiptap Markdown
+- **预览与渲染**：EmbedPDF、Mermaid、KaTeX、Lowlight
+- **本地应用层**：Electron Store、Electron Updater、Zod
+- **Agent 集成**：Claude Agent SDK、OpenCode SDK、本地 Agent CLI 发现
+- **打包**：Electron Builder，用于 macOS、Windows 和 Linux 构建
 
 ## 须知
 
