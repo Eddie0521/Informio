@@ -66,7 +66,7 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 
 Informio 已加入 Windows 打包修复，但 macOS 仍然是目前测试最充分的平台。Windows 如有任何问题，请提 issue 和 PR。
 
-## v0.11.0 更新
+## v0.1.10 更新
 
 - 保留 v0.10.0 的 Windows 打包修复，同时恢复 macOS 上的阅读和 Agent 工作流优化。
 - 导出文档使用用户配置的编辑器字体栈，中文和英文排版更一致。

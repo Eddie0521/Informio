@@ -66,7 +66,7 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 
 Informio now includes Windows packaging fixes, but macOS remains the most carefully tested platform. If you find any Windows problem, please open an issue or PR.
 
-## v0.11.0 Updates
+## v0.1.10 Updates
 
 - Keeps the Windows packaging fixes from v0.10.0 while restoring the macOS reading and Agent workflow improvements.
 - Improves exported document typography by using the configured editor font stack.
