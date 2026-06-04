@@ -12,7 +12,6 @@
   <a href="https://github.com/Eddie0521/Informio/releases/latest"><img src="https://img.shields.io/github/v/release/Eddie0521/Informio?style=flat-square&label=release&cacheSeconds=300&v=2" alt="Release" /></a>
   <img src="https://img.shields.io/badge/macOS-supported-111827?style=flat-square&logo=apple" alt="macOS supported" />
   <img src="https://img.shields.io/badge/Windows-supported-2563eb?style=flat-square&logo=windows" alt="Windows supported" />
-  <img src="https://img.shields.io/badge/Linux-supported-f59e0b?style=flat-square&logo=linux" alt="Linux supported" />
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-10b981?style=flat-square" alt="AGPL-3.0-only License" /></a>
 </p>
 
@@ -53,7 +52,7 @@ On Windows, use PowerShell.
 
 ## Installation
 
-Download the latest desktop build from [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest). Informio supports macOS, Windows, and Linux.
+Download the latest desktop build from [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest). Informio currently ships macOS and Windows builds.
 
 ### macOS
 
@@ -63,9 +62,17 @@ Because the developer account has not been approved yet, macOS may report that t
 xattr -dr com.apple.quarantine /Applications/Informio.app
 ```
 
-### Windows and Linux
+### Windows
 
-Informio has only been carefully tested on macOS for now. If you find any problem on Windows or Linux, please open an issue or PR.
+Informio now includes Windows packaging fixes, but macOS remains the most carefully tested platform. If you find any Windows problem, please open an issue or PR.
+
+## v0.11.0 Updates
+
+- Keeps the Windows packaging fixes from v0.10.0 while restoring the macOS reading and Agent workflow improvements.
+- Improves exported document typography by using the configured editor font stack.
+- Adds richer Agent transcript rendering, message copy actions, and more reliable selected-text copy.
+- Anchors PDF translation results near the selected control or text for a smoother reading flow.
+- Removes Linux desktop packaging from scripts, CI, and release artifacts so releases focus on macOS and Windows.
 
 ## Tech Stack
 
@@ -75,7 +82,7 @@ Informio has only been carefully tested on macOS for now. If you find any proble
 - **Preview and rendering**: EmbedPDF, Mermaid, KaTeX, Lowlight
 - **Local app layer**: Electron Store, Electron Updater, Zod
 - **Agent integrations**: Claude Agent SDK, OpenCode SDK, local Agent CLI discovery
-- **Packaging**: Electron Builder for macOS, Windows, and Linux builds
+- **Packaging**: Electron Builder for macOS and Windows builds
 
 ## Notes
 

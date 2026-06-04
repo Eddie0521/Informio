@@ -272,6 +272,14 @@ const buildShellStyle = (appearance: AppSettings["appearance"]): CSSProperties =
   return style;
 };
 
+const syncDocumentAppearanceVariables = (appearance: AppSettings["appearance"]) => {
+  const root = document.documentElement;
+  const style = buildShellStyle(appearance) as Record<string, string>;
+  Object.entries(style).forEach(([key, value]) => root.style.setProperty(key, value));
+  root.style.setProperty("--font-sans", "var(--informio-font-family)");
+  root.style.setProperty("--font-mono", "var(--informio-code-font-family)");
+};
+
 const connectionTone: Record<AgentConnection["status"], string> = {
   idle: "bg-slate-300",
   connecting: "bg-amber-400",
@@ -368,6 +376,15 @@ type AgentSelection = {
   overlayTop?: number;
 };
 
+const toolbarTranslateAnchorFromSelection = (selection: AgentSelection): UnifiedToolbarTranslateState["anchor"] => {
+  if (selection.overlayLeft === undefined || selection.overlayTop === undefined) return undefined;
+  return {
+    kind: selection.kind,
+    left: selection.overlayLeft,
+    top: selection.overlayTop
+  };
+};
+
 type ApiCheckState = {
   status: "idle" | "loading" | "done" | "error";
   message?: string;
@@ -441,6 +458,61 @@ const buildWorkspaceLabel = (data: Pick<AppData, "projects" | "workspacePath">) 
 const createConversationTitle = (text: string) => {
   const singleLine = text.replace(/\s+/g, " ").trim();
   return singleLine.length > 36 ? `${singleLine.slice(0, 36)}…` : singleLine || "新会话";
+};
+
+const codexFinalResponseBoundaryPattern = /(^|\n)(结论(?:先行)?\s*[:：]|Conclusion\s*[:：])/i;
+
+const splitCodexFinalResponse = (content: string) => {
+  const match = content.match(codexFinalResponseBoundaryPattern);
+  if (!match || match.index === undefined) return null;
+  const boundaryIndex = match.index + match[1].length;
+  const process = content.slice(0, boundaryIndex).trim();
+  const response = content.slice(boundaryIndex).trimStart();
+  return { process, response };
+};
+
+const appendWithParagraphBreak = (current: string, next: string) => {
+  const cleanNext = next.trim();
+  if (!cleanNext) return current;
+  const cleanCurrent = current.trimEnd();
+  if (!cleanCurrent) return cleanNext;
+  if (cleanCurrent.endsWith(cleanNext)) return cleanCurrent;
+  return `${cleanCurrent}\n\n${cleanNext}`;
+};
+
+const writeClipboardText = async (text: string) => {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back for Electron/browser contexts where the async clipboard is unavailable.
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+};
+
+const selectionIsInsideElement = (selection: Selection, container: HTMLElement) => {
+  if (!selection.rangeCount || selection.isCollapsed || !selection.toString()) return false;
+  if (selection.anchorNode && container.contains(selection.anchorNode)) return true;
+  if (selection.focusNode && container.contains(selection.focusNode)) return true;
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    const range = selection.getRangeAt(index);
+    const ancestor = range.commonAncestorContainer;
+    const node = ancestor.nodeType === globalThis.Node.ELEMENT_NODE ? ancestor : ancestor.parentElement;
+    if (node && container.contains(node)) return true;
+    if (range.intersectsNode(container)) return true;
+  }
+  return false;
 };
 
 const buildSessionMessagesFromConversation = (conversation: AgentConversation | null): AgentSessionMessage[] => {
@@ -8045,6 +8117,23 @@ function EditorPane({
   );
   const editorContentMaxWidth = isReadOnlyDocument ? undefined : clamp(settings.editor.contentWidth, EDITOR_CONTENT_MIN_WIDTH, EDITOR_CONTENT_MAX_WIDTH);
   const showPinnedInsertToolbar = !isReadOnlyDocument && !isSourceMode;
+  const showPdfTranslatePanel =
+    isReadOnlyDocument && (toolbarTranslate.status === "loading" || Boolean(toolbarTranslate.response || toolbarTranslate.error));
+  const pdfTranslatePanelStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (!showPdfTranslatePanel) return undefined;
+    const width = 320;
+    const viewportWidth = typeof window === "undefined" ? width + 32 : window.innerWidth;
+    const viewportHeight = typeof window === "undefined" ? 720 : window.innerHeight;
+    const left = clamp(toolbarTranslate.anchor?.left ?? 24, 16, Math.max(16, viewportWidth - width - 16));
+    const top = clamp(toolbarTranslate.anchor?.top ?? 96, 16, Math.max(16, viewportHeight - 140));
+    const maxHeight = Math.max(120, viewportHeight - top - 16);
+    return {
+      left,
+      top,
+      width: "min(320px, calc(100vw - 32px))",
+      maxHeight
+    };
+  }, [showPdfTranslatePanel, toolbarTranslate.anchor?.left, toolbarTranslate.anchor?.top]);
   const handleEditorScroll = () => {
     setEditorScrolling(true);
     if (editorScrollTimerRef.current !== null) window.clearTimeout(editorScrollTimerRef.current);
@@ -8091,7 +8180,7 @@ function EditorPane({
         style={
           {
             "--editor-font-size": `${settings.editor.fontSize}px`,
-            "--editor-line-height": String(settings.editor.lineHeight)
+            "--editor-line-height": String(Math.max(settings.editor.lineHeight, 1.72))
           } as React.CSSProperties
         }
       >
@@ -8250,6 +8339,23 @@ function EditorPane({
               <span className="text-[11px] text-slate-400">没有匹配的文档</span>
             </button>
           )}
+        </div>
+      ) : null}
+      {showPdfTranslatePanel ? (
+        <div
+          className="pointer-events-auto fixed z-[90] overflow-hidden rounded-xl border border-slate-200/80 bg-white/95 p-3 text-[13px] shadow-[0_20px_45px_rgba(15,23,42,0.16)] backdrop-blur"
+          style={pdfTranslatePanelStyle}
+          data-selection-toolbar-safe-area="true"
+          onMouseDownCapture={markSelectionToolbarInteraction}
+        >
+          <SelectionTranslateSection
+            variant="pdf"
+            enabled={toolbarEnabled}
+            busy={toolbarTranslate.status === "loading"}
+            response={toolbarTranslate.response}
+            error={toolbarTranslate.error}
+            onClose={onClearToolbarTranslate}
+          />
         </div>
       ) : null}
       {!isReadOnlyDocument && !isSourceMode ? (
@@ -9576,6 +9682,69 @@ function SectionLabel({ children, fontSize }: { children: ReactNode; fontSize: n
   );
 }
 
+function AgentMarkdownPreview({
+  markdown,
+  align = "left",
+  className,
+  fontSize,
+  lineHeight
+}: {
+  markdown: string;
+  align?: "left" | "right";
+  className?: string;
+  fontSize: number;
+  lineHeight: number;
+}) {
+  const editor = useEditor(
+    {
+      extensions: [
+        StarterKit.configure({
+          link: false,
+          underline: false
+        }),
+        Highlight,
+        MarkdownLink.configure({
+          autolink: true,
+          defaultProtocol: "https",
+          enableClickSelection: false,
+          isAllowedUri: (url, context) => !INVALID_AUTO_LINK_CHAR_PATTERN.test(url) && context.defaultValidate(url),
+          openOnClick: true
+        }),
+        TaskList,
+        TaskItem.configure({ nested: true }),
+        SubscriptMark,
+        SuperscriptMark,
+        UnderlineMark,
+        Markdown.configure({ indentation: { style: "space", size: 2 } })
+      ],
+      content: markdown,
+      contentType: "markdown",
+      editable: false,
+      editorProps: {
+        attributes: {
+          class: cn("informio-agent-markdown prose prose-slate max-w-none text-left focus:outline-none", align === "right" && "ml-auto"),
+          "data-agent-markdown": "true"
+        }
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.commands.setContent(markdown, { contentType: "markdown", emitUpdate: false } as never);
+  }, [editor, markdown]);
+
+  return (
+    <div
+      className={cn("cursor-text select-text text-[var(--text-main)]", className)}
+      style={{ fontSize: `${fontSize}px`, lineHeight: `${lineHeight}px` }}
+    >
+      <EditorContent editor={editor} />
+    </div>
+  );
+}
+
 function GenericExecutionFlow(props: ProviderExecutionFlowProps) {
   const { message, transcriptFontSize, transcriptLineHeight, processFontSize, processLineHeight, isExpanded, now, onToggleExpanded, onApprovalResponse, onOpenActionPath } = props;
   const visibleActions = message.actions.filter((action) => classifyAgentAction(action) !== "system");
@@ -9897,9 +10066,9 @@ function CodexExecutionFlow(props: ProviderExecutionFlowProps) {
       {isExpanded ? (
         <div className="mt-2 space-y-3 pl-4">
           {message.reasoning.trim() ? (
-            <div className="text-slate-700" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
+            <div className="text-slate-400" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
               <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>可见过程</SectionLabel>
-              <div className="whitespace-pre-wrap text-slate-700">{message.reasoning}</div>
+              <div className="whitespace-pre-wrap">{message.reasoning}</div>
             </div>
           ) : null}
           {pendingApprovalActions.length ? (
@@ -10012,6 +10181,8 @@ function AgentPanel({
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [compactAgentControls, setCompactAgentControls] = useState(false);
+  const [copiedAgentMessageId, setCopiedAgentMessageId] = useState<string | null>(null);
+  const [transcriptContextMenu, setTranscriptContextMenu] = useState<{ x: number; y: number; text: string } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const previousStatusesRef = useRef<Map<string, AgentSessionStatus>>(new Map());
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
@@ -10043,6 +10214,31 @@ function AgentPanel({
     if (!text || busy || !enabled) return;
     setDraft("");
     onSend(text, permissionMode);
+  };
+
+  const copyAgentMessage = async (id: string, text: string) => {
+    const content = text.trim();
+    if (!content) return;
+    await writeClipboardText(content);
+    setCopiedAgentMessageId(id);
+    window.setTimeout(() => {
+      setCopiedAgentMessageId((current) => (current === id ? null : current));
+    }, 1200);
+  };
+
+  const selectedTranscriptText = () => {
+    const container = transcriptScrollRef.current;
+    const selection = window.getSelection();
+    if (!container || !selection || !selectionIsInsideElement(selection, container)) return "";
+    return selection.toString();
+  };
+
+  const copySelectedTranscriptText = async (text = selectedTranscriptText()) => {
+    const content = text.trim();
+    if (!content) return false;
+    await writeClipboardText(content);
+    setTranscriptContextMenu(null);
+    return true;
   };
 
   useEffect(() => {
@@ -10103,6 +10299,45 @@ function AgentPanel({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [activeConversationId, pendingNewConversation]);
+
+  useEffect(() => {
+    const onCopy = (event: ClipboardEvent) => {
+      const text = selectedTranscriptText();
+      if (!text.trim()) return;
+      event.clipboardData?.setData("text/plain", text);
+      event.preventDefault();
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "c" || (!event.metaKey && !event.ctrlKey) || event.altKey) return;
+      const text = selectedTranscriptText();
+      if (!text.trim()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void copySelectedTranscriptText(text);
+    };
+
+    window.addEventListener("copy", onCopy, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("copy", onCopy, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [copySelectedTranscriptText, selectedTranscriptText]);
+
+  useEffect(() => {
+    if (!transcriptContextMenu) return;
+    const close = () => setTranscriptContextMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [transcriptContextMenu]);
 
   useEffect(() => {
     const controls = composerControlsRef.current;
@@ -10269,13 +10504,37 @@ function AgentPanel({
 
       <div
         ref={transcriptScrollRef}
+        data-agent-transcript="true"
         className="flex-1 space-y-4 overflow-y-auto px-4 py-5"
+        onContextMenu={(event) => {
+          const text = selectedTranscriptText();
+          if (!text.trim()) return;
+          event.preventDefault();
+          setTranscriptContextMenu({ x: event.clientX, y: event.clientY, text });
+        }}
         onScroll={(event) => {
           const container = event.currentTarget;
           const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
           shouldStickToBottomRef.current = distanceFromBottom <= 48;
+          setTranscriptContextMenu(null);
         }}
       >
+        {transcriptContextMenu ? (
+          <div
+            className="fixed z-[120] min-w-28 rounded-lg bg-white p-1 text-[13px] shadow-[0_16px_40px_rgba(15,23,42,0.18),0_0_0_1px_rgba(15,23,42,0.08)]"
+            style={{ left: transcriptContextMenu.x, top: transcriptContextMenu.y }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left font-semibold text-slate-700 hover:bg-slate-100"
+              onClick={() => void copySelectedTranscriptText(transcriptContextMenu.text)}
+            >
+              <Copy size={14} />
+              <span>复制</span>
+            </button>
+          </div>
+        ) : null}
         {selectedSelection?.text ? (
           <div className="rounded-md px-2 py-1.5 text-[12px] leading-5 text-[var(--text-muted)]">
             <div className="flex items-center gap-2">
@@ -10301,26 +10560,49 @@ function AgentPanel({
                   <>
               <div className="flex justify-end">
                 <div className="w-[86%] px-3 text-right">
-                  <div
-                    className="mb-1 font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]"
-                    style={{ fontSize: `${transcriptFontSize}px`, lineHeight: `${transcriptLineHeight}px` }}
-                  >
-                    User
+                  <div className="mb-1 flex items-center justify-end gap-1">
+                    <button
+                      type="button"
+                      aria-label="复制用户消息"
+                      onClick={() => void copyAgentMessage(`${message.id}:user`, message.userMessage)}
+                      className="no-drag inline-grid h-5 w-5 place-items-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                    >
+                      {copiedAgentMessageId === `${message.id}:user` ? <Check size={12} /> : <Copy size={12} />}
+                    </button>
+                    <div
+                      className="font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]"
+                      style={{ fontSize: `${transcriptFontSize}px`, lineHeight: `${transcriptLineHeight}px` }}
+                    >
+                      User
+                    </div>
                   </div>
-                  <div
-                    className="whitespace-pre-wrap rounded-md bg-[color-mix(in_srgb,var(--surface-sidebar)_72%,var(--surface-elevated))] py-2 text-right text-[var(--text-main)]"
-                    style={{ fontSize: `${transcriptFontSize}px`, lineHeight: `${transcriptLineHeight}px` }}
-                  >
-                    {message.userMessage}
-                  </div>
+                  <AgentMarkdownPreview
+                    markdown={message.userMessage}
+                    align="right"
+                    className="rounded-md bg-[color-mix(in_srgb,var(--surface-sidebar)_72%,var(--surface-elevated))] py-2"
+                    fontSize={transcriptFontSize}
+                    lineHeight={transcriptLineHeight}
+                  />
                 </div>
               </div>
               <div className="px-1 py-1">
-                <div
-                  className="mb-1 font-bold tracking-[0.12em] text-[var(--text-muted)] uppercase"
-                  style={{ fontSize: `${transcriptFontSize}px`, lineHeight: `${transcriptLineHeight}px` }}
-                >
-                  {provider.name}
+                <div className="mb-1 flex items-center gap-1">
+                  <div
+                    className="font-bold tracking-[0.12em] text-[var(--text-muted)] uppercase"
+                    style={{ fontSize: `${transcriptFontSize}px`, lineHeight: `${transcriptLineHeight}px` }}
+                  >
+                    {provider.name}
+                  </div>
+                  {message.response ? (
+                    <button
+                      type="button"
+                      aria-label="复制 AI 回复"
+                      onClick={() => void copyAgentMessage(`${message.id}:assistant`, message.response)}
+                      className="no-drag inline-grid h-5 w-5 place-items-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                    >
+                      {copiedAgentMessageId === `${message.id}:assistant` ? <Check size={12} /> : <Copy size={12} />}
+                    </button>
+                  ) : null}
                 </div>
                 <ExecutionFlow
                   provider={provider}
@@ -10343,12 +10625,7 @@ function AgentPanel({
                   onOpenActionPath={onOpenActionPath}
                 />
                 {message.response ? (
-                  <div
-                    className="whitespace-pre-wrap text-[var(--text-main)]"
-                    style={{ fontSize: `${transcriptFontSize}px`, lineHeight: `${transcriptLineHeight}px` }}
-                  >
-                    {message.response}
-                  </div>
+                  <AgentMarkdownPreview markdown={message.response} fontSize={transcriptFontSize} lineHeight={transcriptLineHeight} />
                 ) : null}
                 {message.error ? <div className="rounded-md bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">{message.error}</div> : null}
               </div>
@@ -10676,7 +10953,7 @@ function SelectionTranslateSection({
   response: string;
   error?: string;
   onEncrypt?: () => void;
-  onTranslate: () => void;
+  onTranslate?: () => void;
   onClose?: () => void;
   preserveSelection?: (event: ReactMouseEvent<HTMLElement>) => void;
   className?: string;
@@ -10721,18 +10998,27 @@ function SelectionTranslateSection({
             <span>加密</span>
           </button>
         )}
-        <button
-          type="button"
-          onMouseDown={preserveSelection}
-          onClick={onTranslate}
-          disabled={!enabled || busy}
-          className={buttonClassName}
-        >
-          <span>{selectionToolbarLabel}</span>
-          <span className={spinnerSlotClassName} aria-hidden="true">
-            {busy ? <Loader2 size={spinnerSize} className="animate-spin" /> : null}
-          </span>
-        </button>
+        {onTranslate ? (
+          <button
+            type="button"
+            onMouseDown={preserveSelection}
+            onClick={onTranslate}
+            disabled={!enabled || busy}
+            className={buttonClassName}
+          >
+            <span>{selectionToolbarLabel}</span>
+            <span className={spinnerSlotClassName} aria-hidden="true">
+              {busy ? <Loader2 size={spinnerSize} className="animate-spin" /> : null}
+            </span>
+          </button>
+        ) : (
+          <div className={cn(buttonClassName, "text-[var(--text-main)]")} aria-live="polite">
+            <span>{busy ? "正在翻译" : "翻译结果"}</span>
+            <span className={spinnerSlotClassName} aria-hidden="true">
+              {busy ? <Loader2 size={spinnerSize} className="animate-spin" /> : null}
+            </span>
+          </div>
+        )}
         {onClose ? (
           <button
             type="button"
@@ -11713,6 +11999,11 @@ export function App() {
   const lastActiveDocumentIdRef = useRef<string | null>(null);
   const tabsScrollRef = useRef<HTMLDivElement | null>(null);
   const activeTabRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!data) return;
+    syncDocumentAppearanceVariables(data.settings.appearance);
+  }, [data?.settings.appearance]);
 
   const applyDataState = (next: AppData) => {
     latestDataRef.current = next;
@@ -12696,8 +12987,24 @@ export function App() {
     }
   };
 
+  const copyCurrentSelection = async () => {
+    const selection = window.getSelection();
+    const text = selection?.toString() ?? "";
+    const transcript = document.querySelector("[data-agent-transcript]");
+    if (selection && text.trim() && transcript instanceof HTMLElement && selectionIsInsideElement(selection, transcript)) {
+      await writeClipboardText(text);
+      return;
+    }
+    const copied = document.execCommand("copy");
+    if (!copied && text.trim()) await writeClipboardText(text);
+  };
+
   useEffect(() => {
     return window.informio.onMenuCommand((command) => {
+      if (command === "edit:copy") {
+        void copyCurrentSelection();
+        return;
+      }
       runAppCommand(command);
     });
   }, [activeOpenDoc?.id, data]);
@@ -13079,10 +13386,24 @@ export function App() {
         (event) => {
           applySessionMessageUpdate((item) => {
             if (event.type === "thinking_delta") {
-              if (event.kind === "reasoning") return item;
+              if (event.kind === "reasoning" && activeAgent.id !== "codex") return item;
               return { ...item, reasoning: item.reasoning + event.content, status: "thinking" };
             }
-            if (event.type === "text_delta") return { ...item, response: item.response + event.content, status: "thinking" };
+            if (event.type === "text_delta") {
+              const nextResponse = item.response + event.content;
+              if (activeAgent.id === "codex") {
+                const split = splitCodexFinalResponse(nextResponse);
+                if (split) {
+                  return {
+                    ...item,
+                    reasoning: appendWithParagraphBreak(item.reasoning, split.process),
+                    response: split.response,
+                    status: "thinking"
+                  };
+                }
+              }
+              return { ...item, response: nextResponse, status: "thinking" };
+            }
             if (event.type === "tool_start") {
               return { ...item, status: "tool-executing", actions: upsertSessionAction(item.actions, event.action) };
             }
@@ -13124,6 +13445,18 @@ export function App() {
               };
             }
             if (event.type === "done") {
+              if (activeAgent.id === "codex") {
+                const split = splitCodexFinalResponse(event.content);
+                if (split) {
+                  return {
+                    ...item,
+                    status: "done",
+                    reasoning: appendWithParagraphBreak(item.reasoning, split.process),
+                    response: mergeFinalAgentResponse(item.response, split.response),
+                    completedAt: item.completedAt ?? Date.now()
+                  };
+                }
+              }
               return {
                 ...item,
                 status: "done",
@@ -13135,12 +13468,26 @@ export function App() {
           });
         }
       );
-      applySessionMessageUpdate((item) => ({
-        ...item,
-        status: "done",
-        response: mergeFinalAgentResponse(item.response, result.content),
-        completedAt: item.completedAt ?? Date.now()
-      }));
+      applySessionMessageUpdate((item) => {
+        if (activeAgent.id === "codex") {
+          const split = splitCodexFinalResponse(result.content);
+          if (split) {
+            return {
+              ...item,
+              status: "done",
+              reasoning: appendWithParagraphBreak(item.reasoning, split.process),
+              response: mergeFinalAgentResponse(item.response, split.response),
+              completedAt: item.completedAt ?? Date.now()
+            };
+          }
+        }
+        return {
+          ...item,
+          status: "done",
+          response: mergeFinalAgentResponse(item.response, result.content),
+          completedAt: item.completedAt ?? Date.now()
+        };
+      });
       await persistConversationSnapshot(result.runtimeThreadId ?? baseRuntimeThreadId);
       if (permissionMode !== "read_only") {
         await refreshAppDataFromDisk({ allowNewConflicts: didAgentEditFiles(latestSessionMessages) });
@@ -13169,16 +13516,18 @@ export function App() {
     if (!data || !selection.text) return;
     const api = apiSettings;
     const targetLanguage = resolveTranslationTarget(selection.text);
+    const anchor = toolbarTranslateAnchorFromSelection(selection);
     if (!api.baseUrl.trim() || !api.apiKey.trim() || !api.model.trim()) {
       setToolbarTranslate({
         status: "error",
         response: "",
-        error: "翻译 API 还没配置完成。请在设置 → API 填写 base_url、api_key，并检测后选择一个模型。"
+        error: "翻译 API 还没配置完成。请在设置 → API 填写 base_url、api_key，并检测后选择一个模型。",
+        anchor
       });
       return;
     }
 
-    setToolbarTranslate({ status: "loading", response: "" });
+    setToolbarTranslate({ status: "loading", response: "", anchor });
     try {
       const result = await window.informio.translateSelection({
         provider: api.provider,
@@ -13188,12 +13537,13 @@ export function App() {
         targetLanguage,
         text: selection.text
       });
-      setToolbarTranslate({ status: "done", response: result.content.trim() });
+      setToolbarTranslate({ status: "done", response: result.content.trim(), anchor });
     } catch (error) {
       setToolbarTranslate({
         status: "error",
         response: "",
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        anchor
       });
     }
   };

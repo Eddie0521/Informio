@@ -730,6 +730,28 @@ const scanWorkspaceFiles = async (folder: string): Promise<string[]> => (await s
 const escapeHtml = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+const quoteCssFontFamily = (family: string) => `"${family.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+const exportFontStack = () => {
+  const appearance = appData.settings.appearance;
+  return [
+    appearance.englishFontFamily,
+    appearance.chineseFontFamily,
+    "PingFang SC",
+    "Hiragino Sans GB",
+    "Microsoft YaHei",
+    "Noto Sans CJK SC",
+    "Helvetica Neue",
+    "Arial"
+  ]
+    .map((family) => family.trim())
+    .filter(Boolean)
+    .map((family) => quoteCssFontFamily(family))
+    .concat(["-apple-system", "BlinkMacSystemFont", "\"Segoe UI\"", "sans-serif"])
+    .filter((family, index, items) => items.indexOf(family) === index)
+    .join(", ");
+};
+
 const markdownToBasicHtml = (markdown: string, title = "Informio Export") => {
   const blocks = markdown.split(/\n{2,}/);
   return `<!doctype html>
@@ -741,7 +763,7 @@ const markdownToBasicHtml = (markdown: string, title = "Informio Export") => {
 <style>
   :root {
     color-scheme: light;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: ${exportFontStack()};
     line-height: 1.7;
     color: #0f172a;
     background: #ffffff;
@@ -1948,7 +1970,7 @@ const updateApplicationMenu = () => {
         { role: "redo", label: "重做" },
         { type: "separator" },
         { role: "cut", label: "Cut" },
-        { role: "copy", label: "Copy" },
+        { label: "Copy", accelerator: "CommandOrControl+C", click: () => sendMenuCommand("edit:copy") },
         { role: "paste", label: "Paste" },
         { role: "selectAll", label: "Select All" },
         { type: "separator" },

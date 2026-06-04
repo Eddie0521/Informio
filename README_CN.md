@@ -12,7 +12,6 @@
   <a href="https://github.com/Eddie0521/Informio/releases/latest"><img src="https://img.shields.io/github/v/release/Eddie0521/Informio?style=flat-square&label=release&cacheSeconds=300&v=2" alt="Release" /></a>
   <img src="https://img.shields.io/badge/macOS-supported-111827?style=flat-square&logo=apple" alt="支持 macOS" />
   <img src="https://img.shields.io/badge/Windows-supported-2563eb?style=flat-square&logo=windows" alt="支持 Windows" />
-  <img src="https://img.shields.io/badge/Linux-supported-f59e0b?style=flat-square&logo=linux" alt="支持 Linux" />
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-10b981?style=flat-square" alt="AGPL-3.0-only License" /></a>
 </p>
 
@@ -53,7 +52,7 @@ Windows 请使用 PowerShell。
 
 ## Installation
 
-前往 [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest) 下载最新桌面版本。Informio 支持 macOS、Windows 和 Linux。
+前往 [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest) 下载最新桌面版本。Informio 当前提供 macOS 和 Windows 构建。
 
 ### macOS
 
@@ -63,9 +62,17 @@ Windows 请使用 PowerShell。
 xattr -dr com.apple.quarantine /Applications/Informio.app
 ```
 
-### Windows 和 Linux
+### Windows
 
-当前仅在 macOS 仔细测试过，Windows 和 Linux 有任何问题，请提 issue 和 PR。
+Informio 已加入 Windows 打包修复，但 macOS 仍然是目前测试最充分的平台。Windows 如有任何问题，请提 issue 和 PR。
+
+## v0.11.0 更新
+
+- 保留 v0.10.0 的 Windows 打包修复，同时恢复 macOS 上的阅读和 Agent 工作流优化。
+- 导出文档使用用户配置的编辑器字体栈，中文和英文排版更一致。
+- Agent 对话支持更完整的 Markdown 渲染、单条消息复制和更可靠的选区复制。
+- PDF 翻译结果跟随选区或翻译按钮出现，阅读时不用在界面里来回找结果。
+- 移除 Linux 桌面打包脚本、CI 构建和发布产物，让发布聚焦 macOS 与 Windows。
 
 ## 技术栈
 
@@ -75,7 +82,7 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 - **预览与渲染**：EmbedPDF、Mermaid、KaTeX、Lowlight
 - **本地应用层**：Electron Store、Electron Updater、Zod
 - **Agent 集成**：Claude Agent SDK、OpenCode SDK、本地 Agent CLI 发现
-- **打包**：Electron Builder，用于 macOS、Windows 和 Linux 构建
+- **打包**：Electron Builder，用于 macOS 和 Windows 构建
 
 ## 须知
 

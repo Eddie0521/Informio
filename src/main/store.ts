@@ -91,7 +91,7 @@ export const defaultSettings: AppSettings = {
   },
   editor: {
     fontSize: 15,
-    lineHeight: 1.62,
+    lineHeight: 1.72,
     contentWidth: 820,
     spellcheck: true,
     typewriterMode: false,

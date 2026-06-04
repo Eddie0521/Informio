@@ -90,11 +90,6 @@ const config: Configuration = {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     perMachine: false
-  },
-  linux: {
-    category: "Office",
-    icon: "build/icons",
-    target: ["AppImage"]
   }
 };
 

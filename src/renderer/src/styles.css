@@ -30,6 +30,7 @@ html,
 body,
 #root {
   height: 100%;
+  font-family: var(--informio-font-family);
 }
 
 body {
@@ -444,6 +445,19 @@ textarea {
 }
 
 .informio-editor {
+  --editor-h1-scale: 2.08;
+  --editor-h2-scale: 1.56;
+  --editor-h3-scale: 1.36;
+  --editor-code-scale: 1;
+  --editor-paragraph-gap: calc(var(--editor-font-size) * 1.42);
+  --editor-list-gap: calc(var(--editor-font-size) * 1.5);
+  --editor-list-item-gap: calc(var(--editor-font-size) * 0.72);
+  --editor-heading-1-before: calc(var(--editor-font-size) * 3.25);
+  --editor-heading-1-after: calc(var(--editor-font-size) * 1.9);
+  --editor-heading-2-before: calc(var(--editor-font-size) * 2.75);
+  --editor-heading-2-after: calc(var(--editor-font-size) * 1.55);
+  --editor-heading-3-before: calc(var(--editor-font-size) * 2.2);
+  --editor-heading-3-after: calc(var(--editor-font-size) * 1.1);
   min-height: calc(100vh - 190px);
   color: var(--text-main);
   caret-color: var(--accent);
@@ -473,34 +487,142 @@ textarea {
 }
 
 .informio-editor h1 {
-  margin: 0 0 28px;
+  margin: var(--editor-heading-1-before) 0 var(--editor-heading-1-after);
   color: var(--text-main);
-  font-size: calc(var(--editor-font-size) * 2.45);
+  font-size: calc(var(--editor-font-size) * var(--editor-h1-scale));
   font-weight: 900;
   letter-spacing: 0;
-  line-height: 1.04;
+  line-height: 1.08;
   text-wrap: balance;
 }
 
 .informio-editor h2 {
-  margin: 36px 0 10px;
+  margin: var(--editor-heading-2-before) 0 var(--editor-heading-2-after);
   color: var(--text-main);
-  font-size: calc(var(--editor-font-size) * 1.3);
+  font-size: calc(var(--editor-font-size) * var(--editor-h2-scale));
   font-weight: 850;
   letter-spacing: 0;
   line-height: 1.16;
 }
 
 .informio-editor h3 {
-  margin: 26px 0 8px;
+  margin: var(--editor-heading-3-before) 0 var(--editor-heading-3-after);
   color: var(--text-main);
-  font-size: calc(var(--editor-font-size) * 1.08);
+  font-size: calc(var(--editor-font-size) * var(--editor-h3-scale));
   font-weight: 800;
+  line-height: 1.22;
 }
 
 .informio-editor p {
-  margin: 0 0 17px;
+  margin: 0 0 var(--editor-paragraph-gap);
   text-wrap: pretty;
+}
+
+.informio-agent-markdown {
+  color: var(--text-main);
+  font-family: var(--informio-font-family);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.informio-agent-markdown,
+.informio-agent-markdown * {
+  cursor: text;
+}
+
+.informio-agent-markdown.ProseMirror,
+.informio-agent-markdown :where(p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, code, span, strong, em) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.informio-agent-markdown :first-child {
+  margin-top: 0;
+}
+
+.informio-agent-markdown :last-child {
+  margin-bottom: 0;
+}
+
+.informio-agent-markdown :where(p, h1, h2, h3, li, blockquote, th, td, summary, figcaption) {
+  font-family: var(--informio-font-family);
+}
+
+.informio-agent-markdown p {
+  margin: 0 0 0.85em;
+  text-wrap: pretty;
+}
+
+.informio-agent-markdown h1,
+.informio-agent-markdown h2,
+.informio-agent-markdown h3 {
+  margin: 1em 0 0.45em;
+  color: var(--text-main);
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.18;
+}
+
+.informio-agent-markdown h1 {
+  font-size: 1.35em;
+}
+
+.informio-agent-markdown h2 {
+  font-size: 1.16em;
+}
+
+.informio-agent-markdown h3 {
+  font-size: 1.04em;
+}
+
+.informio-agent-markdown strong {
+  font-synthesis: weight;
+  font-weight: 700;
+}
+
+.informio-agent-markdown em {
+  font-synthesis: style;
+  font-style: italic;
+}
+
+.informio-agent-markdown blockquote {
+  margin: 0 0 0.85em;
+  padding: 0 0 0 0.85em;
+  color: var(--text-main);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.informio-agent-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.informio-agent-markdown ul,
+.informio-agent-markdown ol {
+  margin: 0 0 0.85em;
+  padding-left: 1.35em;
+}
+
+.informio-agent-markdown ul:not([data-type="taskList"]) {
+  list-style: disc;
+}
+
+.informio-agent-markdown ol {
+  list-style: decimal;
+}
+
+.informio-agent-markdown li {
+  margin: 0.25em 0;
+  padding-left: 0.15em;
+}
+
+.informio-agent-markdown code {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  padding: 0.08em 0.28em;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
 }
 
 .informio-editor strong {
@@ -514,7 +636,7 @@ textarea {
 }
 
 .informio-editor blockquote {
-  margin: 0 0 17px;
+  margin: 0 0 var(--editor-paragraph-gap);
   padding: 0 0 0 16px;
   color: var(--text-main);
   font-size: inherit;
@@ -542,7 +664,7 @@ textarea {
 
 .informio-editor ul,
 .informio-editor ol {
-  margin: 0 0 17px;
+  margin: 0 0 var(--editor-list-gap);
   padding-left: 1.5em;
 }
 
@@ -559,8 +681,16 @@ textarea {
 }
 
 .informio-editor li {
-  margin: 5px 0;
+  margin: var(--editor-list-item-gap) 0;
   padding-left: 0.2em;
+}
+
+.informio-editor li > p {
+  margin-bottom: 0.55em;
+}
+
+.informio-editor li > :last-child {
+  margin-bottom: 0;
 }
 
 .informio-editor code {
@@ -603,13 +733,13 @@ textarea {
   padding: 0;
   color: var(--text-main);
   font-family: var(--font-mono);
-  font-size: calc(var(--editor-font-size) * 0.9);
+  font-size: calc(var(--editor-font-size) * var(--editor-code-scale));
   line-height: 1.55;
 }
 
 .informio-code-block {
   position: relative;
-  margin: 0 0 17px;
+  margin: 0 0 var(--editor-paragraph-gap);
 }
 
 .informio-code-block > pre,
@@ -768,6 +898,38 @@ textarea {
 
 .informio-code-block > pre code {
   display: block;
+  white-space: pre-wrap;
+}
+
+.informio-agent-markdown .informio-code-block {
+  margin: 0 0 0.85em;
+}
+
+.informio-agent-markdown .informio-code-block > pre,
+.informio-agent-markdown pre {
+  overflow: auto;
+  border: 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-muted) 7%, var(--surface-editor));
+  padding: 0.7em 0.8em;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  line-height: 1.55;
+  text-align: left;
+}
+
+.informio-agent-markdown .informio-code-block pre {
+  margin: 0;
+}
+
+.informio-agent-markdown .informio-code-block > pre code,
+.informio-agent-markdown pre code {
+  display: block;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
   white-space: pre-wrap;
 }
 
@@ -1518,7 +1680,7 @@ textarea {
   border-radius: 0;
   background: transparent;
   color: var(--text-main);
-  font-family: "New York", "Times New Roman", serif;
+  font-family: var(--informio-font-family);
   font-size: calc(var(--editor-font-size) * 1.18);
   font-style: italic;
   line-height: 1.45;
@@ -1892,6 +2054,7 @@ textarea {
   display: flex;
   width: 100%;
   height: 100%;
+  font-family: var(--informio-font-family);
 }
 
 .informio-embedpdf-component > embedpdf-container {
@@ -1903,6 +2066,7 @@ textarea {
   --text-base: 0.86rem;
   --text-base--line-height: 1.4;
   --default-font-family: var(--informio-font-family);
+  font-family: var(--informio-font-family);
   font-size: 12px;
   display: block;
   width: 100%;

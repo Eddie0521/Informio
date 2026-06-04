@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { NodeViewWrapper } from "@tiptap/react";
 import { PDFViewer } from "@embedpdf/react-pdf-viewer";
@@ -51,6 +52,11 @@ export type ToolbarTranslateState = {
   status: "idle" | "loading" | "done" | "error";
   response: string;
   error?: string;
+  anchor?: {
+    kind: "markdown" | "pdf";
+    left: number;
+    top: number;
+  };
 };
 
 export type PdfEditorContextValue = {
@@ -126,6 +132,7 @@ type EmbedPdfUiCapability = {
 
 const EMBEDPDF_TRANSLATE_COMMAND_ID = "informio:translate-selection";
 const EMBEDPDF_TRANSLATE_MENU_ITEM_ID = "informio-translate-selection";
+const EMBEDPDF_ITEM_ATTRIBUTE = "data-epdf-i";
 
 export const PdfEditorContext = createContext<PdfEditorContextValue | null>(null);
 
@@ -133,6 +140,121 @@ const usePdfEditorContext = () => useContext(PdfEditorContext);
 
 const getCapability = <T,>(registry: PluginRegistry, pluginId: string): T | null => {
   return (registry.getPlugin(pluginId)?.provides?.() as T | null | undefined) ?? null;
+};
+
+const validViewportRect = (rect: DOMRect | null | undefined) => {
+  return Boolean(rect && rect.width > 0 && rect.height > 0 && Number.isFinite(rect.left) && Number.isFinite(rect.top));
+};
+
+const deepQueryAll = (root: ParentNode, selector: string): HTMLElement[] => {
+  const matches: HTMLElement[] = [];
+  root.querySelectorAll(selector).forEach((element) => {
+    if (element instanceof HTMLElement) matches.push(element);
+  });
+
+  root.querySelectorAll("*").forEach((element) => {
+    if (element instanceof HTMLElement && element.shadowRoot) {
+      matches.push(...deepQueryAll(element.shadowRoot, selector));
+    }
+  });
+
+  return matches;
+};
+
+const visibleViewportRect = (element: HTMLElement) => {
+  const rect = element.getBoundingClientRect();
+  if (!validViewportRect(rect)) return null;
+  const style = globalThis.getComputedStyle?.(element);
+  if (style && (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0)) return null;
+  return rect;
+};
+
+const firstVisibleRect = (elements: HTMLElement[]) => {
+  for (const element of elements) {
+    const rect = visibleViewportRect(element);
+    if (rect) return rect;
+  }
+  return null;
+};
+
+const isTranslateControl = (element: HTMLElement) => {
+  const label = `${element.getAttribute("aria-label") ?? ""} ${element.title ?? ""} ${element.textContent ?? ""}`.trim();
+  return label === "翻译" || label.includes("翻译");
+};
+
+const pdfTranslationAnchorFromViewport = (surfaceRoot: HTMLElement | null) => {
+  if (surfaceRoot) {
+    const translateButtonRect = firstVisibleRect(
+      deepQueryAll(surfaceRoot, `[${EMBEDPDF_ITEM_ATTRIBUTE}="${EMBEDPDF_TRANSLATE_MENU_ITEM_ID}"]`)
+    );
+    if (translateButtonRect) {
+      return {
+        kind: "pdf" as const,
+        left: translateButtonRect.left,
+        top: translateButtonRect.bottom + 8
+      };
+    }
+
+    const translateTextRect = firstVisibleRect(
+      deepQueryAll(surfaceRoot, "button,[role='button']").filter(isTranslateControl)
+    );
+    if (translateTextRect) {
+      return {
+        kind: "pdf" as const,
+        left: translateTextRect.left,
+        top: translateTextRect.bottom + 8
+      };
+    }
+  }
+
+  const activeElement = globalThis.document?.activeElement;
+  const activeControl =
+    activeElement instanceof HTMLElement
+      ? activeElement.closest<HTMLElement>("button,[role='button'],[data-radix-collection-item]")
+      : null;
+  const activeRect = activeControl?.getBoundingClientRect();
+  if (validViewportRect(activeRect)) {
+    const rect = activeRect as DOMRect;
+    return {
+      kind: "pdf" as const,
+      left: rect.left,
+      top: rect.bottom + 8
+    };
+  }
+
+  const selection = globalThis.getSelection?.();
+  if (selection?.rangeCount) {
+    const rangeRect = selection.getRangeAt(0).getBoundingClientRect();
+    if (validViewportRect(rangeRect)) {
+      return {
+        kind: "pdf" as const,
+        left: rangeRect.left,
+        top: rangeRect.bottom + 42
+      };
+    }
+  }
+
+  return undefined;
+};
+
+const pdfTranslationAnchorFromEvent = (event: ReactPointerEvent<HTMLElement>) => {
+  for (const item of event.nativeEvent.composedPath()) {
+    if (!(item instanceof HTMLElement)) continue;
+    const anchorElement =
+      item.getAttribute(EMBEDPDF_ITEM_ATTRIBUTE) === EMBEDPDF_TRANSLATE_MENU_ITEM_ID
+        ? item
+        : item.closest<HTMLElement>(`[${EMBEDPDF_ITEM_ATTRIBUTE}="${EMBEDPDF_TRANSLATE_MENU_ITEM_ID}"]`) ??
+          (isTranslateControl(item) ? item : null);
+    const rect = anchorElement ? visibleViewportRect(anchorElement) : null;
+    if (rect) {
+      return {
+        kind: "pdf" as const,
+        left: rect.left,
+        top: rect.bottom + 8
+      };
+    }
+  }
+  return undefined;
 };
 
 const embedPdfInformioColors: Partial<ThemeColors> = {
@@ -200,6 +322,8 @@ const embedPdfThemeForSettings = (settings: AppSettings): ThemeConfig => ({
 function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }: PdfSurfaceProps) {
   const pdfContext = usePdfEditorContext();
   const settings = pdfContext?.settings;
+  const surfaceRootRef = useRef<HTMLDivElement | null>(null);
+  const lastTranslateAnchorRef = useRef<{ left: number; top: number } | null>(null);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
 
   const triggerPdfTranslation = useCallback(
@@ -207,6 +331,7 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
       if (!pdfContext) return;
       const selection = getCapability<EmbedPdfSelectionCapability>(registry, "selection");
       if (!selection) return;
+      const anchor = pdfTranslationAnchorFromViewport(surfaceRootRef.current) ?? lastTranslateAnchorRef.current;
       const selectedText = (await selection.getSelectedText(embedPdfDocumentId).toPromise()).join("\n").trim();
       if (!selectedText) return;
       const rects = selection.getBoundingRects(embedPdfDocumentId);
@@ -221,6 +346,8 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
         title,
         filePath: pdfPath,
         page: (firstRect?.page ?? 0) + 1,
+        overlayLeft: anchor?.left,
+        overlayTop: anchor?.top,
         rects: rects.map(({ rect }) => ({
           x: rect.x,
           y: rect.y,
@@ -231,6 +358,16 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
     },
     [pdfContext, pdfPath, title]
   );
+
+  const captureTranslateAnchor = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const anchor = pdfTranslationAnchorFromEvent(event);
+    if (anchor) {
+      lastTranslateAnchorRef.current = {
+        left: anchor.left,
+        top: anchor.top
+      };
+    }
+  };
 
   const handleEmbedPdfReady = useCallback(
     (registry: PluginRegistry) => {
@@ -310,7 +447,11 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
   }
 
   return (
-    <div className={cn("informio-pdf-shell informio-embedpdf-shell", mode === "compact" ? "is-compact" : "is-full")}>
+    <div
+      ref={surfaceRootRef}
+      className={cn("informio-pdf-shell informio-embedpdf-shell", mode === "compact" ? "is-compact" : "is-full")}
+      onPointerDownCapture={captureTranslateAnchor}
+    >
       <div className="informio-embedpdf-viewer">
         <PDFViewer
           key={viewerKey}
