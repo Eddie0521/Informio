@@ -1125,7 +1125,7 @@ textarea {
 }
 
 .informio-property-new {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(84px, 0.42fr) minmax(0, 1fr) auto;
   margin-top: 8px;
 }
 

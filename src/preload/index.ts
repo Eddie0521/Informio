@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type {
   AppInfo,
   ApiModelDetectionInput,
@@ -14,6 +14,7 @@ import type {
   AppSettings,
   AssetDataResult,
   FileSystemOperationInput,
+  ImportExternalFilesInput,
   InformioDocument,
   MenuCommand,
   ListLocalFontsResult,
@@ -49,6 +50,9 @@ const api = {
     ipcRenderer.invoke("app:insert-asset", kind) as Promise<void>,
   runFileSystemAction: (input: FileSystemOperationInput) =>
     ipcRenderer.invoke("app:filesystem-action", input) as Promise<AppData>,
+  importExternalFiles: (input: ImportExternalFilesInput) =>
+    ipcRenderer.invoke("app:import-external-files", input) as Promise<AppData>,
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
   saveAttachment: (input: SaveAttachmentInput) =>
     ipcRenderer.invoke("app:save-attachment", input) as Promise<SaveAttachmentResult>,
   loadAsset: (path: string) => ipcRenderer.invoke("app:load-asset", path) as Promise<AssetDataResult>,

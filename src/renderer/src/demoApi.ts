@@ -312,6 +312,8 @@ export function installDemoApi() {
     },
     insertAsset: async () => undefined,
     runFileSystemAction: async () => state,
+    importExternalFiles: async () => state,
+    getPathForFile: (file) => (file as File & { path?: string }).path || "",
     saveAttachment: async (input) => ({
       path: `/Users/acumen7/Documents/Informio Quick Notes/attachments/${input.fileName}`,
       fileName: input.fileName,

@@ -6,6 +6,7 @@ import type {
   ErrorInfo,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
   ReactNode,
   WheelEvent as ReactWheelEvent
 } from "react";
@@ -49,6 +50,7 @@ import {
   AlignVerticalJustifyCenter,
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
+  ArrowUp,
   Bold,
   Bot,
   Bookmark,
@@ -82,6 +84,7 @@ import {
   Minus,
   MoreHorizontal,
   Music,
+  Paperclip,
   Pencil,
   Palette,
   Pin,
@@ -115,6 +118,7 @@ import type {
   AgentApprovalDecision,
   AgentConversation,
   AgentConversationMessage,
+  AgentMessageAttachment,
   AgentConnection,
   AgentModel,
   AgentPermissionMode,
@@ -513,6 +517,51 @@ const selectionIsInsideElement = (selection: Selection, container: HTMLElement) 
     if (range.intersectsNode(container)) return true;
   }
   return false;
+};
+
+const revealInFolderLabel = () =>
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
+    ? "在 Finder 中打开"
+    : "在文件夹中打开";
+
+const isExternalFileDrag = (dataTransfer: DataTransfer | null) =>
+  Boolean(dataTransfer?.types.includes("Files") && !isInternalTreeDrag(dataTransfer) && !isInternalDocumentDrag(dataTransfer));
+
+const filePathForFile = (file: File) => {
+  const legacyPath = (file as File & { path?: string }).path;
+  if (legacyPath) return legacyPath;
+  return window.informio.getPathForFile(file);
+};
+
+const dataTransferFilePaths = (dataTransfer: DataTransfer | null) =>
+  Array.from(dataTransfer?.files ?? [])
+    .map(filePathForFile)
+    .filter(Boolean);
+
+const fileKindFromName = (name: string): AgentMessageAttachment["kind"] =>
+  /\.(png|jpe?g|gif|webp|svg)$/i.test(name) ? "image" : "file";
+
+const mimeTypeFromName = (name: string) => {
+  const extension = pathExtName(name).toLowerCase();
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".gif") return "image/gif";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".svg") return "image/svg+xml";
+  if (extension === ".pdf") return "application/pdf";
+  if (extension === ".md" || extension === ".markdown") return "text/markdown";
+  if (extension === ".txt") return "text/plain";
+  return undefined;
+};
+
+const attachmentsMarkdown = (attachments: AgentMessageAttachment[]) => {
+  if (!attachments.length) return "";
+  const lines = attachments.map((attachment) => {
+    const label = attachment.kind === "image" ? "image" : "file";
+    const mimeType = attachment.mimeType ? `, mime: ${attachment.mimeType}` : "";
+    return `- ${attachment.name} (${label}${mimeType}): ${attachment.path}`;
+  });
+  return `\n\nAttachments:\n${lines.join("\n")}`;
 };
 
 const buildSessionMessagesFromConversation = (conversation: AgentConversation | null): AgentSessionMessage[] => {
@@ -5012,7 +5061,7 @@ function FileContextMenu({
     { action: "rename", label: "重命名", icon: Pencil },
     { action: "duplicate", label: "复制", icon: Copy },
     { action: "delete", label: "删除", icon: Trash2 },
-    { action: "reveal", label: "在 Finder 中打开", icon: ExternalLink }
+    { action: "reveal", label: revealInFolderLabel(), icon: ExternalLink }
   ];
 
   return (
@@ -5151,6 +5200,7 @@ function FileList({
   onCreate,
   onCreateFolder,
   onFileAction,
+  onImportExternalFiles,
   onRenameProject,
   onToggleProjectPinned,
   onRemoveProject,
@@ -5166,6 +5216,7 @@ function FileList({
   onCreate: (folderPath?: string) => void;
   onCreateFolder: (folderPath?: string) => void;
   onFileAction: (input: FileSystemOperationInput) => void;
+  onImportExternalFiles: (sourcePaths: string[], destinationFolderPath: string) => void;
   onRenameProject: (path: string, title: string) => void | Promise<void>;
   onToggleProjectPinned: (path: string) => void;
   onRemoveProject: (path: string) => void;
@@ -5327,6 +5378,12 @@ function FileList({
   };
 
   const handleTreeDrop = (dataTransfer: DataTransfer, destinationFolderPath: string) => {
+    const externalPaths = dataTransferFilePaths(dataTransfer);
+    if (externalPaths.length) {
+      onImportExternalFiles(externalPaths, destinationFolderPath);
+      return;
+    }
+
     const payload = parseTreeDragPayload(dataTransfer);
     if (!payload) return;
 
@@ -5409,19 +5466,21 @@ function FileList({
           style={{ paddingLeft: 8 + depth * 14 }}
           onClick={() => toggleFolder(node.folder)}
           onDragOver={(event) => {
-            if (!isInternalTreeDrag(event.dataTransfer)) return;
+            const isInternalDrag = isInternalTreeDrag(event.dataTransfer);
+            const isExternalDrag = isExternalFileDrag(event.dataTransfer);
+            if (!isInternalDrag && !isExternalDrag) return;
             event.preventDefault();
             event.stopPropagation();
-            event.dataTransfer.dropEffect = "move";
+            event.dataTransfer.dropEffect = isExternalDrag ? "copy" : "move";
             setDropTarget({ path: folderKey, depth });
           }}
           onDragLeave={(event) => {
-            if (!isInternalTreeDrag(event.dataTransfer)) return;
+            if (!isInternalTreeDrag(event.dataTransfer) && !isExternalFileDrag(event.dataTransfer)) return;
             if (event.currentTarget.contains(event.relatedTarget as globalThis.Node | null)) return;
             setDropTarget((current) => (current?.path === folderKey ? null : current));
           }}
           onDrop={(event) => {
-            if (!isInternalTreeDrag(event.dataTransfer)) return;
+            if (!isInternalTreeDrag(event.dataTransfer) && !isExternalFileDrag(event.dataTransfer)) return;
             event.preventDefault();
             event.stopPropagation();
             setDropTarget(null);
@@ -6468,12 +6527,21 @@ function PropertiesPanel({
   onChange: (nextRaw: string) => void;
 }) {
   const [newKey, setNewKey] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const newValueInputRef = useRef<HTMLInputElement | null>(null);
   const entries = editableFrontmatterEntries(frontmatter.values);
   const rawOnly = Boolean(frontmatter.error) || hasRawOnlyFrontmatter(frontmatter.values);
   const hasProperties = entries.length > 0;
 
   const updateValues = (nextValues: Record<string, unknown>) => onChange(YAML.stringify(nextValues, { lineWidth: 0 }).trimEnd());
   const updateField = (key: string, value: unknown) => updateValues({ ...frontmatter.values, [key]: value });
+  const commitNewProperty = () => {
+    const key = newKey.trim();
+    if (!key) return;
+    updateField(key, newValue);
+    setNewKey("");
+    setNewValue("");
+  };
   const removeField = (key: string) => {
     const nextValues = { ...frontmatter.values };
     delete nextValues[key];
@@ -6518,14 +6586,36 @@ function PropertiesPanel({
             className={cn("informio-property-new", !hasProperties && "is-standalone")}
             onSubmit={(event) => {
               event.preventDefault();
-              const key = newKey.trim();
-              if (!key) return;
-              updateField(key, "");
-              setNewKey("");
+              if (document.activeElement === newValueInputRef.current) {
+                commitNewProperty();
+                return;
+              }
+              newValueInputRef.current?.focus();
             }}
           >
-            <input value={newKey} placeholder="New property" onChange={(event) => setNewKey(event.target.value)} />
-            <button type="submit">Add</button>
+            <input
+              value={newKey}
+              placeholder="Tag"
+              onChange={(event) => setNewKey(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== "Tab") return;
+                if (!newKey.trim()) return;
+                event.preventDefault();
+                newValueInputRef.current?.focus();
+              }}
+            />
+            <input
+              ref={newValueInputRef}
+              value={newValue}
+              placeholder="Content"
+              onChange={(event) => setNewValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                commitNewProperty();
+              }}
+            />
+            <button type="submit">Save</button>
           </form>
         </>
       )}
@@ -6600,7 +6690,7 @@ function EditorPane({
   const activeDocumentKind = documentKind(document);
   const isPdfDocument = activeDocumentKind === "pdf";
   const isAssetDocument = isEmbeddableAssetDocument(document);
-  const isReadOnlyDocument = isAssetDocument;
+  const isReadOnlyDocument = !isWritableTextDocument(document);
   const isSourceMode = !isReadOnlyDocument && viewMode === "source";
   const documentLinkIndexKey = useMemo(
     () => documentLookupKey(documents, document.id),
@@ -8167,7 +8257,7 @@ function EditorPane({
         className={cn(
           "informio-editor-shell relative flex min-w-0 flex-1 justify-center",
           editorScrolling && "is-scrolling",
-          isPdfDocument ? "is-pdf-document overflow-y-auto overflow-x-hidden" : isAssetDocument ? "is-asset-document overflow-hidden" : "overflow-y-auto"
+          isPdfDocument ? "is-pdf-document overflow-y-auto overflow-x-hidden" : isReadOnlyDocument ? "is-asset-document overflow-hidden" : "overflow-y-auto"
         )}
         onScroll={handleEditorScroll}
         onMouseUp={(event) => {
@@ -8206,7 +8296,7 @@ function EditorPane({
             />
           ) : isPdfDocument ? (
             <UnifiedPdfViewerSurface />
-          ) : isAssetDocument ? (
+          ) : isReadOnlyDocument ? (
             <AssetViewerSurface document={document} />
           ) : (
             <EditorContent editor={editor} className={isReadOnlyDocument ? "h-full" : undefined} />
@@ -8441,21 +8531,20 @@ function AssetViewerSurface({ document }: { document: InformioDocument }) {
     return <div className="informio-asset-message is-error">文件路径缺失，无法打开。</div>;
   }
 
-  const body = isLoading || (!assetUrl && !loadFailed) ? (
-    <div className="informio-asset-message">正在加载文件...</div>
-  ) : loadFailed ? (
-    <div className="informio-asset-message is-error">文件已识别为{kind === "image" ? "图片" : kind === "video" ? "视频" : "音频"}，但当前文件无法被内置预览器解码。</div>
-  ) : kind === "image" ? (
-    <img className="informio-asset-image" src={assetUrl} alt={title} onError={() => setLoadFailed(true)} />
-  ) : kind === "video" ? (
-    <video className="informio-asset-video" src={assetUrl} controls onError={() => setLoadFailed(true)} />
-  ) : kind === "audio" ? (
-    <audio className="informio-asset-audio" src={assetUrl} controls onError={() => setLoadFailed(true)} />
-  ) : null;
-
-  if (!body) {
-    return <div className="informio-asset-message is-error">当前文件类型无法预览。</div>;
-  }
+  const isLoadableAsset = kind === "image" || kind === "video" || kind === "audio";
+  const body = isLoadableAsset
+    ? isLoading || (!assetUrl && !loadFailed) ? (
+      <div className="informio-asset-message">正在加载文件...</div>
+    ) : loadFailed ? (
+      <div className="informio-asset-message is-error">文件已识别为{kind === "image" ? "图片" : kind === "video" ? "视频" : "音频"}，但当前文件无法被内置预览器解码。</div>
+    ) : kind === "image" ? (
+      <img className="informio-asset-image" src={assetUrl} alt={title} onError={() => setLoadFailed(true)} />
+    ) : kind === "video" ? (
+      <video className="informio-asset-video" src={assetUrl} controls onError={() => setLoadFailed(true)} />
+    ) : (
+      <audio className="informio-asset-audio" src={assetUrl} controls onError={() => setLoadFailed(true)} />
+    )
+    : <div className="informio-asset-message">当前文件类型无法内置预览。</div>;
 
   return (
     <div className="informio-asset-surface">
@@ -10161,7 +10250,7 @@ function AgentPanel({
   chatFontSize: number;
   connections: AgentConnection[];
   onConnect: () => void;
-  onSend: (text: string, permissionMode: AgentPermissionMode) => void;
+  onSend: (text: string, permissionMode: AgentPermissionMode, attachments: AgentMessageAttachment[]) => void;
   onCancel: () => void;
   onNewConversation: () => void;
   onSelectConversation: (conversationId: string) => void;
@@ -10174,6 +10263,11 @@ function AgentPanel({
   width: number;
 }) {
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<AgentMessageAttachment[]>([]);
+  const [composerHeight, setComposerHeight] = useState(() => {
+    const saved = Number(window.localStorage.getItem("informio-agent-composer-height") ?? 0);
+    return Number.isFinite(saved) && saved >= 80 ? saved : 96;
+  });
   const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>("default");
   const [pendingPermissionMode, setPendingPermissionMode] = useState<AgentPermissionMode | null>(null);
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
@@ -10190,6 +10284,7 @@ function AgentPanel({
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
   const composerControlsRef = useRef<HTMLDivElement | null>(null);
   const fullControlsMeasureRef = useRef<HTMLDivElement | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const previousMessageCountRef = useRef(messages.length);
   const status = connection?.status ?? "idle";
@@ -10211,9 +10306,52 @@ function AgentPanel({
   };
   const sendDraft = () => {
     const text = draft.trim();
-    if (!text || busy || !enabled) return;
+    if ((!text && !attachments.length) || busy || !enabled) return;
+    const nextAttachments = attachments;
     setDraft("");
-    onSend(text, permissionMode);
+    setAttachments([]);
+    onSend(text || "请处理这些附件。", permissionMode, nextAttachments);
+  };
+
+  const addAttachmentFiles = (files: File[]) => {
+    const nextItems = files
+      .map((file) => {
+        const path = filePathForFile(file);
+        if (!path) return null;
+        return {
+          id: `attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          name: file.name || pathBaseName(path),
+          path,
+          kind: fileKindFromName(file.name || path),
+          mimeType: file.type || mimeTypeFromName(file.name || path),
+          size: file.size
+        } satisfies AgentMessageAttachment;
+      })
+      .filter(Boolean) as AgentMessageAttachment[];
+    if (!nextItems.length) return;
+    setAttachments((items) => {
+      const existingPaths = new Set(items.map((item) => normalizePath(item.path)));
+      return [...items, ...nextItems.filter((item) => !existingPaths.has(normalizePath(item.path)))];
+    });
+  };
+
+  const startComposerResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = composerHeight;
+    document.body.classList.add("is-resizing-panel");
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const nextHeight = clamp(startHeight + startY - moveEvent.clientY, 80, 260);
+      setComposerHeight(nextHeight);
+      window.localStorage.setItem("informio-agent-composer-height", String(Math.round(nextHeight)));
+    };
+    const onPointerUp = () => {
+      document.body.classList.remove("is-resizing-panel");
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
   };
 
   const copyAgentMessage = async (id: string, text: string) => {
@@ -10346,7 +10484,7 @@ function AgentPanel({
 
     const updateCompactMode = () => {
       const availableWidth = controls.clientWidth;
-      const requiredWidth = Math.ceil(measure.scrollWidth);
+      const requiredWidth = Math.ceil(measure.scrollWidth) + 8;
       setCompactAgentControls(requiredWidth > availableWidth);
     };
 
@@ -10639,12 +10777,48 @@ function AgentPanel({
 
       <form
         className="border-t p-3"
+        onDragOver={(event) => {
+          if (!isExternalFileDrag(event.dataTransfer)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={(event) => {
+          if (!isExternalFileDrag(event.dataTransfer)) return;
+          event.preventDefault();
+          addAttachmentFiles(Array.from(event.dataTransfer.files));
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           sendDraft();
         }}
       >
         <div className="surface-card rounded-lg p-3 shadow-[0_1px_5px_rgba(15,23,42,0.12),inset_0_0_0_1px_rgba(15,23,42,0.08)]">
+          <div
+            className="-mx-3 -mt-3 mb-2 h-2 cursor-row-resize rounded-t-lg"
+            title="拖拽调整输入区高度"
+            onPointerDown={startComposerResize}
+          />
+          {attachments.length ? (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {attachments.map((attachment) => (
+                <div
+                  key={attachment.id}
+                  className="relative inline-flex max-w-full items-center rounded-xl border border-slate-200 bg-white py-1.5 pl-3 pr-9 shadow-[0_1px_3px_rgba(15,23,42,0.08)]"
+                  title={attachment.path}
+                >
+                  <div className="max-w-56 truncate text-[13px] font-semibold leading-5 text-slate-900">{attachment.name}</div>
+                  <button
+                    type="button"
+                    aria-label={`移除 ${attachment.name}`}
+                    onClick={() => setAttachments((items) => items.filter((item) => item.id !== attachment.id))}
+                    className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-slate-950 text-white transition-colors hover:bg-slate-700"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
@@ -10654,7 +10828,8 @@ function AgentPanel({
               sendDraft();
             }}
             placeholder=""
-            className="min-h-20 w-full resize-none bg-transparent text-[13px] leading-6 text-[var(--text-main)] outline-none placeholder:text-slate-500"
+            style={{ height: composerHeight }}
+            className="w-full resize-none bg-transparent text-[13px] leading-6 text-[var(--text-main)] outline-none placeholder:text-slate-500"
             disabled={!enabled}
           />
           <div className="relative pt-2">
@@ -10665,6 +10840,7 @@ function AgentPanel({
             >
               <div className="flex h-8 items-center gap-2">
                 <div className="flex h-8 items-center gap-2 whitespace-nowrap">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center" />
                   <span className="flex h-8 items-center gap-1 px-1.5 text-[13px] font-semibold text-slate-400">
                     <span className="block text-[13px] leading-8">{currentModelLabel}</span>
                     <ChevronDown size={13} className="block shrink-0" />
@@ -10674,11 +10850,31 @@ function AgentPanel({
                     <ChevronDown size={13} className="block shrink-0" />
                   </span>
                 </div>
-                <span className="grid h-8 min-w-8 shrink-0 place-items-center px-2" />
+                <span className="grid h-8 w-8 shrink-0 place-items-center" />
               </div>
             </div>
           <div ref={composerControlsRef} className="flex h-8 items-center justify-between gap-2">
             <div className={cn("flex h-8 min-w-0 items-center overflow-hidden", compactAgentControls ? "gap-1" : "gap-2")}>
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  addAttachmentFiles(Array.from(event.currentTarget.files ?? []));
+                  event.currentTarget.value = "";
+                }}
+              />
+              <button
+                type="button"
+                aria-label="添加图片或文件"
+                title="添加图片或文件"
+                onClick={() => attachmentInputRef.current?.click()}
+                disabled={!enabled || busy}
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-slate-400 transition-colors hover:bg-slate-500/5 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <Paperclip size={14} />
+              </button>
               <Select.Root value={currentModel} onValueChange={onModelChange} disabled={!enabled || !availableModels.length}>
                 <Select.Trigger
                   aria-label={`模型：${currentModelLabel}`}
@@ -10759,11 +10955,16 @@ function AgentPanel({
             <button
               type={busy ? "button" : "submit"}
               onClick={busy ? onCancel : undefined}
-              className="grid h-8 min-w-8 shrink-0 place-items-center rounded-md px-2 text-slate-600 transition-[background-color,transform,color] active:scale-95 hover:bg-slate-500/5 hover:text-slate-700 disabled:cursor-not-allowed disabled:text-slate-300"
-              disabled={!enabled}
+              className={cn(
+                "grid h-8 w-8 shrink-0 place-items-center rounded-full bg-transparent transition-[background-color,transform,color] active:scale-95 disabled:cursor-not-allowed",
+                busy
+                  ? "text-slate-600 hover:bg-slate-500/5"
+                  : "text-slate-600 hover:bg-slate-500/5 hover:text-slate-800 disabled:text-slate-300"
+              )}
+              disabled={!enabled || (!busy && !draft.trim() && !attachments.length)}
               aria-label={busy ? "取消当前运行" : "发送"}
             >
-              {busy ? <X size={16} /> : <ChevronRight size={17} />}
+              {busy ? <X size={15} /> : <ArrowUp size={16} />}
             </button>
           </div>
           </div>
@@ -11873,6 +12074,34 @@ function SettingsView({
                           className="h-9 w-18 rounded-md bg-white px-3 text-center font-mono text-[13px] ring-1 ring-slate-200"
                         />
                       </SettingRow>
+                      <SettingRow title="插入文件" description="控制通过菜单插入图片、音频、视频和 PDF 时如何写入路径">
+                        <Select.Root
+                          value={settings.editor.assetImportMode}
+                          onValueChange={(value) =>
+                            onChange({
+                              ...settings,
+                              editor: { ...settings.editor, assetImportMode: value as AppSettings["editor"]["assetImportMode"] }
+                            })
+                          }
+                        >
+                          <Select.Trigger className="flex h-9 min-w-44 items-center justify-between gap-2 rounded-md bg-white px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-emerald-500/45">
+                            <Select.Value />
+                            <Select.Icon><ChevronDown size={14} /></Select.Icon>
+                          </Select.Trigger>
+                          <Select.Portal>
+                            <Select.Content className="z-[80] overflow-hidden rounded-lg bg-white p-1 shadow-xl">
+                              <Select.Viewport>
+                                <Select.Item value="copy-to-attachment" className="cursor-default rounded-md px-3 py-2 text-[13px] font-semibold text-slate-700 outline-none data-[highlighted]:bg-emerald-50 data-[highlighted]:text-slate-950">
+                                  <Select.ItemText>复制到 attachments</Select.ItemText>
+                                </Select.Item>
+                                <Select.Item value="link-original-file" className="cursor-default rounded-md px-3 py-2 text-[13px] font-semibold text-slate-700 outline-none data-[highlighted]:bg-emerald-50 data-[highlighted]:text-slate-950">
+                                  <Select.ItemText>保持原路径</Select.ItemText>
+                                </Select.Item>
+                              </Select.Viewport>
+                            </Select.Content>
+                          </Select.Portal>
+                        </Select.Root>
+                      </SettingRow>
                       <div className="grid gap-2 py-5">
                         <div className="text-[15px] font-bold text-[var(--text-main)]">默认文件夹</div>
                         <div className="flex gap-3">
@@ -12835,6 +13064,12 @@ export function App() {
     }
   };
 
+  const importExternalFiles = async (sourcePaths: string[], destinationFolderPath: string) => {
+    if (!sourcePaths.length) return;
+    const next = await window.informio.importExternalFiles({ sourcePaths, destinationFolderPath });
+    applyMergedAppData(next);
+  };
+
   const renameProject = async (path: string, title: string) => {
     const next = await window.informio.renameProject(path, title);
     applyMergedAppData(next);
@@ -13259,18 +13494,19 @@ export function App() {
     }
   };
 
-  const sendAgentSession = async (text: string, permissionMode: AgentPermissionMode) => {
+  const sendAgentSession = async (text: string, permissionMode: AgentPermissionMode, attachments: AgentMessageAttachment[] = []) => {
     if (!data || !activeAgent) return;
+    const messageText = `${text.trim() || "请处理这些附件。"}${attachmentsMarkdown(attachments)}`;
     const currentDoc = activeOpenDoc;
     const selection = agentSelection?.documentId === currentDoc?.id ? agentSelection : null;
-    const references = resolveReferencedDocumentsFromMessage(text);
+    const references = resolveReferencedDocumentsFromMessage(messageText);
     const nowIso = new Date().toISOString();
     const existingConversation = activeConversation;
     const conversationId = existingConversation?.id ?? `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const baseConversationMessages = existingConversation?.messages ?? buildConversationMessagesFromSession(agentMessages);
     const baseRuntimeThreadId = existingConversation?.runtimeThreadId;
     const baseCreatedAt = existingConversation?.createdAt ?? nowIso;
-    const baseTitle = existingConversation?.title ?? createConversationTitle(text);
+    const baseTitle = existingConversation?.title ?? createConversationTitle(messageText);
     const baseWorkspaceScopeId = existingConversation?.workspaceScopeId ?? workspaceScopeId;
     const baseWorkspaceLabel = existingConversation?.workspaceLabel ?? workspaceLabel;
     const conversationBase: Omit<AgentConversation, "messages" | "updatedAt" | "runtimeThreadId"> = {
@@ -13284,7 +13520,7 @@ export function App() {
     const messageId = `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const message: AgentSessionMessage = {
       id: messageId,
-      userMessage: text,
+      userMessage: messageText,
       permissionMode,
       status: data.settings.agentRuntime.enabled ? "thinking" : "error",
       reasoning: "",
@@ -13332,7 +13568,7 @@ export function App() {
         {
           providerId: activeAgent.id,
           model: activeModel,
-          message: text,
+          message: messageText,
           permissionMode,
           conversationId,
           runtimeThreadId: baseRuntimeThreadId,
@@ -13380,7 +13616,8 @@ export function App() {
               documentId: doc.id,
               filePath: doc.filePath,
               markdown: doc.markdown
-            }))
+            })),
+            attachments
           }
         },
         (event) => {
@@ -13842,6 +14079,7 @@ export function App() {
 	                  onCreate={createDocument}
 	                  onCreateFolder={createFolder}
 	                  onFileAction={(input) => { void executeFileSystemAction(input); }}
+	                  onImportExternalFiles={(sourcePaths, destinationFolderPath) => { void importExternalFiles(sourcePaths, destinationFolderPath); }}
 	                  onRenameProject={renameProject}
 	                  onToggleProjectPinned={toggleProjectPinned}
 	                  onRemoveProject={(path) => window.informio.removeProject(path).then(setData)}

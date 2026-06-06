@@ -66,13 +66,13 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 
 Informio now includes Windows packaging fixes, but macOS remains the most carefully tested platform. If you find any Windows problem, please open an issue or PR.
 
-## v0.1.10 Updates
+## v0.1.11 Updates
 
-- Keeps the Windows packaging fixes from v0.10.0 while restoring the macOS reading and Agent workflow improvements.
-- Improves exported document typography by using the configured editor font stack.
-- Adds richer Agent transcript rendering, message copy actions, and more reliable selected-text copy.
-- Anchors PDF translation results near the selected control or text for a smoother reading flow.
-- Removes Linux desktop packaging from scripts, CI, and release artifacts so releases focus on macOS and Windows.
+- Adds external file drag-and-drop into workspace folders so files can be imported directly from the desktop.
+- Adds Agent chat attachments with compact file chips and local file-path context.
+- Improves the Agent composer with a resizable input area, cleaner send control, and compact toolbar behavior on narrow panels.
+- Adds an editor setting for copying inserted assets into `attachments` or linking to the original file path.
+- Speeds up property entry with keyboard-first tag and content fields.
 
 ## Tech Stack
 

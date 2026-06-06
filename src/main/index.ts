@@ -15,6 +15,7 @@ import type {
   AppSettings,
   AssetDataResult,
   FileSystemOperationInput,
+  ImportExternalFilesInput,
   InformioDocumentKind,
   InformioDocument,
   InformioFolder,
@@ -704,7 +705,7 @@ const collectWorkspaceEntries = async (
           const childEntries = await collectWorkspaceEntries(path, { ensure: false });
           return { filePaths: childEntries.filePaths, folderPaths: [path, ...childEntries.folderPaths] };
         }
-        if (entry.isFile() && OPENABLE_EXTENSIONS.has(extname(entry.name).toLowerCase())) return { filePaths: [path], folderPaths: [] };
+        if (entry.isFile()) return { filePaths: [path], folderPaths: [] };
         return { filePaths: [], folderPaths: [] };
       })
   );
@@ -969,7 +970,9 @@ const readDocumentsFromPaths = async (paths: string[]) => {
           }
           let markdown: string;
           let sourceMarkdown: string | null = null;
-          if (kind === "image") {
+          if (kind === "unknown") {
+            markdown = "";
+          } else if (kind === "image") {
             markdown = generatedMarkdownForAssetPath(path) ?? "";
           } else if (kind === "video") {
             markdown = generatedMarkdownForAssetPath(path) ?? "";
@@ -1539,9 +1542,64 @@ const copyAttachmentFromPath = async (sourcePath: string): Promise<SaveAttachmen
 
 const resolveInsertedAssetFromPath = async (
   sourcePath: string,
-  _mode: AppSettings["editor"]["assetImportMode"]
+  mode: AppSettings["editor"]["assetImportMode"]
 ): Promise<SaveAttachmentResult> => {
+  if (mode === "link-original-file") {
+    const doc = activeDocument();
+    const documentFolder = doc?.filePath ? dirname(doc.filePath) : (appData.workspacePath || appData.settings.shortcuts.quickFolder);
+    if (!documentFolder) throw new Error("No folder is available for this document.");
+    return {
+      path: sourcePath,
+      fileName: basename(sourcePath),
+      markdownPath: markdownPathForFile(documentFolder, sourcePath)
+    };
+  }
   return copyAttachmentFromPath(sourcePath);
+};
+
+const uniqueImportPath = async (sourcePath: string, destinationFolderPath: string) => {
+  const extension = extname(sourcePath);
+  const base = sanitizeFilesystemName(basename(sourcePath, extension)) || "Imported File";
+  const fileStats = await stat(sourcePath);
+  return uniquePath(destinationFolderPath, base, fileStats.isDirectory() ? "" : extension);
+};
+
+const importExternalFiles = async (input: ImportExternalFilesInput): Promise<AppData> => {
+  if (!input.destinationFolderPath) throw new Error("A destination folder path is required.");
+  const sourcePaths = Array.from(new Set(input.sourcePaths.filter(Boolean)));
+  if (!sourcePaths.length) return appData;
+
+  await mkdir(input.destinationFolderPath, { recursive: true });
+  const importedFilePaths: string[] = [];
+  const importedFolderPaths: string[] = [input.destinationFolderPath];
+
+  for (const sourcePath of sourcePaths) {
+    const fileStats = await stat(sourcePath);
+    const destinationPath = await uniqueImportPath(sourcePath, input.destinationFolderPath);
+    await cp(sourcePath, destinationPath, { recursive: fileStats.isDirectory() });
+
+    if (fileStats.isDirectory()) {
+      const { filePaths, folderPaths } = await scanWorkspaceEntries(destinationPath, { ensure: false });
+      importedFilePaths.push(...filePaths);
+      importedFolderPaths.push(destinationPath, ...folderPaths);
+      continue;
+    }
+
+    if (fileStats.isFile()) importedFilePaths.push(destinationPath);
+  }
+
+  const importedDocuments = await readDocumentsFromPaths(importedFilePaths);
+  const existingPaths = new Set(appData.documents.filter((doc) => doc.filePath).map((doc) => normalizeForCompare(doc.filePath!)));
+  const newDocuments = importedDocuments.filter((doc) => doc.filePath && !existingPaths.has(normalizeForCompare(doc.filePath)));
+  appData = await saveAppData({
+    ...appData,
+    folders: withTrackedFolders(appData.folders, importedFolderPaths),
+    documents: [...newDocuments, ...appData.documents],
+    activeDocumentId: newDocuments[0]?.id ?? appData.activeDocumentId
+  });
+  updateApplicationMenu();
+  emitAppData();
+  return appData;
 };
 
 const duplicatePath = async (sourcePath: string, targetType: "file" | "folder") => {
@@ -2274,6 +2332,8 @@ ipcMain.handle("app:create-folder", async (_event, folderPath?: string) => creat
 ipcMain.handle("app:insert-asset", async (_event, kind: "image" | "video" | "audio" | "pdf") => insertAsset(kind));
 
 ipcMain.handle("app:filesystem-action", async (_event, input: FileSystemOperationInput) => runFileSystemAction(input));
+
+ipcMain.handle("app:import-external-files", async (_event, input: ImportExternalFilesInput) => importExternalFiles(input));
 
 ipcMain.handle("app:save-attachment", async (_event, input: SaveAttachmentInput) => saveAttachment(input));
 

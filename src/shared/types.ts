@@ -66,6 +66,11 @@ export type FileSystemOperationInput = {
   destinationFolderPath?: string;
 };
 
+export type ImportExternalFilesInput = {
+  sourcePaths: string[];
+  destinationFolderPath: string;
+};
+
 export type SaveAttachmentInput = {
   documentId: string;
   fileName: string;
@@ -298,6 +303,18 @@ export type AgentSessionContext = {
     filePath?: string;
     markdown?: string;
   }>;
+  attachments?: AgentMessageAttachment[];
+};
+
+export type AgentMessageAttachmentKind = "image" | "file";
+
+export type AgentMessageAttachment = {
+  id: string;
+  name: string;
+  path: string;
+  kind: AgentMessageAttachmentKind;
+  mimeType?: string;
+  size?: number;
 };
 
 export type PdfSelectionRect = {
