@@ -66,6 +66,13 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 
 Informio 已加入 Windows 打包修复，但 macOS 仍然是目前测试最充分的平台。Windows 如有任何问题，请提 issue 和 PR。
 
+## v0.1.13 更新
+
+- 改进长 KaTeX 显示公式，避免公式编号和公式主体重叠。
+- 窄窗口下超宽公式会在公式块内部横向滚动，避免内容被窗口截断。
+- 增强 Agent 论文翻译公式归一化，支持显示公式块、公式编号和多字符下标。
+- 增加 Prompt 约束和回归测试，让 Agent 回复优先使用标准 Markdown 数学公式分隔符。
+
 ## v0.1.12 更新
 
 - 清理从 ChatGPT、GitHub 和浏览器粘贴进来的网页内容，避免剪贴板片段和站点样式污染笔记。

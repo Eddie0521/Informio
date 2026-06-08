@@ -66,6 +66,13 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 
 Informio now includes Windows packaging fixes, but macOS remains the most carefully tested platform. If you find any Windows problem, please open an issue or PR.
 
+## v0.1.13 Updates
+
+- Improves long KaTeX display formulas so equation numbers no longer overlap the formula body.
+- Keeps oversized display formulas readable in narrow windows with an internal horizontal scroll area.
+- Strengthens Agent math normalization for pasted paper translations, including display blocks, tags, and multi-letter subscripts.
+- Adds prompt guidance and regression tests so Agent responses prefer standard Markdown math delimiters.
+
 ## v0.1.12 Updates
 
 - Cleans pasted web content from ChatGPT, GitHub, and browsers so clipboard fragments and site styling do not leak into notes.

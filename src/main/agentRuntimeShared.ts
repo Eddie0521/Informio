@@ -33,10 +33,20 @@ export const modelId = (provider: AgentProvider, override?: string) => {
 
 export const markdownTitle = (title: string) => title.replace(/\.(md|markdown|txt)$/i, "");
 
+export const AGENT_MARKDOWN_FORMATTING_INSTRUCTIONS = [
+  "Markdown formatting requirements:",
+  "- Output math formulas with standard Markdown math delimiters.",
+  "- Use `$...$` for inline math and `$$...$$` for display math.",
+  "- Do not output bare LaTeX equations across standalone lines.",
+  "- Use braces for multi-character subscripts or superscripts, for example `K_{old}` and `z_{cond}`."
+].join("\n");
+
 export const buildPrompt = (input: SendAgentMessageInput) => {
   const selected = input.context.selectedText?.trim();
   return [
     input.message.trim(),
+    "",
+    AGENT_MARKDOWN_FORMATTING_INSTRUCTIONS,
     "",
     "Context:",
     `Document: ${input.context.documentTitle}`,
@@ -134,6 +144,7 @@ export const buildSessionPrompt = (input: AgentSessionInput, options: { includeC
     "The user writes naturally. Decide whether to answer, inspect context, suggest edits, or perform allowed actions based on the request.",
     "When referencing notes, use [[Note Title]] wikilink syntax.",
     "Be concise and make your work visible through short summaries.",
+    AGENT_MARKDOWN_FORMATTING_INSTRUCTIONS,
     "",
     permission,
     "",

@@ -1582,11 +1582,15 @@ textarea {
 
 .informio-source-block {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
   margin: 0 0 20px;
   border-radius: 3px;
 }
 
 .informio-source-preview {
+  min-width: 0;
+  max-width: 100%;
   padding: 0;
 }
 
@@ -1673,10 +1677,11 @@ textarea {
 }
 
 .informio-formula {
-  display: flex;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 38px;
-  align-items: center;
-  justify-content: center;
   border-radius: 0;
   background: transparent;
   color: var(--text-main);
@@ -1684,6 +1689,32 @@ textarea {
   font-size: calc(var(--editor-font-size) * 1.18);
   font-style: italic;
   line-height: 1.45;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  text-align: center;
+  scrollbar-width: thin;
+}
+
+.informio-formula .katex-display {
+  margin: 0;
+  padding: 4px 0;
+}
+
+.informio-formula .katex-display > .katex {
+  display: inline-block;
+  min-width: 100%;
+  max-width: none;
+}
+
+.informio-formula .katex-display > .katex > .katex-html:has(> .tag) {
+  display: inline-block;
+  min-width: 100%;
+  padding-right: 4.75em;
+}
+
+.informio-formula .katex-display > .katex > .katex-html:has(> .tag) > .tag {
+  right: 0.25em;
 }
 
 .informio-math-inline {
