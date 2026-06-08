@@ -66,13 +66,13 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 
 Informio 已加入 Windows 打包修复，但 macOS 仍然是目前测试最充分的平台。Windows 如有任何问题，请提 issue 和 PR。
 
-## v0.1.10 更新
+## v0.1.12 更新
 
-- 保留 v0.10.0 的 Windows 打包修复，同时恢复 macOS 上的阅读和 Agent 工作流优化。
-- 导出文档使用用户配置的编辑器字体栈，中文和英文排版更一致。
-- Agent 对话支持更完整的 Markdown 渲染、单条消息复制和更可靠的选区复制。
-- PDF 翻译结果跟随选区或翻译按钮出现，阅读时不用在界面里来回找结果。
-- 移除 Linux 桌面打包脚本、CI 构建和发布产物，让发布聚焦 macOS 与 Windows。
+- 清理从 ChatGPT、GitHub 和浏览器粘贴进来的网页内容，避免剪贴板片段和站点样式污染笔记。
+- Agent 会话支持数学公式渲染，能处理论文翻译里常见的裸 LaTeX 片段。
+- 兼容新版 OpenCode SDK 的 session 返回结构，减少误判启动失败。
+- 开发版可以和已安装的 Informio 同时运行，并使用独立的开发数据目录。
+- 新增粘贴归一化、Agent 数学渲染和 OpenCode session 解析的回归测试。
 
 ## 技术栈
 

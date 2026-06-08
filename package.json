@@ -1,6 +1,6 @@
 {
   "name": "informio",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "A minimal Markdown editor with contextual MCP Agent assistance.",
   "license": "AGPL-3.0-only",
   "homepage": "https://github.com/Eddie0521/Informio",
@@ -22,6 +22,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "preview": "electron-vite preview",
     "dist:mac": "node scripts/run-electron-builder.cjs --mac dmg zip --config electron-builder.config.ts",
@@ -82,6 +83,7 @@
     "electron": "^38.3.0",
     "electron-builder": "^26.0.12",
     "electron-vite": "^4.0.0",
+    "jsdom": "^29.1.1",
     "katex": "^0.16.47",
     "lowlight": "^3.3.0",
     "lucide-react": "^0.552.0",
@@ -92,6 +94,7 @@
     "tailwindcss": "^4.3.0",
     "typescript": "^5.9.3",
     "vite": "^7.1.12",
+    "vitest": "^4.1.8",
     "yaml": "^2.9.0"
   }
 }

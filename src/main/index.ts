@@ -92,7 +92,13 @@ const DEFAULT_WORKSPACE_PATH = join(homedir(), "Documents", "Informio Quick Note
 const ATTACHMENTS_DIR = "attachments";
 const execFileAsync = promisify(execFile);
 const isWindows = process.platform === "win32";
+const isDevelopmentRuntime = Boolean(process.env.ELECTRON_RENDERER_URL);
 let localFontsCache: ListLocalFontsResult | null = null;
+
+if (isDevelopmentRuntime) {
+  app.setName(`${APP_NAME} Dev`);
+  app.setPath("userData", join(app.getPath("appData"), "informio-dev"));
+}
 
 const getAppInfo = (): AppInfo => ({
   name: app.getName() || APP_NAME,
@@ -2180,7 +2186,7 @@ const updateApplicationMenu = () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 };
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const hasSingleInstanceLock = isDevelopmentRuntime || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 }

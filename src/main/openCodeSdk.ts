@@ -80,6 +80,18 @@ const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 
 const asString = (value: unknown) => (typeof value === "string" ? value : "");
+export const extractOpenCodeSessionId = (value: unknown): string => {
+  const record = asRecord(value);
+  const direct = asString(record.id) || asString(record.sessionID) || asString(record.sessionId);
+  if (direct) return direct;
+
+  const data = asRecord(record.data);
+  const dataId = asString(data.id) || asString(data.sessionID) || asString(data.sessionId);
+  if (dataId) return dataId;
+
+  const nestedSession = Object.keys(asRecord(data.session)).length ? asRecord(data.session) : asRecord(record.session);
+  return asString(nestedSession.id) || asString(nestedSession.sessionID) || asString(nestedSession.sessionId);
+};
 const asNumber = (value: unknown) => (typeof value === "number" ? value : undefined);
 const compactJson = (value: unknown) => JSON.stringify(value, null, 2);
 const truncate = (value: string, maxLength = 12000) => (value.length > maxLength ? `${value.slice(0, maxLength)}\n…` : value);
@@ -550,7 +562,7 @@ export class OpenCodeSdkManager {
       },
       query: { directory }
     });
-    const sessionId = asString(asRecord(created.data).id);
+    const sessionId = extractOpenCodeSessionId(created);
     if (!sessionId) throw new Error("OpenCode did not return a session id.");
     await this.syncSessionPermissions(session, sessionId, directory, permission);
     return sessionId;

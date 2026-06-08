@@ -16,7 +16,7 @@ import type { JSONContent } from "@tiptap/core";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { EditorContent, NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { DOMSerializer, Fragment as ProseMirrorFragment } from "@tiptap/pm/model";
+import { DOMParser as ProseMirrorDOMParser, DOMSerializer, Fragment as ProseMirrorFragment } from "@tiptap/pm/model";
 import { NodeSelection, Plugin, TextSelection } from "@tiptap/pm/state";
 import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import StarterKit from "@tiptap/starter-kit";
@@ -152,6 +152,14 @@ import {
 import { DEFAULT_CUSTOM_THEME_COLOR } from "../../shared/theme";
 import { buildWorkspaceScopeId } from "../../shared/workspaceScope";
 import { cn } from "./lib/utils";
+import {
+  clipboardPlainTextForPaste,
+  htmlFragmentHasContent,
+  insertTextIntoTextarea,
+  sanitizeHtmlFragmentForPaste,
+  stripClipboardFragmentMarkers
+} from "./lib/clipboardPaste";
+import { normalizeAgentMathMarkdown } from "./lib/agentMathMarkdown";
 import {
   PdfBlockView as UnifiedPdfBlockView,
   PdfEditorContext as UnifiedPdfEditorContext,
@@ -3165,22 +3173,6 @@ const markdownFromSelection = (editor: MarkdownParserEditor, from: number, to: n
   return serializeSelectionFragmentToMarkdown(editor, from, to, blockLike ? "block" : "inline");
 };
 
-const sanitizeHtmlForPaste = (html: string) => {
-  const template = document.createElement("template");
-  template.innerHTML = html;
-  template.content.querySelectorAll("script, style, iframe, object, embed, link, meta").forEach((node) => node.remove());
-  template.content.querySelectorAll("*").forEach((node) => {
-    Array.from(node.attributes).forEach((attribute) => {
-      const name = attribute.name.toLowerCase();
-      const value = attribute.value.trim().toLowerCase();
-      if (name.startsWith("on") || ((name === "href" || name === "src") && value.startsWith("javascript:"))) {
-        node.removeAttribute(attribute.name);
-      }
-    });
-  });
-  return template.innerHTML.trim();
-};
-
 const TyporaMarkdownInput = Extension.create({
   name: "typoraMarkdownInput",
   addInputRules() {
@@ -3323,22 +3315,36 @@ const TyporaMarkdownInput = Extension.create({
             const hasImageFile = Array.from(clipboard.files).some((file) => file.type.startsWith("image/"));
             if (hasImageFile) return false;
 
+            const markdown = clipboard.getData("text/markdown");
             const text = clipboard.getData("text/plain");
             const html = clipboard.getData("text/html");
-            if (html) {
-              const safeHtml = sanitizeHtmlForPaste(html);
-              if (!safeHtml && !text.trim()) return false;
+            if (markdown.trim() && editor.markdown) {
               event.preventDefault();
-              if (safeHtml) editor.commands.insertContent(safeHtml);
-              else if (looksLikeMarkdownPaste(text) && editor.markdown) editor.commands.insertContent(editor.markdown.parse(text.trim()) as never);
-              else editor.commands.insertContent(text);
+              editor.commands.insertContent(editor.markdown.parse(stripClipboardFragmentMarkers(markdown).trim()) as never);
               return true;
             }
 
-            if (!text || !looksLikeMarkdownPaste(text) || !editor.markdown) return false;
+            if (html) {
+              const safeFragment = sanitizeHtmlFragmentForPaste(html);
+              const plainText = clipboardPlainTextForPaste(text, html);
+              if (!htmlFragmentHasContent(safeFragment) && !plainText) return false;
+              event.preventDefault();
+              if (htmlFragmentHasContent(safeFragment)) {
+                const slice = ProseMirrorDOMParser.fromSchema(editor.state.schema).parseSlice(safeFragment);
+                editor.view.dispatch(editor.state.tr.replaceSelection(slice).scrollIntoView());
+              } else if (looksLikeMarkdownPaste(plainText) && editor.markdown) {
+                editor.commands.insertContent(editor.markdown.parse(plainText) as never);
+              } else {
+                editor.commands.insertContent(plainText);
+              }
+              return true;
+            }
+
+            const plainText = clipboardPlainTextForPaste(text);
+            if (!plainText || !looksLikeMarkdownPaste(plainText) || !editor.markdown) return false;
 
             event.preventDefault();
-            editor.commands.insertContent(editor.markdown.parse(text.trim()) as never);
+            editor.commands.insertContent(editor.markdown.parse(plainText) as never);
             return true;
           },
           handleDOMEvents: {
@@ -8292,6 +8298,17 @@ function EditorPane({
               value={document.markdown}
               spellCheck={false}
               onChange={(event) => onChange(document.id, event.target.value)}
+              onPaste={(event) => {
+                const clipboard = event.clipboardData;
+                const html = clipboard.getData("text/html");
+                const markdown = clipboard.getData("text/markdown");
+                const text = markdown || clipboardPlainTextForPaste(clipboard.getData("text/plain"), html);
+                if (!html && !markdown && text === clipboard.getData("text/plain")) return;
+                if (!text) return;
+                event.preventDefault();
+                const nextMarkdown = insertTextIntoTextarea(event.currentTarget, stripClipboardFragmentMarkers(text));
+                onChange(document.id, nextMarkdown);
+              }}
               className="informio-editor informio-editor-source w-full resize-none border-0 bg-transparent p-0"
             />
           ) : isPdfDocument ? (
@@ -9784,6 +9801,7 @@ function AgentMarkdownPreview({
   fontSize: number;
   lineHeight: number;
 }) {
+  const normalizedMarkdown = useMemo(() => normalizeAgentMathMarkdown(markdown), [markdown]);
   const editor = useEditor(
     {
       extensions: [
@@ -9804,9 +9822,11 @@ function AgentMarkdownPreview({
         SubscriptMark,
         SuperscriptMark,
         UnderlineMark,
+        MathInline,
+        MathBlock,
         Markdown.configure({ indentation: { style: "space", size: 2 } })
       ],
-      content: markdown,
+      content: normalizedMarkdown,
       contentType: "markdown",
       editable: false,
       editorProps: {
@@ -9821,8 +9841,8 @@ function AgentMarkdownPreview({
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
-    editor.commands.setContent(markdown, { contentType: "markdown", emitUpdate: false } as never);
-  }, [editor, markdown]);
+    editor.commands.setContent(normalizedMarkdown, { contentType: "markdown", emitUpdate: false } as never);
+  }, [editor, normalizedMarkdown]);
 
   return (
     <div

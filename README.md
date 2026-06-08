@@ -66,13 +66,13 @@ xattr -dr com.apple.quarantine /Applications/Informio.app
 
 Informio now includes Windows packaging fixes, but macOS remains the most carefully tested platform. If you find any Windows problem, please open an issue or PR.
 
-## v0.1.11 Updates
+## v0.1.12 Updates
 
-- Adds external file drag-and-drop into workspace folders so files can be imported directly from the desktop.
-- Adds Agent chat attachments with compact file chips and local file-path context.
-- Improves the Agent composer with a resizable input area, cleaner send control, and compact toolbar behavior on narrow panels.
-- Adds an editor setting for copying inserted assets into `attachments` or linking to the original file path.
-- Speeds up property entry with keyboard-first tag and content fields.
+- Cleans pasted web content from ChatGPT, GitHub, and browsers so clipboard fragments and site styling do not leak into notes.
+- Adds math rendering in Agent conversations, including common bare LaTeX snippets from paper translations.
+- Improves OpenCode session compatibility with newer SDK response shapes.
+- Lets the development app run alongside the installed Informio app with separate dev data.
+- Adds focused regression tests for paste normalization, Agent math rendering, and OpenCode session parsing.
 
 ## Tech Stack
 

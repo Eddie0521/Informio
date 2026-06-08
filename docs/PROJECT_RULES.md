@@ -22,6 +22,7 @@ Informio is a minimal desktop Markdown editor with contextual Agent assistance. 
 - The left library and right Agent panel are optional context. Users can collapse both.
 - AI actions should start from selected text or current document context.
 - Table controls should stay latent: show only the nearby `+` insertion affordance when the pointer is close to a table edge, and resize only the specific row or column being dragged.
+- Clipboard paste must normalize external HTML before it reaches the editor: extract `StartFragment`/`EndFragment` content, strip site-only styling and unsafe attributes, preserve semantic links/images/tables, and keep source-mode paste readable. Add a regression fixture before changing paste behavior.
 - Images in the editor should support direct drag-to-resize from the canvas when it can be represented without dirtying Markdown; the saved Markdown must remain a standard image reference.
 - PDF highlighting remains available through `pdf.js` native highlight mode from the PDF toolbar; default PDF mode remains plain browsing and text selection.
 - PDF annotation management surfaces such as comment dialogs, annotation side panels, and PDF-to-Markdown backlink management should stay out of the PDF viewer unless intentionally reintroduced with a new rule update first.
@@ -58,6 +59,7 @@ The app is an MCP Host/Client. It stores local server configurations, starts std
 Before delivery, run:
 
 ```bash
+corepack pnpm test
 corepack pnpm typecheck
 corepack pnpm build
 ```
