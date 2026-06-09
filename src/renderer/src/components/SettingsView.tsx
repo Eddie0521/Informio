@@ -329,7 +329,7 @@ export function SettingsView({
                 <div className="settings-divide mt-4 divide-y">
                   <SettingRow
                     title="对话字号"
-                    description={`${settings.appearance.chatFontSize}px，影响 User、Agent 名称、用户消息、AI 回复和"已处理"这一行；执行流内部会自动小 2px`}
+                    description={`${settings.appearance.chatFontSize}px，影响 User、Agent 名称、用户消息、AI 回复和“已处理”这一行；执行流内部会自动小 2px`}
                   >
                     <input
                       type="range"
