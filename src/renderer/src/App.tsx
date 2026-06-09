@@ -149,6 +149,7 @@ import {
   normalizeAccelerator,
   shortcutRegistryById
 } from "../../shared/shortcuts";
+import { sanitizeAgentResponse } from "../../shared/agentResponse";
 import { DEFAULT_CUSTOM_THEME_COLOR } from "../../shared/theme";
 import { buildWorkspaceScopeId } from "../../shared/workspaceScope";
 import { cn } from "./lib/utils";
@@ -1188,8 +1189,8 @@ const parseTreeDragPayload = (dataTransfer: DataTransfer): TreeDragPayload | nul
 
 const permissionModeLabel: Record<AgentPermissionMode, string> = {
   read_only: "只读",
-  default: "默认权限",
-  full_access: "完全权限"
+  default: "审核权限",
+  full_access: "默认权限"
 };
 
 const agentPermissionModes: AgentPermissionMode[] = ["read_only", "default", "full_access"];
@@ -10315,7 +10316,7 @@ function AgentPanel({
     const saved = Number(window.localStorage.getItem("informio-agent-composer-height") ?? 0);
     return Number.isFinite(saved) && saved >= 80 ? saved : 96;
   });
-  const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>("default");
+  const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>("full_access");
   const [pendingPermissionMode, setPendingPermissionMode] = useState<AgentPermissionMode | null>(null);
   const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [expandedProcessIds, setExpandedProcessIds] = useState<Set<string>>(() => new Set());
@@ -11027,9 +11028,9 @@ function AgentPanel({
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-[90] bg-slate-950/22 backdrop-blur-[1px]" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-[91] w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-4 text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
-            <Dialog.Title className="text-[16px] font-bold text-[var(--text-main)]">切换到完全权限</Dialog.Title>
+            <Dialog.Title className="text-[16px] font-bold text-[var(--text-main)]">切换到默认权限</Dialog.Title>
             <Dialog.Description className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-[var(--text-muted)]">
-              完全权限下，Agent 将不再请求审批，并且可以访问和修改工作区外的系统文件。
+              默认权限下，Agent 将不再请求审批，并且可以访问和修改工作区外的系统文件。
             </Dialog.Description>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -13744,7 +13745,7 @@ export function App() {
               return {
                 ...item,
                 status: "done",
-                response: mergeFinalAgentResponse(item.response, event.content),
+                response: activeAgent.id === "opencode" ? sanitizeAgentResponse(event.content) : sanitizeAgentResponse(mergeFinalAgentResponse(item.response, event.content)),
                 completedAt: item.completedAt ?? Date.now()
               };
             }
@@ -13768,7 +13769,7 @@ export function App() {
         return {
           ...item,
           status: "done",
-          response: mergeFinalAgentResponse(item.response, result.content),
+          response: activeAgent.id === "opencode" ? sanitizeAgentResponse(result.content) : sanitizeAgentResponse(mergeFinalAgentResponse(item.response, result.content)),
           completedAt: item.completedAt ?? Date.now()
         };
       });
