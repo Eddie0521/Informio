@@ -1,3 +1,4 @@
+import { sanitizeAgentResponse } from "../shared/agentResponse.js";
 import type {
   AgentModel,
   ApiModelDetectionInput,
@@ -182,7 +183,7 @@ export const translateSelection = async (input: TranslateSelectionInput): Promis
     );
     const content = extractAnthropicText(payload);
     if (!content) throw new Error("接口已响应，但没有返回翻译内容。");
-    return { content, raw: payload };
+    return { content: sanitizeAgentResponse(content), raw: payload };
   }
 
   const payload = await requestJson(
@@ -206,5 +207,5 @@ export const translateSelection = async (input: TranslateSelectionInput): Promis
   );
   const content = extractOpenAiText(payload);
   if (!content) throw new Error("接口已响应，但没有返回翻译内容。");
-  return { content, raw: payload };
+  return { content: sanitizeAgentResponse(content), raw: payload };
 };
