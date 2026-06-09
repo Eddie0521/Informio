@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import type { JSONContent, Editor } from "@tiptap/core";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
@@ -489,4 +490,43 @@ export const collectWikiSuggestions = (documentLookupIndex: DocumentLookupIndex,
     contains.push(item.document);
   });
   return [...startsWith, ...contains].slice(0, 8);
+};
+
+// ─── NodeView helpers ───
+
+export const isSelectionInsideNode = (editor: Editor, getPos: NodeViewPositionGetter, node: NodeViewNode) => {
+  const position = getPos();
+  if (typeof position !== "number") return false;
+  const from = position;
+  const to = position + node.nodeSize;
+  const selection = editor.state.selection;
+  return selection.from > from && selection.to < to;
+};
+
+export const useNodeLivePreviewState = (editor: Editor, getPos: NodeViewPositionGetter, node: NodeViewNode, selected: boolean) => {
+  const getActive = () => editor.isFocused && (selected || isSelectionInsideNode(editor, getPos, node));
+  const [active, setActive] = useState(getActive);
+
+  useEffect(() => {
+    const update = () => setActive(getActive());
+    editor.on("selectionUpdate", update);
+    editor.on("update", update);
+    editor.on("focus", update);
+    editor.on("blur", update);
+    update();
+    return () => {
+      editor.off("selectionUpdate", update);
+      editor.off("update", update);
+      editor.off("focus", update);
+      editor.off("blur", update);
+    };
+  }, [editor, getPos, node, selected]);
+
+  return active;
+};
+
+export const focusNodeSource = (editor: Editor, getPos: NodeViewPositionGetter) => {
+  const position = getPos();
+  if (typeof position !== "number") return;
+  editor.chain().focus().setTextSelection(position + 1).run();
 };
