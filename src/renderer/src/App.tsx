@@ -7171,7 +7171,7 @@ function EditorPane({
       const tablePos = tablePosFromDom(editor, table);
       if (tablePos === null) return;
 
-      const columns = Array.from(table.querySelectorAll("colgroup col"));
+      const columns = Array.from(table.querySelectorAll<HTMLElement>("colgroup col"));
       if (!columns.length) return;
 
       const contentColumnStyle = window.getComputedStyle(contentColumn);
@@ -7186,7 +7186,7 @@ function EditorPane({
         - Number.parseFloat(wrapperStyle.paddingRight || "0");
       if (!Number.isFinite(availableWidth) || availableWidth <= 0) return;
 
-      const baseWidths = tableColumnWidthInfo(editor, table, tablePos);
+      const baseWidths = measureNaturalTableColumnWidthInfo(editor, table, tablePos, columns);
       if (baseWidths.length !== columns.length) return;
 
       const adjustedWidths = baseWidths.map((item) => item.width);
@@ -8928,6 +8928,33 @@ const tableColumnWidthInfo = (editor: Editor, table: HTMLTableElement, tablePos:
   }
 
   return widths;
+};
+
+const measureNaturalTableColumnWidthInfo = (
+  editor: Editor,
+  table: HTMLTableElement,
+  tablePos: number,
+  columns: HTMLElement[]
+): TableColumnWidthInfo[] => {
+  const previousInlineFit = table.dataset.inlineFit;
+  const previousTableWidth = table.style.width;
+  const previousColumnWidths = columns.map((column) => column.style.width);
+
+  try {
+    delete table.dataset.inlineFit;
+    table.style.width = "";
+    columns.forEach((column) => {
+      column.style.width = "";
+    });
+    return tableColumnWidthInfo(editor, table, tablePos);
+  } finally {
+    if (previousInlineFit === undefined) delete table.dataset.inlineFit;
+    else table.dataset.inlineFit = previousInlineFit;
+    table.style.width = previousTableWidth;
+    columns.forEach((column, index) => {
+      column.style.width = previousColumnWidths[index] ?? "";
+    });
+  }
 };
 
 const nearestTableHoverTarget = (overlay: TableOverlayState, clientX: number, clientY: number): TableHoverTarget => {
