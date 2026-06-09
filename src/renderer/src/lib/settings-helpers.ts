@@ -7,8 +7,9 @@ import {
   Keyboard,
   Info,
 } from "lucide-react";
-import type { ThemeName, LocalFontOption } from "../../../shared/types";
-import { themeOptions } from "../constants";
+import type { ThemeName, LocalFontOption, AppSettings } from "../../../shared/types";
+import { themeOptions, CODE_FONT_FALLBACK, CHINESE_FONT_FALLBACK, ENGLISH_FONT_FALLBACK } from "../constants";
+import { DEFAULT_CUSTOM_THEME_COLOR } from "../../../shared/theme";
 
 export const getThemeSwatchStyle = (themeId: ThemeName, customThemeColor: string): CSSProperties => {
   const option = themeOptions.find((item) => item.id === themeId) ?? themeOptions[0];
@@ -61,4 +62,52 @@ export let lastToolbarSelectionText = "";
 
 export const setLastToolbarSelectionText = (value: string) => {
   lastToolbarSelectionText = value;
+};
+
+const quoteFontFamily = (family: string) => `"${family.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+const buildConfiguredFontStack = (family: string | undefined, fallback: string) => {
+  const trimmed = family?.trim();
+  return trimmed ? `${quoteFontFamily(trimmed)}, ${fallback}` : fallback;
+};
+const buildUiFontStack = (
+  englishFontFamily: string | undefined,
+  chineseFontFamily: string | undefined
+) => {
+  const orderedFamilies = [
+    englishFontFamily?.trim() ? quoteFontFamily(englishFontFamily.trim()) : null,
+    chineseFontFamily?.trim() ? quoteFontFamily(chineseFontFamily.trim()) : null,
+    `"PingFang SC"`,
+    `"Hiragino Sans GB"`,
+    `"Microsoft YaHei"`,
+    `"Noto Sans CJK SC"`,
+    `"Helvetica Neue"`,
+    `-apple-system`,
+    `BlinkMacSystemFont`,
+    `"Segoe UI"`,
+    `Arial`,
+    `sans-serif`
+  ].filter(Boolean);
+  return Array.from(new Set(orderedFamilies)).join(", ");
+};
+const buildShellStyle = (appearance: AppSettings["appearance"]): CSSProperties => {
+  const style: CSSProperties & Record<string, string> = {
+    "--informio-font-family": buildUiFontStack(
+      appearance.englishFontFamily,
+      appearance.chineseFontFamily
+    ),
+    "--informio-code-font-family": buildConfiguredFontStack(appearance.codeFontFamily, CODE_FONT_FALLBACK)
+  };
+  if (appearance.theme === "custom") {
+    style["--custom-theme-color"] = appearance.customThemeColor || DEFAULT_CUSTOM_THEME_COLOR;
+  }
+  return style;
+};
+
+
+export const syncDocumentAppearanceVariables = (appearance: AppSettings["appearance"]) => {
+  const root = document.documentElement;
+  const style = buildShellStyle(appearance) as Record<string, string>;
+  Object.entries(style).forEach(([key, value]) => root.style.setProperty(key, value));
+  root.style.setProperty("--font-sans", "var(--informio-font-family)");
+  root.style.setProperty("--font-mono", "var(--informio-code-font-family)");
 };

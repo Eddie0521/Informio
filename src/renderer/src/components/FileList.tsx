@@ -166,22 +166,22 @@ export const filterFileTree = (nodes: FileTreeNode[], query: string): FileTreeNo
 // Drag-and-drop helpers (shared with tree rendering)
 // ---------------------------------------------------------------------------
 
-const DOCUMENT_DRAG_MIME = "application/x-informio-document-id";
-const FOLDER_DRAG_MIME = "application/x-informio-folder-path";
-const TREE_ITEM_DRAG_MIME = "text/informio-tree-item";
+export const DOCUMENT_DRAG_MIME = "application/x-informio-document-id";
+export const FOLDER_DRAG_MIME = "application/x-informio-folder-path";
+export const TREE_ITEM_DRAG_MIME = "text/informio-tree-item";
 
-const isInternalDocumentDrag = (dataTransfer: DataTransfer | null | undefined) =>
+export const isInternalDocumentDrag = (dataTransfer: DataTransfer | null | undefined) =>
   Boolean(dataTransfer && Array.from(dataTransfer.types).includes(DOCUMENT_DRAG_MIME));
 
-const isInternalTreeDrag = (dataTransfer: DataTransfer | null | undefined) =>
+export const isInternalTreeDrag = (dataTransfer: DataTransfer | null | undefined) =>
   Boolean(
     dataTransfer &&
       Array.from(dataTransfer.types).some((type) => type === TREE_ITEM_DRAG_MIME || type === DOCUMENT_DRAG_MIME || type === FOLDER_DRAG_MIME)
   );
 
-const serializeTreeDragPayload = (payload: TreeDragPayload) => JSON.stringify(payload);
+export const serializeTreeDragPayload = (payload: TreeDragPayload) => JSON.stringify(payload);
 
-const parseTreeDragPayload = (dataTransfer: DataTransfer): TreeDragPayload | null => {
+export const parseTreeDragPayload = (dataTransfer: DataTransfer): TreeDragPayload | null => {
   const raw = dataTransfer.getData(TREE_ITEM_DRAG_MIME);
   if (raw) {
     try {
@@ -203,16 +203,16 @@ const parseTreeDragPayload = (dataTransfer: DataTransfer): TreeDragPayload | nul
   return folderPath ? { type: "folder", path: folderPath } : null;
 };
 
-const isExternalFileDrag = (dataTransfer: DataTransfer | null) =>
+export const isExternalFileDrag = (dataTransfer: DataTransfer | null) =>
   Boolean(dataTransfer?.types.includes("Files") && !isInternalTreeDrag(dataTransfer) && !isInternalDocumentDrag(dataTransfer));
 
-const filePathForFile = (file: File) => {
+export const filePathForFile = (file: File) => {
   const legacyPath = (file as File & { path?: string }).path;
   if (legacyPath) return legacyPath;
   return window.informio.getPathForFile(file);
 };
 
-const dataTransferFilePaths = (dataTransfer: DataTransfer | null) =>
+export const dataTransferFilePaths = (dataTransfer: DataTransfer | null) =>
   Array.from(dataTransfer?.files ?? [])
     .map(filePathForFile)
     .filter(Boolean);

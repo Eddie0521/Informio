@@ -137,7 +137,7 @@ import { PropertiesPanel } from "./PropertiesPanel";
 import { PdfEditorContext as UnifiedPdfEditorContext, PdfViewerSurface as UnifiedPdfViewerSurface } from "../pdfSurface";
 import type { PdfEditorContextValue as UnifiedPdfEditorContextValue } from "../pdfSurface";
 
-function normalizeEditorPanes(
+export function normalizeEditorPanes(
   panes: EditorPaneState[],
   isValidDocument: (documentId: string) => boolean = () => true
 ): EditorPaneState[] {
@@ -153,7 +153,7 @@ function normalizeEditorPanes(
   return normalized;
 }
 
-function markdownToStatusText(markdown: string) {
+export function markdownToStatusText(markdown: string) {
   return markdown
     .replace(/\r\n/g, "\n")
     .replace(/```([\s\S]*?)```/g, (_match, code: string) => code)
@@ -169,22 +169,22 @@ function markdownToStatusText(markdown: string) {
     .replace(/<\/?[^>]+>/g, "");
 }
 
-function countWords(markdown: string) {
+export function countWords(markdown: string) {
   const latinWords = markdown.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?/g)?.length ?? 0;
   const cjkChars = markdown.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
   return latinWords + cjkChars;
 }
 
-function countCharacters(markdown: string) {
+export function countCharacters(markdown: string) {
   return markdownToStatusText(markdown).length;
 }
 
-function countLines(markdown: string) {
+export function countLines(markdown: string) {
   const content = markdownToStatusText(markdown).replace(/\n+$/g, "");
   return content ? content.split("\n").filter((line) => line.trim().length > 0).length : 0;
 }
 
-function getDocumentOutline(markdown: string): OutlineItem[] {
+export function getDocumentOutline(markdown: string): OutlineItem[] {
   return markdown
     .split("\n")
     .map((line, index) => {
@@ -202,7 +202,7 @@ function getDocumentOutline(markdown: string): OutlineItem[] {
     .map((item, order) => ({ ...item, order }));
 }
 
-function buildOutlineTree(items: OutlineItem[]): OutlineTreeItem[] {
+export function buildOutlineTree(items: OutlineItem[]): OutlineTreeItem[] {
   const roots: OutlineTreeItem[] = [];
   const stack: OutlineTreeItem[] = [];
 
@@ -220,7 +220,7 @@ function buildOutlineTree(items: OutlineItem[]): OutlineTreeItem[] {
   return roots;
 }
 
-function formatRelative(value: string) {
+export function formatRelative(value: string) {
   const diff = Date.now() - new Date(value).getTime();
   const minutes = Math.max(1, Math.round(diff / 60000));
   if (minutes < 60) return `edited ${minutes}m ago`;
@@ -229,7 +229,7 @@ function formatRelative(value: string) {
   return "edited yesterday";
 }
 
-function clamp(value: number, min: number, max: number) {
+export function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
@@ -519,7 +519,7 @@ function AssetViewerSurface({ document }: { document: InformioDocument }) {
   );
 }
 
-const sameAgentSelection = (left: AgentSelection | null, right: AgentSelection | null) => {
+export const sameAgentSelection = (left: AgentSelection | null, right: AgentSelection | null) => {
   if (left === right) return true;
   if (!left || !right) return false;
   return (
@@ -786,7 +786,7 @@ const markdownAutoInlineMathMatch = (schema: ProseMirrorSchemaLike, doc: ProseMi
   return found;
 };
 
-const buildEditorTextSearchIndex = (doc: ProseMirrorNode): EditorTextSearchIndex => {
+export const buildEditorTextSearchIndex = (doc: ProseMirrorNode): EditorTextSearchIndex => {
   const chars: string[] = [];
   const positions: number[] = [];
   let firstBlock = true;
@@ -817,7 +817,7 @@ const buildEditorTextSearchIndex = (doc: ProseMirrorNode): EditorTextSearchIndex
   return { text: chars.join(""), positions };
 };
 
-const findNextTextMatch = (text: string, query: string, fromIndex: number) => {
+export const findNextTextMatch = (text: string, query: string, fromIndex: number) => {
   if (!query) return null;
   const firstIndex = text.indexOf(query, Math.max(0, fromIndex));
   if (firstIndex >= 0) return { start: firstIndex, end: firstIndex + query.length };
