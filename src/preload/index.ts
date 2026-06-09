@@ -56,6 +56,7 @@ const api = {
   saveAttachment: (input: SaveAttachmentInput) =>
     ipcRenderer.invoke("app:save-attachment", input) as Promise<SaveAttachmentResult>,
   loadAsset: (path: string) => ipcRenderer.invoke("app:load-asset", path) as Promise<AssetDataResult>,
+  savePdfFile: (path: string, data: ArrayBuffer) => ipcRenderer.invoke("app:save-pdf-file", path, data) as Promise<void>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("app:save-settings", settings) as Promise<AppSettings>,
   getAppInfo: () => ipcRenderer.invoke("app:get-info") as Promise<AppInfo>,
   saveDocuments: (documents: InformioDocument[], activeDocumentId: string) =>

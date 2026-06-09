@@ -93,4 +93,59 @@ describe("normalizeAgentMathMarkdown", () => {
 
     expect(normalizeAgentMathMarkdown(markdown)).toBe(["$$", "K_{old} + V_{new} = 1", "$$"].join("\n"));
   });
+
+  it("unwraps prose accidentally placed inside display math delimiters", () => {
+    const markdown = ["$$", "Looking at the extracted text, I can see this is a paper about MultiWorld.", "$$"].join("\n");
+
+    expect(normalizeAgentMathMarkdown(markdown)).toBe("Looking at the extracted text, I can see this is a paper about MultiWorld.");
+  });
+
+  it("closes malformed display math before prose so body text is not swallowed", () => {
+    const markdown = [
+      "$$\\mathbf{z}_{\\text{cond}} = [\\mathcal{E}(\\mathbf{V});",
+      "\\mathcal{E}(\\mathbf{D})] \\in \\mathbb{R}^{2C_z \\times T_z",
+      "\\times H_z \\times W_z}.",
+      "为匹配扩散模型的潜空间，该联合表示由一个零初始化的特征压缩网络处理。",
+      "\\mathbf{z}'_t = \\mathbf{z}_t + F_{zero}(\\mathbf{z}_{cond}).",
+      "$$",
+      "该公式通过简单地追加额外的潜身份帧自然地扩展。"
+    ].join("\n");
+
+    expect(normalizeAgentMathMarkdown(markdown)).toBe(
+      [
+        "$$",
+        "\\mathbf{z}_{\\text{cond}} = [\\mathcal{E}(\\mathbf{V});",
+        "\\mathcal{E}(\\mathbf{D})] \\in \\mathbb{R}^{2C_z \\times T_z",
+        "\\times H_z \\times W_z}.",
+        "$$",
+        "为匹配扩散模型的潜空间，该联合表示由一个零初始化的特征压缩网络处理。",
+        "$$",
+        "\\mathbf{z}'_t = \\mathbf{z}_t + F_{zero}(\\mathbf{z}_{cond}).",
+        "$$",
+        "该公式通过简单地追加额外的潜身份帧自然地扩展。"
+      ].join("\n")
+    );
+  });
+
+  it("keeps reference links and prose visible after a malformed display block", () => {
+    const markdown = [
+      "$$x_i \\in \\mathbb{R}^{C \\times T}",
+      "从论文参考文献中提取：",
+      "",
+      "- **MultiWorld** [28]: https://arxiv.org/abs/2604.18564",
+      "- **VerseCrafter** [36]: https://arxiv.org/abs/2601.07261"
+    ].join("\n");
+
+    expect(normalizeAgentMathMarkdown(markdown)).toBe(
+      [
+        "$$",
+        "x_i \\in \\mathbb{R}^{C \\times T}",
+        "$$",
+        "从论文参考文献中提取：",
+        "",
+        "- **MultiWorld** [28]: https://arxiv.org/abs/2604.18564",
+        "- **VerseCrafter** [36]: https://arxiv.org/abs/2601.07261"
+      ].join("\n")
+    );
+  });
 });

@@ -433,7 +433,12 @@ const mergeRendererDocuments = (documents: InformioDocument[]) => {
   const merged = appData.documents.map((known) => {
     const doc = rendererDocuments.get(known.id);
     if (!doc) return known;
-    if (!isWritableTextDocument(known)) return withDocumentKind(known);
+    if (!isWritableTextDocument(known)) {
+      return {
+        ...withDocumentKind(known),
+        updatedAt: known.updatedAt
+      };
+    }
     return {
       ...known,
       kind: normalizeDocumentKind(known),
@@ -918,6 +923,11 @@ const loadAssetData = async (path: string): Promise<AssetDataResult> => {
     data,
     mimeType: localFileContentType(path)
   };
+};
+
+const savePdfFile = async (path: string, data: ArrayBuffer): Promise<void> => {
+  if (documentKindFromPath(path) !== "pdf") throw new Error("Only PDF files can be saved this way");
+  await writeFile(path, Buffer.from(data));
 };
 
 const documentFolderForPath = (path: string) => dirname(path);
@@ -2344,6 +2354,8 @@ ipcMain.handle("app:import-external-files", async (_event, input: ImportExternal
 ipcMain.handle("app:save-attachment", async (_event, input: SaveAttachmentInput) => saveAttachment(input));
 
 ipcMain.handle("app:load-asset", async (_event, path: string): Promise<AssetDataResult> => loadAssetData(path));
+
+ipcMain.handle("app:save-pdf-file", async (_event, path: string, data: ArrayBuffer): Promise<void> => savePdfFile(path, data));
 
 ipcMain.handle("app:save-settings", async (_event, settings: AppSettings) => {
   const agentConversations = normalizeAgentConversations(

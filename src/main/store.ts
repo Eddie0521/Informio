@@ -92,7 +92,7 @@ export const defaultSettings: AppSettings = {
   editor: {
     fontSize: 15,
     lineHeight: 1.72,
-    contentWidth: 820,
+    contentWidth: 888,
     spellcheck: true,
     typewriterMode: false,
     assetImportMode: "copy-to-attachment"

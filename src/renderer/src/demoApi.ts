@@ -89,7 +89,7 @@ const demoData: AppData = {
     editor: {
       fontSize: 15,
       lineHeight: 1.62,
-      contentWidth: 820,
+      contentWidth: 888,
       spellcheck: true,
       typewriterMode: false,
       assetImportMode: "copy-to-attachment"
@@ -451,6 +451,7 @@ export function installDemoApi() {
     respondAgentApproval: async () => ({ ok: true }),
     cancelAgentRun: async () => ({ ok: true }),
     loadAsset: async () => ({ data: new ArrayBuffer(0), mimeType: "application/octet-stream" }),
+    savePdfFile: async () => undefined,
     openExternal: async (url: string) => {
       window.open(url, "_blank");
     },

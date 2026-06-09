@@ -127,13 +127,13 @@ export const buildSessionPrompt = (input: AgentSessionInput, options: { includeC
         ].join("\n")
       : input.permissionMode === "default"
         ? [
-            "Permission mode: default.",
+            "Permission mode: approval required.",
             "You may use native Read/Edit/Write/Bash capabilities when the selected agent exposes them.",
             "Keep all file and shell operations scoped to the current Informio workspace.",
             "Ask for approval before commands or file changes that require it."
           ].join("\n")
         : [
-            "Permission mode: full access.",
+            "Permission mode: default.",
             "You may use native Read/Edit/Write/Bash capabilities without workspace restrictions.",
             "You may access files outside the current Informio workspace when needed.",
             "Avoid destructive commands unless explicitly requested."

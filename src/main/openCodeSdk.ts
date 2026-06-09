@@ -15,6 +15,7 @@ import type {
   AgentStreamEvent,
   ToolSummary
 } from "../shared/types.js";
+import { sanitizeAgentResponse, sanitizeAgentTextPart } from "../shared/agentResponse.js";
 import {
   asErrorMessage,
   buildFallbackConversationHistory,
@@ -57,6 +58,7 @@ type ActiveRun = {
   fileChangeAuditsByPartId: Map<string, FileChangeAudit>;
   partKindById: Map<string, string>;
   partTextById: Map<string, string>;
+  partVisibleTextById: Map<string, string>;
   permissionById: Map<string, { toolId: string; sessionId: string; directory: string; kind: "permission" | "question"; answers?: string[][] }>;
   hydratedMessageIds: Set<string>;
   hydratingMessagesById: Map<string, Promise<void>>;
@@ -431,6 +433,7 @@ export class OpenCodeSdkManager {
         fileChangeAuditsByPartId: new Map(),
         partKindById: new Map(),
         partTextById: new Map(),
+        partVisibleTextById: new Map(),
         permissionById: new Map(),
         hydratedMessageIds: new Set(),
         hydratingMessagesById: new Map(),
@@ -452,8 +455,8 @@ export class OpenCodeSdkManager {
                 input.permissionMode === "read_only"
                   ? "Stay read-only. Do not run shell commands or edit files."
                   : input.permissionMode === "default"
-                    ? "Stay within the current workspace. Ask for approval before commands or file edits that need it."
-                    : "You may use full local access when needed, but avoid destructive commands unless explicitly requested.",
+                    ? "Approval is required before commands or file edits that need it. Stay within the current workspace."
+                    : "Use the default local permissions when needed, but avoid destructive commands unless explicitly requested.",
                 "",
                 input.runtimeThreadId ? prompt : withFallbackConversationHistory(prompt, input.conversationHistory)
               ].join("\n")
@@ -816,8 +819,13 @@ export class OpenCodeSdkManager {
         run.onEvent({ type: "thinking_delta", content: delta, kind: "reasoning", itemId: partId });
         return;
       }
-      run.content += delta;
-      run.onEvent({ type: "text_delta", content: delta, kind: "message", itemId: partId });
+      const visibleSnapshot = sanitizeAgentTextPart(snapshot, { trim: false });
+      const previousVisibleText = run.partVisibleTextById.get(partId) ?? "";
+      const visibleDelta = partTextDelta(previousVisibleText, visibleSnapshot);
+      run.partVisibleTextById.set(partId, visibleSnapshot);
+      if (!visibleDelta) return;
+      run.content += visibleDelta;
+      run.onEvent({ type: "text_delta", content: visibleDelta, kind: "message", itemId: partId });
       return;
     }
 
@@ -942,14 +950,20 @@ export class OpenCodeSdkManager {
     if (!partId || field !== "text" || !delta || !partType) return;
 
     const previousText = run.partTextById.get(partId) ?? "";
-    run.partTextById.set(partId, `${previousText}${delta}`);
+    const nextText = `${previousText}${delta}`;
+    run.partTextById.set(partId, nextText);
     if (partType === "reasoning") {
       run.onEvent({ type: "thinking_delta", content: delta, kind: "reasoning", itemId: partId });
       return;
     }
     if (partType === "text") {
-      run.content += delta;
-      run.onEvent({ type: "text_delta", content: delta, kind: "message", itemId: partId });
+      const visibleSnapshot = sanitizeAgentTextPart(nextText, { trim: false });
+      const previousVisibleText = run.partVisibleTextById.get(partId) ?? "";
+      const visibleDelta = partTextDelta(previousVisibleText, visibleSnapshot);
+      run.partVisibleTextById.set(partId, visibleSnapshot);
+      if (!visibleDelta) return;
+      run.content += visibleDelta;
+      run.onEvent({ type: "text_delta", content: visibleDelta, kind: "message", itemId: partId });
     }
   }
 
@@ -1083,7 +1097,7 @@ export class OpenCodeSdkManager {
       run.reject(error);
       return;
     }
-    const content = run.content.trim();
+    const content = sanitizeAgentResponse(run.content);
     run.onEvent({ type: "done", content });
     run.resolve({ content });
   }

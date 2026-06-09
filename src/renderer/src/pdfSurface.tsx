@@ -1,9 +1,15 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { NodeViewWrapper } from "@tiptap/react";
 import { PDFViewer } from "@embedpdf/react-pdf-viewer";
-import type { PDFViewerConfig, PluginRegistry, ThemeColors, ThemeConfig } from "@embedpdf/react-pdf-viewer";
+import type {
+  AnnotationCapability,
+  PDFViewerConfig,
+  PluginRegistry,
+  ThemeColors,
+  ThemeConfig
+} from "@embedpdf/react-pdf-viewer";
 import { MoreHorizontal } from "lucide-react";
 import type { AppSettings, InformioDocument, PdfSelectionRect } from "../../shared/types";
 import { cn } from "./lib/utils";
@@ -130,9 +136,22 @@ type EmbedPdfUiCapability = {
   }) => void;
 };
 
+type EmbedPdfDocumentManagerCapability = {
+  getActiveDocumentId: () => string | null;
+  getDocumentState: (documentId: string) => { status: string } | null;
+  onDocumentOpened: (listener: (document: { id: string }) => void) => () => void;
+};
+
+type EmbedPdfExportCapability = {
+  forDocument: (documentId: string) => {
+    saveAsCopy: () => { toPromise: () => Promise<ArrayBuffer> };
+  };
+};
+
 const EMBEDPDF_TRANSLATE_COMMAND_ID = "informio:translate-selection";
 const EMBEDPDF_TRANSLATE_MENU_ITEM_ID = "informio-translate-selection";
 const EMBEDPDF_ITEM_ATTRIBUTE = "data-epdf-i";
+const PDF_ANNOTATION_SAVE_DELAY_MS = 700;
 
 export const PdfEditorContext = createContext<PdfEditorContextValue | null>(null);
 
@@ -324,7 +343,17 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
   const settings = pdfContext?.settings;
   const surfaceRootRef = useRef<HTMLDivElement | null>(null);
   const lastTranslateAnchorRef = useRef<{ left: number; top: number } | null>(null);
+  const annotationSaveTimerRef = useRef<number | null>(null);
+  const annotationEventUnsubscribeRef = useRef<(() => void) | null>(null);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (annotationSaveTimerRef.current !== null) window.clearTimeout(annotationSaveTimerRef.current);
+      annotationEventUnsubscribeRef.current?.();
+      annotationEventUnsubscribeRef.current = null;
+    };
+  }, []);
 
   const triggerPdfTranslation = useCallback(
     async (registry: PluginRegistry, embedPdfDocumentId: string) => {
@@ -359,6 +388,28 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
     [pdfContext, pdfPath, title]
   );
 
+  const schedulePdfAnnotationPersist = useCallback(
+    (pdfExport: EmbedPdfExportCapability, embedPdfDocumentId: string) => {
+      if (!pdfContext) return;
+      if (annotationSaveTimerRef.current !== null) window.clearTimeout(annotationSaveTimerRef.current);
+      annotationSaveTimerRef.current = window.setTimeout(() => {
+        annotationSaveTimerRef.current = null;
+        pdfExport
+          .forDocument(embedPdfDocumentId)
+          .saveAsCopy()
+          .toPromise()
+          .then((buffer) => {
+            if (!pdfPath) return;
+            return window.informio.savePdfFile(pdfPath, buffer);
+          })
+          .catch((error) => {
+            console.error("Failed to save PDF annotations to source file", error);
+          });
+      }, PDF_ANNOTATION_SAVE_DELAY_MS);
+    },
+    [pdfContext, pdfPath]
+  );
+
   const captureTranslateAnchor = (event: ReactPointerEvent<HTMLDivElement>) => {
     const anchor = pdfTranslationAnchorFromEvent(event);
     if (anchor) {
@@ -374,6 +425,32 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
       const commands = getCapability<EmbedPdfCommandsCapability>(registry, "commands");
       const ui = getCapability<EmbedPdfUiCapability>(registry, "ui");
       const selection = getCapability<EmbedPdfSelectionCapability>(registry, "selection");
+      const annotation = getCapability<AnnotationCapability>(registry, "annotation");
+      const documentManager = getCapability<EmbedPdfDocumentManagerCapability>(registry, "document-manager");
+      const pdfExport = getCapability<EmbedPdfExportCapability>(registry, "export");
+
+      annotationEventUnsubscribeRef.current?.();
+      annotationEventUnsubscribeRef.current = null;
+
+      const setupAnnotationPersistence = (embedPdfDocumentId: string) => {
+        if (!annotation || !pdfExport || !pdfContext) return;
+        annotationEventUnsubscribeRef.current?.();
+        annotationEventUnsubscribeRef.current = null;
+        const annotationScope = annotation.forDocument(embedPdfDocumentId);
+        annotationEventUnsubscribeRef.current = annotationScope.onAnnotationEvent((event) => {
+          if (event.type === "loaded" || !event.committed) return;
+          schedulePdfAnnotationPersist(pdfExport, embedPdfDocumentId);
+        });
+      };
+
+      const activeEmbedPdfDocumentId = documentManager?.getActiveDocumentId();
+      if (activeEmbedPdfDocumentId && documentManager?.getDocumentState(activeEmbedPdfDocumentId)?.status === "loaded") {
+        setupAnnotationPersistence(activeEmbedPdfDocumentId);
+      } else if (documentManager && annotation && pdfExport && pdfContext) {
+        annotationEventUnsubscribeRef.current = documentManager.onDocumentOpened((document) => {
+          setupAnnotationPersistence(document.id);
+        });
+      }
 
       commands?.registerCommand({
         id: EMBEDPDF_TRANSLATE_COMMAND_ID,
@@ -415,7 +492,7 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
         }
       });
     },
-    [triggerPdfTranslation]
+    [pdfContext, schedulePdfAnnotationPersist, triggerPdfTranslation]
   );
 
   const viewerConfig = useMemo<PDFViewerConfig>(

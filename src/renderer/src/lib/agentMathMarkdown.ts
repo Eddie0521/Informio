@@ -7,6 +7,8 @@ const INLINE_CODE_PATTERN = /`[^`\n]*`/g;
 const EXISTING_INLINE_MATH_PATTERN = /\$(?!\$)[^\n$]+?\$(?!\$)/g;
 const DISPLAY_MATH_OPEN_PATTERN = /^\s*(?:\$\$|\\\[)\s*$/;
 const DISPLAY_MATH_CLOSE_PATTERN = /^\s*(?:\$\$|\\\])\s*$/;
+const DISPLAY_MATH_INLINE_OPEN_PATTERN = /^\s*(?:\$\$|\\\[)\s*(\S.*)$/;
+const DISPLAY_MATH_INLINE_CLOSE_PATTERN = /^(.*\S)\s*(?:\$\$|\\\])\s*$/;
 const MATH_SUBSCRIPT_PATTERN = /\b[A-Za-z][A-Za-z0-9]*(?:_\{[^}\n]+\}|_[A-Za-z0-9]+|\^\{[^}\n]+\}|\^[A-Za-z0-9]+)+/g;
 const LATEX_RUN_PATTERN =
   /(?:\b[A-Za-z][A-Za-z0-9]*(?:_\{[^}\n]+\}|_[A-Za-z0-9]+|\^\{[^}\n]+\}|\^[A-Za-z0-9]+)?\s+)?\\(?:in|notin|mathbb|mathbf|mathrm|mathcal|times|cdot|sim|approx|leq|geq|neq|to|rightarrow|leftarrow|Rightarrow|Leftarrow|frac|sqrt|sum|prod|int|log|exp|sin|cos|tan|alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|rho|sigma|tau|phi|psi|omega)\b(?:[A-Za-z0-9_\\^{}\[\]()+\-*/=,.;:|<> \t]*[A-Za-z0-9_\\^{}\]\)])?/g;
@@ -119,8 +121,15 @@ const isDisplayMathContinuationLine = (line: string) => {
   if (MARKDOWN_BLOCK_START_PATTERN.test(trimmed)) return false;
   if (trimmed.includes("`")) return false;
   if (trimmed.length > 240) return false;
-  return LATEX_COMMAND_PATTERN.test(trimmed) || /\\tag\{[^}\n]+}/.test(trimmed) || /^[A-Za-z0-9_{}()[\]+\-*/=,.;:'|<> ]+$/.test(trimmed);
+  return (
+    LATEX_COMMAND_PATTERN.test(trimmed)
+    || /\\tag\{[^}\n]+}/.test(trimmed)
+    || BARE_DISPLAY_MATH_HINT_PATTERN.test(trimmed)
+    || (FORMULA_OPERATOR_PATTERN.test(trimmed) && FORMULA_IDENTIFIER_PATTERN.test(trimmed))
+  );
 };
+
+const isDisplayMathSourceLine = (line: string) => isBareDisplayMathLine(line) || isDisplayMathContinuationLine(line);
 
 const normalizeDisplayMathDelimiters = (line: string) => {
   if (/^\s*\\\[\s*$/.test(line)) return "$$";
@@ -128,11 +137,26 @@ const normalizeDisplayMathDelimiters = (line: string) => {
   return line;
 };
 
+const normalizedDisplayMathBlock = (lines: string[]) => ["$$", ...lines.map(normalizeDisplayMathSourceLine), "$$"];
+
+const splitDisplayMathContent = (lines: string[]) => {
+  const firstProseIndex = lines.findIndex((contentLine) => !isDisplayMathSourceLine(contentLine));
+  return {
+    mathLines: firstProseIndex === -1 ? lines : lines.slice(0, firstProseIndex),
+    proseLines: firstProseIndex === -1 ? [] : lines.slice(firstProseIndex)
+  };
+};
+
+const emitDisplayMathContent = (output: string[], lines: string[]) => {
+  const { mathLines, proseLines } = splitDisplayMathContent(lines);
+  if (mathLines.length > 0) output.push(...normalizedDisplayMathBlock(mathLines));
+  if (proseLines.length > 0) output.push(...normalizeAgentMathBlocks(proseLines.join("\n")).split("\n"));
+};
+
 const normalizeAgentMathBlocks = (markdown: string) => {
   const lines = markdown.split("\n");
   const output: string[] = [];
   let inFence = false;
-  let inDisplayMath = false;
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -147,15 +171,59 @@ const normalizeAgentMathBlocks = (markdown: string) => {
       continue;
     }
 
-    if (DISPLAY_MATH_OPEN_PATTERN.test(line) || DISPLAY_MATH_CLOSE_PATTERN.test(line)) {
-      const delimiter = normalizeDisplayMathDelimiters(line);
-      output.push(delimiter);
-      inDisplayMath = !inDisplayMath;
+    const inlineDisplayOpen = line.match(DISPLAY_MATH_INLINE_OPEN_PATTERN);
+    if (inlineDisplayOpen) {
+      const content = [inlineDisplayOpen[1]];
+      let contentEnd = lines.length;
+
+      const sameLineClose = content[0].match(DISPLAY_MATH_INLINE_CLOSE_PATTERN);
+      if (sameLineClose) {
+        content[0] = sameLineClose[1];
+        contentEnd = index;
+      } else {
+        for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+          const closingLine = lines[cursor];
+          if (DISPLAY_MATH_CLOSE_PATTERN.test(closingLine)) {
+            contentEnd = cursor;
+            break;
+          }
+
+          const inlineClose = closingLine.match(DISPLAY_MATH_INLINE_CLOSE_PATTERN);
+          if (inlineClose) {
+            content.push(inlineClose[1]);
+            contentEnd = cursor;
+            break;
+          }
+
+          content.push(closingLine);
+        }
+      }
+
+      emitDisplayMathContent(output, content);
+      index = contentEnd < lines.length ? contentEnd : lines.length - 1;
       continue;
     }
 
-    if (inDisplayMath) {
-      output.push(normalizeDisplayMathSourceLine(line));
+    if (DISPLAY_MATH_OPEN_PATTERN.test(line) || DISPLAY_MATH_CLOSE_PATTERN.test(line)) {
+      const contentStart = index + 1;
+      let contentEnd = lines.length;
+      for (let cursor = contentStart; cursor < lines.length; cursor += 1) {
+        const closingLine = lines[cursor];
+        if (DISPLAY_MATH_CLOSE_PATTERN.test(closingLine)) {
+          contentEnd = cursor;
+          break;
+        }
+
+        const inlineClose = closingLine.match(DISPLAY_MATH_INLINE_CLOSE_PATTERN);
+        if (inlineClose) {
+          lines[cursor] = inlineClose[1];
+          contentEnd = cursor;
+          break;
+        }
+      }
+
+      emitDisplayMathContent(output, lines.slice(contentStart, contentEnd + (contentEnd < lines.length && !DISPLAY_MATH_CLOSE_PATTERN.test(lines[contentEnd]) ? 1 : 0)));
+      index = contentEnd < lines.length ? contentEnd : lines.length - 1;
       continue;
     }
 
