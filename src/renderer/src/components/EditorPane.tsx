@@ -5,6 +5,7 @@ import { useEditor, EditorContent, ReactNodeViewRenderer, NodeViewWrapper } from
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Fragment as ProseMirrorFragment } from "@tiptap/pm/model";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
+import { TableMap } from "@tiptap/pm/tables";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "@tiptap/markdown";
@@ -232,6 +233,291 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+const mathTextFromSource = (source: string) => {
+  const trimmed = source.trim();
+  const match =
+    trimmed.match(/^\$\$\s*\n?([\s\S]*?)\n?\$\$$/) ??
+    trimmed.match(/^\$(?!\$)([^\n$]+?)\$(?!\$)/);
+  return (match?.[1] ?? source).trim();
+};
+
+const INLINE_MATH_BOUNDARY = String.raw`(?=$|[\s,.;:!?，。；：！？、)\]）】」』》])`;
+const INLINE_MATH_AUTO_REGEX = new RegExp(String.raw`(^|[^\$])\$([^\n$]+?)\$(?!\$)` + INLINE_MATH_BOUNDARY, "g");
+const isSkippableInlineMathContent = (content: string) => !content || /^\d+(?:\.\d+)?$/.test(content);
+
+const detailsFromSource = (source: string) => {
+  const trimmed = source.trim();
+  const calloutMatch = trimmed.match(/^>\s*\[![A-Za-z0-9_-]+]-\s*(.*?)\s*\n?([\s\S]*)$/);
+  if (calloutMatch) {
+    const text = calloutMatch[2]
+      .split("\n")
+      .map((line) => line.replace(/^>\s?/, ""))
+      .join("\n")
+      .trim();
+    return { summary: plainText(calloutMatch[1] || "Summary"), text };
+  }
+  const match = trimmed.match(/^<details(?:\s[^>]*)?>\s*<summary>([\s\S]*?)<\/summary>\s*([\s\S]*?)\s*<\/details>$/i);
+  return { summary: plainText(match?.[1] ?? "Summary"), text: plainText(match?.[2] ?? trimmed) };
+};
+
+const footnoteFromSource = (source: string) => {
+  const match = source.trim().match(/^\[\^([^\]]+)]:\s*([\s\S]*)$/);
+  return { index: match?.[1] ?? "1", text: match?.[2]?.trim() ?? source.trim() };
+};
+
+const calloutFromSource = (source: string) => {
+  const match = source.trim().match(/^>\s*\[!([A-Za-z0-9_-]+)]\s*(.*?)\s*\n?([\s\S]*)$/);
+  const title = (match?.[1] ?? "NOTE").toUpperCase();
+  const firstLine = match?.[2]?.trim();
+  const body = match ? [firstLine, match[3]].filter(Boolean).join("\n") : source;
+  const text = body
+    .split("\n")
+    .map((line) => line.replace(/^>\s?/, ""))
+    .join("\n")
+    .trim();
+  return { title, text };
+};
+
+const codeBlockFromFence = (schema: ProseMirrorSchemaLike, language: string, lines: string[]) =>
+  schema.nodes.codeBlock.create({ language: language.trim() || "plaintext" }, textContentNode(schema, lines.join("\n")));
+
+const isPlainParagraph = (block: MarkdownTextBlock) => block.node.type.name === "paragraph";
+
+const topLevelTextBlocks = (doc: ProseMirrorNodeLike): MarkdownTextBlock[] => {
+  const blocks: MarkdownTextBlock[] = [];
+  doc.forEach((node, offset) => {
+    if (node.isTextblock) {
+      blocks.push({ node, pos: offset, text: node.textContent });
+    }
+  });
+  return blocks;
+};
+
+const selectionToolbarActions: SelectionToolbarAction[] = [
+  { id: "bold", label: "加粗", icon: Bold },
+  { id: "italic", label: "倾斜", icon: Italic },
+  { id: "underline", label: "下划线", icon: UnderlineIcon },
+  { id: "strike", label: "删除线", icon: Strikethrough },
+  { id: "subscript", label: "下标", icon: SubscriptIcon },
+  { id: "superscript", label: "上标", icon: SuperscriptIcon },
+  { id: "highlight", label: "高亮", icon: Highlighter },
+  { id: "link", label: "加链接", icon: Link2 }
+];
+
+const CodeBlockView = ({ editor, getPos, node, selected }: { editor: Editor; getPos: () => number | undefined; node: { attrs: Record<string, unknown>; textContent: string; nodeSize: number }; selected: boolean; updateAttributes: (attrs: Record<string, unknown>) => void }) => {
+  const language = normalizeCodeLanguage(String(node.attrs.language || "plaintext"));
+  const displayLanguage = language === "plaintext" ? "" : language;
+  const [sourceFocused, setSourceFocused] = useState(false);
+  const [draftCode, setDraftCode] = useState(node.textContent);
+  const [draftLanguage, setDraftLanguage] = useState(displayLanguage);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const sourceRef = useRef<HTMLTextAreaElement | null>(null);
+  const previewHtml = highlightedCodeHtml(language, node.textContent);
+
+  const resizeSourceTextarea = () => {
+    const textarea = sourceRef.current;
+    if (!textarea || !sourceFocused) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  };
+
+  useEffect(() => {
+    if (sourceFocused) return;
+    setDraftCode(node.textContent);
+    setDraftLanguage(displayLanguage);
+  }, [displayLanguage, node.textContent, sourceFocused]);
+
+  useLayoutEffect(() => {
+    resizeSourceTextarea();
+  }, [sourceFocused, draftCode]);
+
+  const commitLanguage = (value = draftLanguage) => {
+    const position = getPos();
+    if (typeof position !== "number") return;
+    const nextLanguage = normalizeCodeLanguage(value || "plaintext");
+    if (nextLanguage === language) return;
+    editor.view.dispatch(editor.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, language: nextLanguage }));
+  };
+
+  useEffect(() => {
+    if (!sourceFocused) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const wrapper = wrapperRef.current;
+      if (!wrapper || !(event.target instanceof globalThis.Node) || wrapper.contains(event.target)) return;
+      commitLanguage();
+      setSourceFocused(false);
+      sourceRef.current?.blur();
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [commitLanguage, sourceFocused]);
+
+  const applyCode = (value: string) => {
+    setDraftCode(value);
+    const position = getPos();
+    if (typeof position !== "number") return;
+    const textContent = value ? editor.schema.text(value) : ProseMirrorFragment.empty;
+    const tr = editor.state.tr.replaceWith(position + 1, position + node.nodeSize - 1, textContent);
+    editor.view.dispatch(tr);
+  };
+
+  return (
+    <NodeViewWrapper
+      ref={wrapperRef}
+      className={cn("informio-code-block", sourceFocused && "is-editing")}
+      onMouseDown={(event: ReactMouseEvent) => {
+        if (sourceFocused) return;
+        event.preventDefault();
+        setSourceFocused(true);
+        const position = getPos();
+        if (typeof position === "number") editor.chain().focus().setTextSelection(position + 1).run();
+      }}
+    >
+      <div className={cn("informio-code-source", !sourceFocused && "is-hidden-source-content")}>
+        <textarea
+          ref={sourceRef}
+          value={draftCode}
+          rows={Math.max(3, draftCode.split("\n").length)}
+          contentEditable={false}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          className="informio-code-source-textarea"
+          onMouseDown={(event) => event.stopPropagation()}
+          onFocus={() => setSourceFocused(true)}
+          onBlur={() => {
+            window.setTimeout(() => {
+              const wrapper = wrapperRef.current;
+              const activeElement = document.activeElement;
+              if (wrapper && activeElement && wrapper.contains(activeElement)) return;
+              commitLanguage();
+              setSourceFocused(false);
+            }, 0);
+          }}
+          onChange={(event) => applyCode(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === "Escape") {
+              const position = getPos();
+              if (typeof position !== "number") return;
+              event.preventDefault();
+              setSourceFocused(false);
+              event.currentTarget.blur();
+              editor.chain().focus().setTextSelection(position + node.nodeSize).run();
+            }
+          }}
+        />
+        <input
+          value={draftLanguage}
+          aria-label="代码语言"
+          placeholder="plain text"
+          spellCheck={false}
+          className="informio-code-language-widget"
+          onMouseDown={(event) => event.stopPropagation()}
+          onFocus={() => setSourceFocused(true)}
+          onBlur={() => {
+            window.setTimeout(() => {
+              const wrapper = wrapperRef.current;
+              const activeElement = document.activeElement;
+              if (wrapper && activeElement && wrapper.contains(activeElement)) return;
+              commitLanguage();
+              setSourceFocused(false);
+            }, 0);
+          }}
+          onChange={(event) => setDraftLanguage(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key !== "Escape" && event.key !== "Enter") return;
+            event.preventDefault();
+            if (event.key === "Enter") commitLanguage(event.currentTarget.value);
+            else setDraftLanguage(displayLanguage);
+            setSourceFocused(false);
+            event.currentTarget.blur();
+            const position = getPos();
+            if (typeof position === "number") editor.chain().focus().setTextSelection(position + node.nodeSize).run();
+          }}
+        />
+      </div>
+      {!sourceFocused ? (
+        <pre contentEditable={false}>
+          <code className={`language-${language}`} dangerouslySetInnerHTML={{ __html: previewHtml }} />
+        </pre>
+      ) : null}
+    </NodeViewWrapper>
+  );
+};
+
+function AssetViewerSurface({ document }: { document: InformioDocument }) {
+  const filePath = document.filePath ?? "";
+  const title = document.title || pathBaseName(filePath) || "Asset";
+  const kind = documentKind(document);
+  const [assetUrl, setAssetUrl] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  useEffect(() => {
+    if (!filePath || (kind !== "image" && kind !== "video" && kind !== "audio")) {
+      setAssetUrl("");
+      setLoadFailed(false);
+      setIsLoading(false);
+      return;
+    }
+    let disposed = false;
+    let objectUrl = "";
+    setIsLoading(true);
+    setLoadFailed(false);
+    window.informio.loadAsset(filePath)
+      .then((asset) => {
+        if (disposed) return;
+        objectUrl = URL.createObjectURL(new Blob([asset.data], { type: asset.mimeType }));
+        setAssetUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!disposed) setLoadFailed(true);
+      })
+      .finally(() => {
+        if (!disposed) setIsLoading(false);
+      });
+    return () => {
+      disposed = true;
+      setAssetUrl("");
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [filePath, kind]);
+  const openInSystem = () => {
+    if (filePath) void window.informio.openPath(filePath);
+  };
+
+  if (!filePath) {
+    return <div className="informio-asset-message is-error">文件路径缺失，无法打开。</div>;
+  }
+
+  const isLoadableAsset = kind === "image" || kind === "video" || kind === "audio";
+  const body = isLoadableAsset
+    ? isLoading || (!assetUrl && !loadFailed) ? (
+      <div className="informio-asset-message">正在加载文件...</div>
+    ) : loadFailed ? (
+      <div className="informio-asset-message is-error">文件已识别为{kind === "image" ? "图片" : kind === "video" ? "视频" : "音频"}，但当前文件无法被内置预览器解码。</div>
+    ) : kind === "image" ? (
+      <img className="informio-asset-image" src={assetUrl} alt={title} onError={() => setLoadFailed(true)} />
+    ) : kind === "video" ? (
+      <video className="informio-asset-video" src={assetUrl} controls onError={() => setLoadFailed(true)} />
+    ) : (
+      <audio className="informio-asset-audio" src={assetUrl} controls onError={() => setLoadFailed(true)} />
+    )
+    : <div className="informio-asset-message">当前文件类型无法内置预览。</div>;
+
+  return (
+    <div className="informio-asset-surface">
+      <div className={cn("informio-asset-stage", kind === "audio" && "is-audio")}>{body}</div>
+      <div className="informio-asset-footer">
+        <span>{title}</span>
+        <button type="button" onClick={openInSystem}>
+          在系统中打开
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const sameAgentSelection = (left: AgentSelection | null, right: AgentSelection | null) => {
   if (left === right) return true;
@@ -541,6 +827,13 @@ const findNextTextMatch = (text: string, query: string, fromIndex: number) => {
 
 const documentStructureKey = (documents: InformioDocument[]) =>
   documents.map((doc) => `${doc.id}:${doc.title}:${doc.filePath ?? ""}:${documentKind(doc)}:${doc.collection}:${doc.pinned ? "1" : "0"}`).join("|");
+
+const tableCellPosAt = (tableNode: ProseMirrorNode, tablePos: number, rowIndex: number, columnIndex: number): number | null => {
+  const map = TableMap.get(tableNode);
+  const index = rowIndex * map.width + columnIndex;
+  if (index >= map.map.length) return null;
+  return tablePos + 1 + map.map[index];
+};
 
 const tableColumnWidthInfo = (editor: Editor, table: HTMLTableElement, tablePos: number): TableColumnWidthInfo[] => {
   const tableNode = editor.state.doc.nodeAt(tablePos);
@@ -2440,3 +2733,5 @@ function EditorPane({
     </div>
   );
 }
+
+export default EditorPane;

@@ -76,7 +76,7 @@ const selectionTableFromEditor = (editor: Editor) => {
   return target?.closest("table") as HTMLTableElement | null;
 };
 
-const tableCellPosAt = (table: ProseMirrorNode, tablePos: number, rowIndex: number, columnIndex: number) => {
+export const tableCellPosAt = (table: ProseMirrorNode, tablePos: number, rowIndex: number, columnIndex: number) => {
   const map = TableMap.get(table);
   if (rowIndex < 0 || rowIndex >= map.height || columnIndex < 0 || columnIndex >= map.width) return null;
   const offset = map.map[rowIndex * map.width + columnIndex];
