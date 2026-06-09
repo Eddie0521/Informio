@@ -141,18 +141,3 @@ export const codeLanguageAliases: Record<string, string> = {
 // --- Callout ---
 
 export const calloutTypes = new Set(["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"]);
-
-export const resolveTranslationTarget = (text: string): "zh-CN" | "en" => {
-  const normalized = text.trim();
-  const hasEnglishLetter = /[A-Za-z]/.test(normalized);
-  const hasCjk = /[\u3400-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]/.test(normalized);
-  return hasEnglishLetter && !hasCjk ? "zh-CN" : "en";
-};
-
-export const markSelectionToolbarInteraction = () => {
-  // This is a mutable module-level variable - use the one from InsertToolbar
-};
-
-export const isSelectionToolbarInteractionActive = () => {
-  return false;
-};

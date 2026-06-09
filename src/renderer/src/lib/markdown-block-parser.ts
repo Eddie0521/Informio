@@ -18,7 +18,7 @@ import type {
   InformioDocument,
 } from "../types";
 import { common, createLowlight } from "lowlight";
-import { calloutTypes } from "../constants";
+import { calloutTypes, codeLanguageAliases } from "../constants";
 import { escapeHtml, plainText, normalizeLinkTitle, markdownTitle, wikilinkLabel } from "./markdown";
 import { pathDirName } from "./path";
 import type { LowlightNode } from "../types";
@@ -449,18 +449,7 @@ export const normalizeCodeLanguage = (value: string) => {
   return codeLanguageAliases[normalized] ?? normalized;
 };
 
-export const codeLanguageAliases: Record<string, string> = {
-  text: "plaintext",
-  txt: "plaintext",
-  plain: "plaintext",
-  plaintext: "plaintext",
-  js: "javascript",
-  jsx: "jsx",
-  ts: "typescript",
-  py: "python",
-  sh: "bash",
-  yml: "yaml"
-};
+// codeLanguageAliases is imported from ../constants
 
 export const resolveReferencedDocuments = (message: string, documentLookupIndex: DocumentLookupIndex) => {
   const names = Array.from(message.matchAll(/\[\[([^\]\n|]+)(?:\|[^\]\n]+)?\]\]/g)).map((match) => match[1].trim().toLowerCase());

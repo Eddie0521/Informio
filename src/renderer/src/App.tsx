@@ -334,7 +334,6 @@ import {
   resolveReferencedDocuments,
   normalizeCodeLanguage,
   highlightedCodeHtml,
-  codeLanguageAliases as codeLanguageAliasesFromParser,
   lowlight,
 } from "./lib/markdown-block-parser";
 import type {
@@ -423,7 +422,14 @@ import type {
 import "katex/dist/katex.min.css";
 
 import { getThemeSwatchStyle, isDarkColor, settingsNav, mergeFontOptions, lastToolbarSelectionText, setLastToolbarSelectionText, syncDocumentAppearanceVariables, buildShellStyle, buildConfiguredFontStack, buildUiFontStack } from "./lib/settings-helpers";
-import { resolveTranslationTarget, markSelectionToolbarInteraction, isSelectionToolbarInteractionActive } from "./constants";
+import { InsertToolbar, insertToolbarActions, markSelectionToolbarInteraction, isSelectionToolbarInteractionActive } from "./components/InsertToolbar";
+
+const resolveTranslationTarget = (text: string): "zh-CN" | "en" => {
+  const normalized = text.trim();
+  const hasEnglishLetter = /[A-Za-z]/.test(normalized);
+  const hasCjk = /[㐀-鿿豈-﫿぀-ヿ가-힯]/.test(normalized);
+  return hasEnglishLetter && !hasCjk ? "zh-CN" : "en";
+};
 
 // Components
 import EditorPane from "./components/EditorPane";
@@ -438,7 +444,6 @@ import { SettingsView } from "./components/SettingsView";
 import { DocumentConflictDialog, mergeMarkdownWithBase, buildConflictDiffLines } from "./components/DocumentConflictDialog";
 import { IconButton } from "./components/IconButton";
 import { WindowControls } from "./components/WindowControls";
-import { InsertToolbar, insertToolbarActions } from "./components/InsertToolbar";
 import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { PropertiesList } from "./components/PropertiesList";
 import { normalizeEditorPanes, sameAgentSelection, countWords, countCharacters, countLines, getDocumentOutline, buildOutlineTree, formatRelative, clamp, markdownToStatusText, buildEditorTextSearchIndex, findNextTextMatch } from "./components/EditorPane";
