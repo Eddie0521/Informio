@@ -1354,6 +1354,11 @@ const mergeFinalAgentResponse = (current: string, next?: string) => {
 const selectionToolbarLabel = "翻译";
 const selectionToolbarSafeAreaSelector = "[data-selection-toolbar-safe-area]";
 let selectionToolbarInteractionLockUntil = 0;
+// Most recent drag-selected text inside the selection-translate toolbar.
+// Captured on mouseup inside TranslationResultText so that Cmd+C can still
+// honor a partial drag even when the DOM Selection collapses before the
+// Electron menu accelerator fires `edit:copy`.
+let lastToolbarSelectionText = "";
 
 const resolveTranslationTarget = (text: string): "zh-CN" | "en" => {
   const normalized = text.trim();
@@ -11163,7 +11168,14 @@ function SelectionToolbar({
               <X size={12} />
             </button>
           </div>
-          {response ? <TranslationResultText text={response} /> : null}
+          {response ? (
+            <TranslationResultText
+              text={response}
+              onSelectionChange={(value) => {
+                lastToolbarSelectionText = value;
+              }}
+            />
+          ) : null}
           {error ? (
             <div
               className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 cursor-text select-text"
@@ -11274,10 +11286,17 @@ function SelectionTranslateSection({
           </button>
         ) : null}
       </div>
-      {response ? <TranslationResultText text={response} /> : null}
+      {response ? (
+        <TranslationResultText
+          text={response}
+          onSelectionChange={(value) => {
+            lastToolbarSelectionText = value;
+          }}
+        />
+      ) : null}
       {error ? (
         <div
-          className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 select-text cursor-text"
+          className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 cursor-text select-text"
           onMouseDown={(event) => event.stopPropagation()}
         >
           {error}
@@ -13265,19 +13284,28 @@ export function App() {
       await writeClipboardText(text);
       return;
     }
-    // If the selection (or the focused translation panel) is inside the
-    // selection-translate toolbar, copy the full translation response instead
-    // of relying on document.execCommand("copy"), which is unreliable in
-    // Electron for non-input elements and frequently fails when the DOM
-    // selection collapses between mouseup and the menu accelerator firing.
+    // If the user has a live selection inside the selection-translate
+    // toolbar, prefer that live selection (so partial drags copy only the
+    // dragged range). If the DOM selection has already collapsed between
+    // mouseup and the menu accelerator firing, fall back to the most
+    // recent toolbar selection captured on mouseup. We deliberately avoid
+    // document.execCommand("copy") here — it is unreliable in Electron for
+    // non-input divs and frequently copies an empty string when the
+    // selection has collapsed, leaving the previous clipboard contents
+    // (the original source text) in place.
     const translatePanel = document.querySelector("[data-selection-toolbar-safe-area]");
     const selectionInsideTranslatePanel =
       translatePanel instanceof HTMLElement &&
       selection &&
       !selection.isCollapsed &&
       selectionIsInsideElement(selection, translatePanel);
-    if (selectionInsideTranslatePanel && toolbarTranslate.response.trim()) {
-      await writeClipboardText(toolbarTranslate.response.trim());
+    if (selectionInsideTranslatePanel) {
+      await writeClipboardText(text);
+      return;
+    }
+    const cachedToolbarText = lastToolbarSelectionText;
+    if (cachedToolbarText && translatePanel instanceof HTMLElement) {
+      await writeClipboardText(cachedToolbarText);
       return;
     }
     const copied = document.execCommand("copy");

@@ -8,10 +8,18 @@ import { Copy } from "lucide-react";
  * - 鼠标可正常拖选、Cmd+C 复制（依赖 user-select: text）
  * - 右上角常驻"复制"按钮一键复制整段，避免依赖不可靠的浏览器选区状态
  *   和右键浮动菜单（Electron 渲染层在 capture 监听时序下偶发吞掉 contextmenu）
+ * - onMouseUp 把当前选中文本通过 onSelectionChange 上报给 App，作为 Cmd+C
+ *   路径在 DOM 选区被 React 重渲染提前 collapse 时的兜底
  * - onMouseDown 走 stopPropagation，避免外层 markSelectionToolbarInteraction
  *   误判导致划词工具栏被收起
  */
-export function TranslationResultText({ text }: { text: string }) {
+export function TranslationResultText({
+  text,
+  onSelectionChange
+}: {
+  text: string;
+  onSelectionChange?: (text: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -31,10 +39,18 @@ export function TranslationResultText({ text }: { text: string }) {
 
   const stopMouseDown = (event: ReactMouseEvent<HTMLElement>) => event.stopPropagation();
 
+  const handleMouseUp = () => {
+    if (!onSelectionChange) return;
+    const selection = typeof window !== "undefined" ? window.getSelection() : null;
+    const selected = selection?.isCollapsed ? "" : selection?.toString() ?? "";
+    onSelectionChange(selected);
+  };
+
   return (
     <div
       className="relative max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 pr-14 text-[12px] leading-5 text-[var(--text-main)] cursor-text select-text"
       onMouseDown={stopMouseDown}
+      onMouseUp={handleMouseUp}
     >
       {text}
       <button
