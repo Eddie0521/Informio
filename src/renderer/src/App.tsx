@@ -13293,18 +13293,21 @@ export function App() {
     // non-input divs and frequently copies an empty string when the
     // selection has collapsed, leaving the previous clipboard contents
     // (the original source text) in place.
-    const translatePanel = document.querySelector("[data-selection-toolbar-safe-area]");
-    const selectionInsideTranslatePanel =
-      translatePanel instanceof HTMLElement &&
-      selection &&
-      !selection.isCollapsed &&
-      selectionIsInsideElement(selection, translatePanel);
-    if (selectionInsideTranslatePanel) {
-      await writeClipboardText(text);
-      return;
+    // Multiple elements carry [data-selection-toolbar-safe-area] (insert toolbar,
+    // PDF panels, SelectionToolbar, etc.). querySelector returns the first in DOM
+    // order which is often the insert toolbar — not the one holding the translation
+    // result. Walk all of them so we never miss a live selection inside a toolbar.
+    const safeAreas = document.querySelectorAll("[data-selection-toolbar-safe-area]");
+    if (selection && !selection.isCollapsed) {
+      for (const area of safeAreas) {
+        if (area instanceof HTMLElement && selectionIsInsideElement(selection, area)) {
+          await writeClipboardText(text);
+          return;
+        }
+      }
     }
     const cachedToolbarText = lastToolbarSelectionText;
-    if (cachedToolbarText && translatePanel instanceof HTMLElement) {
+    if (cachedToolbarText && safeAreas.length > 0) {
       await writeClipboardText(cachedToolbarText);
       return;
     }
