@@ -13265,6 +13265,21 @@ export function App() {
       await writeClipboardText(text);
       return;
     }
+    // If the selection (or the focused translation panel) is inside the
+    // selection-translate toolbar, copy the full translation response instead
+    // of relying on document.execCommand("copy"), which is unreliable in
+    // Electron for non-input elements and frequently fails when the DOM
+    // selection collapses between mouseup and the menu accelerator firing.
+    const translatePanel = document.querySelector("[data-selection-toolbar-safe-area]");
+    const selectionInsideTranslatePanel =
+      translatePanel instanceof HTMLElement &&
+      selection &&
+      !selection.isCollapsed &&
+      selectionIsInsideElement(selection, translatePanel);
+    if (selectionInsideTranslatePanel && toolbarTranslate.response.trim()) {
+      await writeClipboardText(toolbarTranslate.response.trim());
+      return;
+    }
     const copied = document.execCommand("copy");
     if (!copied && text.trim()) await writeClipboardText(text);
   };
