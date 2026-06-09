@@ -36,7 +36,6 @@ import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
 import UnderlineExtension from "@tiptap/extension-underline";
 import katex from "katex";
-import { common, createLowlight } from "lowlight";
 import * as YAML from "yaml";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Select from "@radix-ui/react-select";
@@ -153,6 +152,257 @@ import { sanitizeAgentResponse } from "../../shared/agentResponse";
 import { DEFAULT_CUSTOM_THEME_COLOR } from "../../shared/theme";
 import { buildWorkspaceScopeId } from "../../shared/workspaceScope";
 import { cn } from "./lib/utils";
+import {
+  appIconUrl,
+  themeOptions,
+  apiProviderOptions,
+  defaultApiSettings,
+  CHINESE_FONT_FALLBACK,
+  ENGLISH_FONT_FALLBACK,
+  CODE_FONT_FALLBACK,
+  connectionTone,
+  connectionLabel,
+  permissionModeLabel,
+  agentPermissionModes,
+  sessionStatusLabel,
+  processCategoryLabel,
+  selectionToolbarLabel,
+  selectionToolbarSafeAreaSelector,
+  LEFT_PANEL_MIN_WIDTH,
+  LEFT_PANEL_MAX_WIDTH,
+  RIGHT_PANEL_MIN_WIDTH,
+  RIGHT_PANEL_MAX_WIDTH,
+  EDITOR_CONTENT_MIN_WIDTH,
+  EDITOR_CONTENT_MAX_WIDTH,
+  CHAT_PANEL_FONT_MIN,
+  CHAT_PANEL_FONT_MAX,
+  TABLE_CELL_MIN_WIDTH,
+  TABLE_EDGE_COMPRESS_MIN_WIDTH,
+  TABLE_CONTROL_SIZE,
+  TABLE_CONTEXT_OFFSET,
+  TABLE_EDGE_HIT_DISTANCE,
+  TABLE_HEADER_STRIP_SIZE,
+  TABLE_TOOLBAR_HEIGHT,
+  TABLE_ROW_MIN_HEIGHT,
+  INFORMIO_SECRET_TAG,
+  SECRET_ITERATIONS,
+  SECRET_ALGORITHM,
+  SECRET_KDF,
+  imageExtensions,
+  pdfExtensions,
+  videoExtensions,
+  audioExtensions,
+  mediaExtensions,
+  codeLanguageAliases,
+  calloutTypes,
+} from "./constants";
+import {
+  shortcutDisplayPlatform,
+  isWindowsPlatform,
+  normalizePath,
+  normalizePathForCompare,
+  pathBaseName,
+  pathDirName,
+  pathExtName,
+  isAbsoluteAssetPath,
+  hasRenderableScheme,
+  safeDecodeUri,
+  encodeLocalFilePath,
+  localFileUrlForPath,
+  joinAssetPath,
+  pathContains,
+  relativePath,
+} from "./lib/path";
+import {
+  writeClipboardText,
+  selectionIsInsideElement,
+} from "./lib/clipboard";
+import {
+  assetPathPartFromSrc,
+  assetExtensionFromSrc,
+  resolveMarkdownAssetSrc,
+  resolveMarkdownAssetPath,
+  loadLocalAssetObjectUrl,
+} from "./lib/asset-url";
+import {
+  documentKindFromPath,
+  documentKind,
+  isImageFile,
+  isPdfFile,
+  isVideoFile,
+  isAudioFile,
+  mediaKindFromSrc,
+  isEmbeddableAssetFile,
+  isEmbeddableAssetDocument,
+  isWritableTextDocument,
+  isMarkdownDocument,
+  imageExtensionFromMimeType,
+  fileKindFromName,
+  mimeTypeFromName,
+} from "./lib/file-type";
+import {
+  documentSecretPassphraseCache,
+  bytesToBase64,
+  base64ToBytes,
+  normalizeSecretBytes,
+  secretAttrsFromElement,
+  secretAttrsAreValid,
+  renderSecretMarkdown,
+  importSecretKeyMaterial,
+  deriveSecretKey,
+  encryptSecretMarkdown,
+  decryptSecretMarkdown,
+  serializeSelectionFragmentToMarkdown,
+  parseInlineMarkdownContent,
+  selectionShouldUseBlockSecret,
+  selectionContainsSecretNode,
+  findFirstValidSecretInDocument,
+  documentContainsSecretNode,
+} from "./lib/encryption";
+import {
+  escapeHtml,
+  normalizeTableText,
+  renderImageMarkdown,
+  markdownTitle,
+  normalizeLinkTitle,
+  wikilinkLabel,
+  parseWikiLinkBody,
+  wikiLinkText,
+  replaceWikiLinkTargets,
+  plainText,
+  parseHtmlAttr,
+  renderTableToGfm,
+  renderJsonNodeToHtml,
+  tableJsonUsesRichMarkdown,
+  renderRichTableToMarkdown,
+} from "./lib/markdown";
+import {
+  parseFrontmatter,
+  stringifyFrontmatter,
+  composeMarkdownWithFrontmatter,
+} from "./lib/frontmatter";
+import {
+  modelLabel,
+  defaultApiBaseUrl,
+  isBuiltinApiBaseUrl,
+  normalizeApiSettings,
+  buildWorkspaceLabel,
+  createConversationTitle,
+  splitCodexFinalResponse,
+  appendWithParagraphBreak,
+  attachmentsMarkdown,
+  buildSessionMessagesFromConversation,
+  buildConversationMessagesFromSession,
+  upsertSessionAction,
+  updateSessionActionByToolId,
+  classifyAgentAction,
+  summarizeAgentProcess,
+  didAgentEditFiles,
+  mergeFinalAgentResponse,
+  isCancelledAgentMessage,
+  formatProcessDuration,
+  formatConversationUpdatedAt,
+} from "./lib/agent";
+import {
+  sourceText,
+  sourceContent,
+  nodeSourceAttr,
+  jsonSourceText,
+  jsonTextContent,
+  defaultBlockSource,
+  sourceBackedBlockContent,
+  sourceBackedBlockJson,
+  chartLabels,
+  textContentNode,
+  sourceBackedNode,
+  parseMarkdownTableRow,
+  isExplicitMarkdownTableRow,
+  isMarkdownTableSeparator,
+  markdownTableAlign,
+  createTableFromMarkdown,
+  codeBlockRawMarkdown,
+  parseCodeBlockRawMarkdown,
+  codeBlockEditableRange,
+  replaceNodeWithPlainText,
+  replaceSourceBlockWithParagraph,
+  isDiscardableSourceRemainder,
+  markdownOffsetForLine,
+  resolveWikiLink,
+  buildDocumentLookupIndex,
+  collectWikiSuggestions,
+  findDocumentForActionPath,
+  resolveReferencedDocuments,
+  normalizeCodeLanguage,
+  highlightedCodeHtml,
+  codeLanguageAliases as codeLanguageAliasesFromParser,
+  lowlight,
+} from "./lib/markdown-block-parser";
+import type {
+  SidebarMode,
+  OutlineItem,
+  OutlineTreeItem,
+  OutlineJumpRequest,
+  PropertyValueGroup,
+  PropertyGroup,
+  AgentSelection,
+  ApiCheckState,
+  AgentSessionMessage,
+  EditorPaneState,
+  EditorViewMode,
+  SplitDirection,
+  EditorDropZone,
+  HorizontalCellAlign,
+  VerticalCellAlign,
+  TreeDragPayload,
+  AgentProcessCategory,
+  ToolbarIcon,
+  SelectionToolbarAction,
+  InsertToolbarAction,
+  CommandPaletteScope,
+  CommandPaletteItem,
+  IndexedDocument,
+  WikiTargetBucket,
+  WikiSuggestionItem,
+  DocumentLookupIndex,
+  FrontmatterParseResult,
+  MarkdownTokenLike,
+  MarkdownHelperLike,
+  SecretKind,
+  EncryptedSecretAttrs,
+  SecretDecryptRequest,
+  EncryptedTextOptions,
+  WikiLinkOptions,
+  MarkdownParserEditor,
+  MarkdownAutoBlockMatch,
+  ProseMirrorNodeLike,
+  ProseMirrorSchemaLike,
+  MarkdownTextBlock,
+  FileTreeNode,
+  FileContextTarget,
+  FileContextMenuState,
+  ProjectContextMenuState,
+  BlankContextMenuState,
+  InlineRenameState,
+  PendingCreationState,
+  TreeDropTarget,
+  LinkRequest,
+  ImageRequest,
+  EditorTextSearchIndex,
+  FindMatch,
+  SecretPromptRequest,
+  PendingSecretAction,
+  ConflictDiffLine,
+  MarkdownDiffHunk,
+  TableOverlayState,
+  TableSelectionShape,
+  TableColumnWidthInfo,
+  TableHoverTarget,
+  ProviderExecutionFlowProps,
+  NodeViewPositionGetter,
+  NodeViewNode,
+  LowlightNode,
+  UnifiedToolbarTranslateState,
+} from "./types";
 import { TranslationResultText } from "./components/TranslationResultText";
 import {
   clipboardPlainTextForPaste,
@@ -168,18 +418,9 @@ import {
   PdfViewerSurface as UnifiedPdfViewerSurface
 } from "./pdfSurface";
 import type {
-  PdfEditorContextValue as UnifiedPdfEditorContextValue,
-  ToolbarTranslateState as UnifiedToolbarTranslateState
+  PdfEditorContextValue as UnifiedPdfEditorContextValue
 } from "./pdfSurface";
 import "katex/dist/katex.min.css";
-const appIconUrl = "/icon.png";
-
-const themeOptions: Array<{ id: ThemeName; label: string; surface: string; accent: string }> = [
-  { id: "white", label: "白色", surface: "#ffffff", accent: "#059669" },
-  { id: "paper", label: "纸张", surface: "#f7f7f2", accent: "#159447" },
-  { id: "night", label: "夜间", surface: "#1b2026", accent: "#5ad08a" },
-  { id: "custom", label: "自定义", surface: "#ffffff", accent: DEFAULT_CUSTOM_THEME_COLOR }
-];
 
 const getThemeSwatchStyle = (themeId: ThemeName, customThemeColor: string): CSSProperties => {
   const option = themeOptions.find((item) => item.id === themeId) ?? themeOptions[0];
@@ -208,26 +449,6 @@ const settingsNav = [
   { id: "shortcuts", label: "快捷键", icon: Keyboard },
   { id: "about", label: "关于", icon: Info }
 ] as const;
-
-const apiProviderOptions: Array<{ id: ApiProviderKind; label: string; description: string }> = [
-  { id: "openai-compatible", label: "OpenAI-Compatible", description: "用于兼容 OpenAI Chat Completions 的服务。" },
-  { id: "anthropic", label: "Anthropic", description: "用于 Anthropic Messages API。" }
-];
-
-const defaultApiSettings = {
-  provider: "openai-compatible" as ApiProviderKind,
-  baseUrl: "https://api.openai.com/v1",
-  apiKey: "",
-  model: "",
-  models: [] as AgentModel[]
-};
-
-const CHINESE_FONT_FALLBACK =
-  `"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif`;
-const ENGLISH_FONT_FALLBACK =
-  `"Helvetica Neue", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
-const CODE_FONT_FALLBACK =
-  `"SF Mono", "Cascadia Mono", "Roboto Mono", ui-monospace, monospace`;
 
 const quoteFontFamily = (family: string) => `"${family.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
@@ -294,102 +515,6 @@ const syncDocumentAppearanceVariables = (appearance: AppSettings["appearance"]) 
   root.style.setProperty("--font-mono", "var(--informio-code-font-family)");
 };
 
-const connectionTone: Record<AgentConnection["status"], string> = {
-  idle: "bg-slate-300",
-  connecting: "bg-amber-400",
-  connected: "bg-emerald-500",
-  error: "bg-red-500"
-};
-
-const connectionLabel: Record<AgentConnection["status"], string> = {
-  idle: "未检测",
-  connecting: "检测中",
-  connected: "可用",
-  error: "不可用"
-};
-
-const modelLabel = (models: AgentModel[], id?: string) => {
-  const model = models.find((item) => item.id === id);
-  return model?.label || id || "先检测模型";
-};
-
-const defaultApiBaseUrl = (provider: ApiProviderKind) =>
-  provider === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1";
-
-const isBuiltinApiBaseUrl = (value: string) => {
-  const normalized = value.trim().replace(/\/+$/, "");
-  return normalized === "https://api.openai.com/v1" || normalized === "https://api.anthropic.com";
-};
-
-const LEFT_PANEL_MIN_WIDTH = 161;
-const LEFT_PANEL_MAX_WIDTH = 380;
-const RIGHT_PANEL_MIN_WIDTH = 225;
-const RIGHT_PANEL_MAX_WIDTH = 520;
-const EDITOR_CONTENT_MIN_WIDTH = 410;
-const EDITOR_CONTENT_MAX_WIDTH = 1100;
-const CHAT_PANEL_FONT_MIN = 10;
-const CHAT_PANEL_FONT_MAX = 18;
-const TABLE_CELL_MIN_WIDTH = 88;
-const TABLE_EDGE_COMPRESS_MIN_WIDTH = 40;
-const TABLE_CONTROL_SIZE = 24;
-const TABLE_CONTEXT_OFFSET = 12;
-const TABLE_EDGE_HIT_DISTANCE = 14;
-const TABLE_HEADER_STRIP_SIZE = 24;
-const TABLE_TOOLBAR_HEIGHT = 30;
-const TABLE_ROW_MIN_HEIGHT = 36;
-const INFORMIO_SECRET_TAG = "informio-secret";
-const SECRET_ITERATIONS = 210000;
-const SECRET_ALGORITHM = "aes-gcm";
-const SECRET_KDF = "pbkdf2-sha256";
-
-type SidebarMode = "files" | "outline" | "properties";
-
-type OutlineItem = {
-  id: string;
-  title: string;
-  level: number;
-  line: number;
-  order: number;
-};
-
-type OutlineTreeItem = OutlineItem & {
-  children: OutlineTreeItem[];
-};
-
-type OutlineJumpRequest = {
-  documentId: string;
-  itemId: string;
-  order: number;
-  line: number;
-  title: string;
-  nonce: number;
-};
-
-type PropertyValueGroup = {
-  value: string;
-  files: InformioDocument[];
-};
-
-type PropertyGroup = {
-  name: string;
-  values: PropertyValueGroup[];
-};
-
-type AgentSelection = {
-  kind: "markdown" | "pdf";
-  documentId: string;
-  from: number;
-  to: number;
-  text: string;
-  markdown: string;
-  title?: string;
-  filePath?: string;
-  page?: number;
-  rects?: PdfSelectionRect[];
-  overlayLeft?: number;
-  overlayTop?: number;
-};
-
 const toolbarTranslateAnchorFromSelection = (selection: AgentSelection): UnifiedToolbarTranslateState["anchor"] => {
   if (selection.overlayLeft === undefined || selection.overlayTop === undefined) return undefined;
   return {
@@ -398,18 +523,6 @@ const toolbarTranslateAnchorFromSelection = (selection: AgentSelection): Unified
     top: selection.overlayTop
   };
 };
-
-type ApiCheckState = {
-  status: "idle" | "loading" | "done" | "error";
-  message?: string;
-  error?: string;
-};
-
-const normalizeApiSettings = (api: AppSettings["api"] | undefined) => ({
-  ...defaultApiSettings,
-  ...api,
-  models: api?.models ?? defaultApiSettings.models
-});
 
 const samePdfSelectionRects = (left: PdfSelectionRect[] | undefined, right: PdfSelectionRect[] | undefined) => {
   const leftRects = left ?? [];
@@ -445,270 +558,6 @@ const sameAgentSelection = (left: AgentSelection | null, right: AgentSelection |
   );
 };
 
-type AgentSessionMessage = {
-  id: string;
-  userMessage: string;
-  permissionMode: AgentPermissionMode;
-  status: AgentSessionStatus;
-  reasoning: string;
-  response: string;
-  actions: AgentSessionAction[];
-  error?: string;
-  hasSelection: boolean;
-  submittedAt: number;
-  completedAt?: number;
-};
-
-const buildWorkspaceLabel = (data: Pick<AppData, "projects" | "workspacePath">) => {
-  const titles = (data.projects ?? []).map((project) => project.title?.trim() || project.path).filter(Boolean);
-  if (titles.length) return titles.join(" · ");
-  if (data.workspacePath) {
-    const normalized = data.workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
-    return normalized.split("/").filter(Boolean).at(-1) || normalized;
-  }
-  return "未命名工作区";
-};
-
-const createConversationTitle = (text: string) => {
-  const singleLine = text.replace(/\s+/g, " ").trim();
-  return singleLine.length > 36 ? `${singleLine.slice(0, 36)}…` : singleLine || "新会话";
-};
-
-const codexFinalResponseBoundaryPattern = /(^|\n)(结论(?:先行)?\s*[:：]|Conclusion\s*[:：])/i;
-
-const splitCodexFinalResponse = (content: string) => {
-  const match = content.match(codexFinalResponseBoundaryPattern);
-  if (!match || match.index === undefined) return null;
-  const boundaryIndex = match.index + match[1].length;
-  const process = content.slice(0, boundaryIndex).trim();
-  const response = content.slice(boundaryIndex).trimStart();
-  return { process, response };
-};
-
-const appendWithParagraphBreak = (current: string, next: string) => {
-  const cleanNext = next.trim();
-  if (!cleanNext) return current;
-  const cleanCurrent = current.trimEnd();
-  if (!cleanCurrent) return cleanNext;
-  if (cleanCurrent.endsWith(cleanNext)) return cleanCurrent;
-  return `${cleanCurrent}\n\n${cleanNext}`;
-};
-
-const writeClipboardText = async (text: string) => {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Fall back for Electron/browser contexts where the async clipboard is unavailable.
-    }
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  textarea.style.top = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  textarea.remove();
-};
-
-const selectionIsInsideElement = (selection: Selection, container: HTMLElement) => {
-  if (!selection.rangeCount || selection.isCollapsed || !selection.toString()) return false;
-  if (selection.anchorNode && container.contains(selection.anchorNode)) return true;
-  if (selection.focusNode && container.contains(selection.focusNode)) return true;
-  for (let index = 0; index < selection.rangeCount; index += 1) {
-    const range = selection.getRangeAt(index);
-    const ancestor = range.commonAncestorContainer;
-    const node = ancestor.nodeType === globalThis.Node.ELEMENT_NODE ? ancestor : ancestor.parentElement;
-    if (node && container.contains(node)) return true;
-    if (range.intersectsNode(container)) return true;
-  }
-  return false;
-};
-
-const revealInFolderLabel = () =>
-  typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
-    ? "在 Finder 中打开"
-    : "在文件夹中打开";
-
-const isExternalFileDrag = (dataTransfer: DataTransfer | null) =>
-  Boolean(dataTransfer?.types.includes("Files") && !isInternalTreeDrag(dataTransfer) && !isInternalDocumentDrag(dataTransfer));
-
-const filePathForFile = (file: File) => {
-  const legacyPath = (file as File & { path?: string }).path;
-  if (legacyPath) return legacyPath;
-  return window.informio.getPathForFile(file);
-};
-
-const dataTransferFilePaths = (dataTransfer: DataTransfer | null) =>
-  Array.from(dataTransfer?.files ?? [])
-    .map(filePathForFile)
-    .filter(Boolean);
-
-const fileKindFromName = (name: string): AgentMessageAttachment["kind"] =>
-  /\.(png|jpe?g|gif|webp|svg)$/i.test(name) ? "image" : "file";
-
-const mimeTypeFromName = (name: string) => {
-  const extension = pathExtName(name).toLowerCase();
-  if (extension === ".png") return "image/png";
-  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
-  if (extension === ".gif") return "image/gif";
-  if (extension === ".webp") return "image/webp";
-  if (extension === ".svg") return "image/svg+xml";
-  if (extension === ".pdf") return "application/pdf";
-  if (extension === ".md" || extension === ".markdown") return "text/markdown";
-  if (extension === ".txt") return "text/plain";
-  return undefined;
-};
-
-const attachmentsMarkdown = (attachments: AgentMessageAttachment[]) => {
-  if (!attachments.length) return "";
-  const lines = attachments.map((attachment) => {
-    const label = attachment.kind === "image" ? "image" : "file";
-    const mimeType = attachment.mimeType ? `, mime: ${attachment.mimeType}` : "";
-    return `- ${attachment.name} (${label}${mimeType}): ${attachment.path}`;
-  });
-  return `\n\nAttachments:\n${lines.join("\n")}`;
-};
-
-const buildSessionMessagesFromConversation = (conversation: AgentConversation | null): AgentSessionMessage[] => {
-  if (!conversation) return [];
-  const messages: AgentSessionMessage[] = [];
-  let pendingUser: AgentConversationMessage | null = null;
-
-  for (const message of conversation.messages) {
-    if (message.role === "user") {
-      if (pendingUser) {
-        messages.push({
-          id: pendingUser.id,
-          userMessage: pendingUser.content,
-          permissionMode: pendingUser.permissionMode,
-          status: "done",
-          reasoning: "",
-          response: "",
-          actions: [],
-          hasSelection: false,
-          submittedAt: Date.parse(pendingUser.createdAt) || Date.now(),
-          completedAt: Date.parse(pendingUser.createdAt) || Date.now()
-        });
-      }
-      pendingUser = message;
-      continue;
-    }
-
-    const submittedAt = pendingUser ? Date.parse(pendingUser.createdAt) || Date.now() : Date.parse(message.createdAt) || Date.now();
-    const completedAt = Date.parse(message.createdAt) || submittedAt;
-    messages.push({
-      id: pendingUser?.id || `${conversation.id}-${message.id}`,
-      userMessage: pendingUser?.content ?? "",
-      permissionMode: pendingUser?.permissionMode ?? message.permissionMode,
-      status: message.status === "error" ? "error" : "done",
-      reasoning: message.reasoning ?? "",
-      response: message.content,
-      actions: message.actions ?? [],
-      error: message.errorMessage,
-      hasSelection: false,
-      submittedAt,
-      completedAt
-    });
-    pendingUser = null;
-  }
-
-  const lastPendingUser = pendingUser;
-  if (lastPendingUser) {
-    messages.push({
-      id: lastPendingUser.id,
-      userMessage: lastPendingUser.content,
-      permissionMode: lastPendingUser.permissionMode,
-      status: "done",
-      reasoning: "",
-      response: "",
-      actions: [],
-      hasSelection: false,
-      submittedAt: Date.parse(lastPendingUser.createdAt) || Date.now(),
-      completedAt: Date.parse(lastPendingUser.createdAt) || Date.now()
-    });
-  }
-
-  return messages;
-};
-
-const buildConversationMessagesFromSession = (messages: AgentSessionMessage[]): AgentConversationMessage[] =>
-  messages.flatMap((message) => {
-    const createdAt = new Date(message.submittedAt).toISOString();
-    const items: AgentConversationMessage[] = [
-      {
-        id: `${message.id}-user`,
-        role: "user",
-        content: message.userMessage,
-        createdAt,
-        permissionMode: message.permissionMode,
-        status: "done"
-      }
-    ];
-
-    if (message.response || message.error) {
-      items.push({
-        id: `${message.id}-assistant`,
-        role: "assistant",
-        content: message.response,
-        createdAt: new Date(message.completedAt ?? message.submittedAt).toISOString(),
-        permissionMode: message.permissionMode,
-        status: message.status === "error" ? "error" : "done",
-        errorMessage: message.error,
-        reasoning: message.reasoning || undefined,
-        actions: message.actions.length ? message.actions : undefined
-      });
-    }
-
-    return items;
-  });
-
-const upsertSessionAction = (actions: AgentSessionAction[], nextAction: AgentSessionAction, approvalId?: string) => {
-  const index = actions.findIndex((action) =>
-    (approvalId && action.approval?.id === approvalId) || action.toolId === nextAction.toolId
-  );
-  if (index === -1) return [...actions, nextAction];
-  const current = actions[index];
-  const merged: AgentSessionAction = {
-    ...current,
-    ...nextAction,
-    approval: nextAction.approval ?? current.approval,
-    input: nextAction.input ?? current.input,
-    output: nextAction.output ?? current.output,
-    path: nextAction.path ?? current.path
-  };
-  const next = actions.slice();
-  next[index] = merged;
-  return next;
-};
-
-const updateSessionActionByToolId = (
-  actions: AgentSessionAction[],
-  toolId: string,
-  updater: (action: AgentSessionAction) => AgentSessionAction
-) => {
-  const index = actions.findIndex((action) => action.toolId === toolId);
-  if (index === -1) return actions;
-  const next = actions.slice();
-  next[index] = updater(actions[index]);
-  return next;
-};
-
-type EditorPaneState = {
-  id: "main" | "secondary";
-  documentId: string;
-};
-
-type EditorViewMode = "rich-text" | "source";
-
-type SplitDirection = "horizontal" | "vertical";
-
-type EditorDropZone = "left" | "right" | "top" | "bottom";
-
 const ResizableTableRow = TableRow.extend({
   addAttributes() {
     return {
@@ -732,9 +581,6 @@ const ResizableTableRow = TableRow.extend({
     };
   }
 });
-
-type HorizontalCellAlign = "left" | "center" | "right";
-type VerticalCellAlign = "top" | "middle" | "bottom";
 
 const parseHorizontalCellAlign = (element: HTMLElement) => {
   const raw = (element.getAttribute("align") || element.style.textAlign || "").trim().toLowerCase();
@@ -789,24 +635,6 @@ const AlignableTableHeader = TableHeader.extend({
     };
   }
 });
-
-const escapeHtml = (value: string) =>
-  value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-
-const normalizeTableText = (value: string) => value.replace(/\s+/g, " ").trim();
-
-const renderImageMarkdown = (attrs: { src?: string | null; alt?: string | null; title?: string | null; width?: number | string | null }) => {
-  const src = attrs.src ?? "";
-  const alt = attrs.alt ?? "";
-  const title = attrs.title ?? "";
-
-  return title ? `![${alt}](${src} "${title}")` : `![${alt}](${src})`;
-};
 
 const ResizableImage = Image.extend({
   markdownTokenizer: {
@@ -948,156 +776,6 @@ const ResizableImage = Image.extend({
   }
 } as never);
 
-const renderTableToGfm = (node: JSONContent, h: MarkdownRendererHelpers) => {
-  if (!node.content?.length) return "";
-
-  const rows: Array<Array<{ text: string; isHeader: boolean; align: string | null }>> = [];
-  node.content.forEach((rowNode) => {
-    const cells: Array<{ text: string; isHeader: boolean; align: string | null }> = [];
-    rowNode.content?.forEach((cellNode) => {
-      const raw = cellNode.content ? h.renderChildren(cellNode.content as JSONContent[]) : "";
-      cells.push({
-        text: normalizeTableText(raw),
-        isHeader: cellNode.type === "tableHeader",
-        align: typeof cellNode.attrs?.align === "string" ? cellNode.attrs.align : null
-      });
-    });
-    rows.push(cells);
-  });
-
-  const columnCount = rows.reduce((max, row) => Math.max(max, row.length), 0);
-  if (!columnCount) return "";
-
-  const colWidths = new Array(columnCount).fill(3);
-  rows.forEach((row) => {
-    for (let index = 0; index < columnCount; index += 1) {
-      const text = row[index]?.text ?? "";
-      colWidths[index] = Math.max(colWidths[index], text.length, 3);
-    }
-  });
-
-  const hasHeader = rows[0]?.some((cell) => cell.isHeader) ?? false;
-  const pad = (text: string, width: number) => `${text}${" ".repeat(Math.max(0, width - text.length))}`;
-  const alignments = new Array<string | null>(columnCount).fill(null);
-  rows.forEach((row) => {
-    for (let index = 0; index < columnCount; index += 1) {
-      if (!alignments[index] && row[index]?.align) alignments[index] = row[index].align;
-    }
-  });
-
-  const headerTexts = new Array(columnCount)
-    .fill("")
-    .map((_, index) => (hasHeader ? rows[0]?.[index]?.text ?? "" : ""));
-
-  let output = "\n";
-  output += `| ${headerTexts.map((text, index) => pad(text, colWidths[index])).join(" | ")} |\n`;
-  output += `| ${colWidths
-    .map((width, index) => {
-      const dashes = "-".repeat(Math.max(3, width));
-      if (alignments[index] === "left") return `:${dashes}`;
-      if (alignments[index] === "right") return `${dashes}:`;
-      if (alignments[index] === "center") return `:${dashes}:`;
-      return dashes;
-    })
-    .join(" | ")} |\n`;
-
-  const bodyRows = hasHeader ? rows.slice(1) : rows;
-  bodyRows.forEach((row) => {
-    output += `| ${new Array(columnCount)
-      .fill("")
-      .map((_, index) => pad(row[index]?.text ?? "", colWidths[index]))
-      .join(" | ")} |\n`;
-  });
-
-  return output;
-};
-
-const renderJsonNodeToHtml = (node: JSONContent): string => {
-  if (node.type === "text") {
-    let text = escapeHtml(node.text ?? "");
-    (node.marks ?? []).forEach((mark) => {
-      if (mark.type === "bold") text = `<strong>${text}</strong>`;
-      else if (mark.type === "italic") text = `<em>${text}</em>`;
-      else if (mark.type === "strike") text = `<s>${text}</s>`;
-      else if (mark.type === "code") text = `<code>${text}</code>`;
-      else if (mark.type === "link" && mark.attrs?.href) {
-        text = `<a href="${escapeHtml(String(mark.attrs.href))}">${text}</a>`;
-      }
-    });
-    return text;
-  }
-
-  const children = (node.content ?? []).map(renderJsonNodeToHtml).join("");
-  switch (node.type) {
-    case "paragraph":
-      return `<p>${children}</p>`;
-    case "hardBreak":
-      return "<br />";
-    case "bulletList":
-      return `<ul>${children}</ul>`;
-    case "orderedList":
-      return `<ol>${children}</ol>`;
-    case "listItem":
-      return `<li>${children}</li>`;
-    case "blockquote":
-      return `<blockquote>${children}</blockquote>`;
-    case "heading": {
-      const level = Math.max(1, Math.min(6, Number(node.attrs?.level) || 1));
-      return `<h${level}>${children}</h${level}>`;
-    }
-    case "codeBlock":
-      return `<pre><code>${escapeHtml(node.content?.map((child) => child.text ?? "").join("") ?? "")}</code></pre>`;
-    default:
-      return children;
-  }
-};
-
-const tableJsonUsesRichMarkdown = (node: JSONContent) =>
-  (node.content ?? []).some((row) =>
-    (Number(row.attrs?.rowHeight) || 0) > 0
-    || (row.content ?? []).some((cell) => {
-      const colspan = Number(cell.attrs?.colspan ?? 1);
-      const rowspan = Number(cell.attrs?.rowspan ?? 1);
-      const colwidth = Array.isArray(cell.attrs?.colwidth) ? cell.attrs?.colwidth : null;
-      const verticalAlign = typeof cell.attrs?.verticalAlign === "string" ? cell.attrs.verticalAlign : "middle";
-      return colspan > 1 || rowspan > 1 || verticalAlign !== "middle" || Boolean(colwidth?.some((width) => Number(width) > 0));
-    })
-  );
-
-const renderRichTableToMarkdown = (node: JSONContent) => {
-  const body = (node.content ?? [])
-    .map((row) => {
-      const rowHeight = Number(row.attrs?.rowHeight ?? 0);
-      const rowAttrs = rowHeight > 0 ? ` data-rowheight="${rowHeight}" style="height:${rowHeight}px"` : "";
-      const cells = (row.content ?? [])
-        .map((cell) => {
-          const tag = cell.type === "tableHeader" ? "th" : "td";
-          const attrs: string[] = [];
-          const colspan = Number(cell.attrs?.colspan ?? 1);
-          const rowspan = Number(cell.attrs?.rowspan ?? 1);
-          const align = typeof cell.attrs?.align === "string" ? cell.attrs.align : "";
-          const verticalAlign = typeof cell.attrs?.verticalAlign === "string" ? cell.attrs.verticalAlign : "";
-          const colwidth = Array.isArray(cell.attrs?.colwidth)
-            ? cell.attrs.colwidth.map((width) => Number(width)).filter((width) => Number.isFinite(width) && width > 0)
-            : [];
-          if (colspan > 1) attrs.push(`colspan="${colspan}"`);
-          if (rowspan > 1) attrs.push(`rowspan="${rowspan}"`);
-          if (colwidth.length) attrs.push(`colwidth="${colwidth.join(",")}"`);
-          const styleParts = [
-            align ? `text-align:${align}` : "",
-            verticalAlign ? `vertical-align:${verticalAlign}` : ""
-          ].filter(Boolean);
-          if (styleParts.length) attrs.push(`style="${styleParts.join(";")}"`);
-          return `<${tag}${attrs.length ? ` ${attrs.join(" ")}` : ""}>${(cell.content ?? []).map(renderJsonNodeToHtml).join("") || "<p></p>"}</${tag}>`;
-        })
-        .join("");
-      return `<tr${rowAttrs}>${cells}</tr>`;
-    })
-    .join("");
-
-  return `\n<table data-rich-table="true"><tbody>${body}</tbody></table>\n`;
-};
-
 const RichTable = Table.extend({
   draggable: true,
   renderMarkdown(node, h) {
@@ -1160,10 +838,6 @@ const isInternalTreeDrag = (dataTransfer: DataTransfer | null | undefined) =>
       Array.from(dataTransfer.types).some((type) => type === TREE_ITEM_DRAG_MIME || type === DOCUMENT_DRAG_MIME || type === FOLDER_DRAG_MIME)
   );
 
-type TreeDragPayload =
-  | { type: "file"; documentId: string; path: string }
-  | { type: "folder"; path: string };
-
 const serializeTreeDragPayload = (payload: TreeDragPayload) => JSON.stringify(payload);
 
 const parseTreeDragPayload = (dataTransfer: DataTransfer): TreeDragPayload | null => {
@@ -1188,171 +862,6 @@ const parseTreeDragPayload = (dataTransfer: DataTransfer): TreeDragPayload | nul
   return folderPath ? { type: "folder", path: folderPath } : null;
 };
 
-const permissionModeLabel: Record<AgentPermissionMode, string> = {
-  read_only: "只读",
-  default: "审核权限",
-  full_access: "默认权限"
-};
-
-const agentPermissionModes: AgentPermissionMode[] = ["read_only", "default", "full_access"];
-
-const isCancelledAgentMessage = (message: Pick<AgentSessionMessage, "error">) =>
-  /取消|中断|cancel|cancelled|canceled|abort|aborted/i.test(message.error ?? "");
-
-const sessionStatusLabel: Record<AgentSessionStatus, string> = {
-  idle: "空闲",
-  thinking: "处理中",
-  "tool-executing": "执行中",
-  done: "完成",
-  error: "失败"
-};
-
-type AgentProcessCategory = "system" | "explore" | "search" | "read" | "edit" | "command" | "approval" | "other";
-
-const formatProcessDuration = (milliseconds: number) => {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return minutes ? `${minutes}m ${seconds}s` : `${seconds}s`;
-};
-
-const formatConversationUpdatedAt = (value: string) => {
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return "";
-  const date = new Date(parsed);
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${month}-${day} ${hours}:${minutes}`;
-};
-
-const classifyAgentAction = (action: AgentSessionAction): AgentProcessCategory => {
-  if (action.kind) {
-    if (action.kind === "system" || action.kind === "message" || action.kind === "reasoning") return "system";
-    if (action.kind === "file_change") return "edit";
-    if (action.kind === "tool" || action.kind === "plan") return "explore";
-    if (action.kind === "approval") return "approval";
-    if (action.kind === "search" || action.kind === "read" || action.kind === "command") return action.kind;
-  }
-  const source = `${action.tool} ${action.label}`.toLowerCase();
-  if (
-    source.includes("get_workspace_context")
-    || source.includes("get_current_document")
-    || source.includes("get_selection")
-    || source.includes("agent_call")
-    || source.includes("cli_run")
-  ) {
-    return "system";
-  }
-  if (
-    source.includes("search")
-    || source.includes("grep")
-    || source.includes("rg")
-    || source.includes("find")
-    || source.includes("query")
-  ) {
-    return "search";
-  }
-  if (
-    source.includes("read")
-    || source.includes("open")
-    || source.includes("file")
-    || source.includes("cat")
-    || source.includes("note")
-  ) {
-    return "read";
-  }
-  if (
-    source.includes("edit")
-    || source.includes("write")
-    || source.includes("patch")
-    || source.includes("replace")
-    || source.includes("rename")
-    || source.includes("create")
-  ) {
-    return "edit";
-  }
-  if (
-    source.includes("bash")
-    || source.includes("shell")
-    || source.includes("command")
-    || source.includes("terminal")
-    || source.includes("exec")
-    || source.includes("run")
-  ) {
-    return "command";
-  }
-  if (
-    source.includes("list")
-    || source.includes("inspect")
-    || source.includes("explore")
-    || source.includes("analy")
-    || source.includes("scan")
-  ) {
-    return "explore";
-  }
-  return "other";
-};
-
-const didAgentEditFiles = (messages: AgentSessionMessage[]) =>
-  messages.some((message) => message.actions.some((action) => action.kind === "file_change" && action.status !== "error"));
-
-const processCategoryLabel: Record<Exclude<AgentProcessCategory, "system">, string> = {
-  explore: "探索",
-  search: "搜索",
-  read: "读文件",
-  edit: "编辑",
-  command: "命令",
-  approval: "审批",
-  other: "步骤"
-};
-
-const summarizeAgentProcess = (actions: AgentSessionAction[]) => {
-  const counts: Record<Exclude<AgentProcessCategory, "system">, number> = {
-    explore: 0,
-    search: 0,
-    read: 0,
-    edit: 0,
-    command: 0,
-    approval: 0,
-    other: 0
-  };
-  let hiddenSystemActions = 0;
-
-  actions.forEach((action) => {
-    const category = classifyAgentAction(action);
-    if (category === "system") {
-      hiddenSystemActions += 1;
-      return;
-    }
-    counts[category] += 1;
-  });
-
-  const segments = (Object.entries(counts) as Array<[Exclude<AgentProcessCategory, "system">, number]>)
-    .filter(([, count]) => count > 0)
-    .map(([category, count]) => `${processCategoryLabel[category]} ${count}`);
-
-  return {
-    summary: segments.join(" · "),
-    hiddenSystemActions,
-    visibleActionCount: segments.length ? Object.values(counts).reduce((total, count) => total + count, 0) : 0
-  };
-};
-
-const mergeFinalAgentResponse = (current: string, next?: string) => {
-  if (!next) return current;
-  if (!current) return next;
-  if (next === current) return current;
-  if (next.startsWith(current)) return next;
-  if (current.startsWith(next)) return current;
-  if (next.includes(current)) return next;
-  if (current.includes(next)) return current;
-  return next.length >= current.length ? next : current;
-};
-
-const selectionToolbarLabel = "翻译";
-const selectionToolbarSafeAreaSelector = "[data-selection-toolbar-safe-area]";
 let selectionToolbarInteractionLockUntil = 0;
 // Most recent drag-selected text inside the selection-translate toolbar.
 // Captured on mouseup inside TranslationResultText so that Cmd+C can still
@@ -1378,42 +887,6 @@ const isSelectionToolbarInteractionActive = () => {
       : false;
   return activeInsideToolbar || Date.now() < selectionToolbarInteractionLockUntil;
 };
-
-type ToolbarIcon = ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
-
-type SelectionToolbarAction = {
-  id: "bold" | "italic" | "underline" | "strike" | "subscript" | "superscript" | "highlight" | "link";
-  label: string;
-  icon: ToolbarIcon;
-};
-
-type InsertToolbarAction =
-  | {
-      id: string;
-      label: string;
-      icon: ToolbarIcon;
-      kind: "command";
-      command:
-        | "insert:table"
-        | "format:bullet-list"
-        | "format:ordered-list"
-        | "format:task-list"
-        | "format:blockquote"
-        | "format:code-block"
-        | "insert:math"
-        | "insert:chart"
-        | "insert:callout"
-        | "insert:footnote"
-        | "insert:details"
-        | "insert:horizontal-rule";
-    }
-  | {
-      id: string;
-      label: string;
-      icon: ToolbarIcon;
-      kind: "asset";
-      assetKind: "image" | "video" | "audio" | "pdf";
-    };
 
 const selectionToolbarActions: SelectionToolbarAction[] = [
   { id: "bold", label: "加粗", icon: Bold },
@@ -1443,631 +916,24 @@ const insertToolbarActions: InsertToolbarAction[] = [
   { id: "horizontal-rule", label: "插入水平分隔线", icon: Minus, kind: "command", command: "insert:horizontal-rule" }
 ];
 
-type CommandPaletteScope = "system" | "document";
+const revealInFolderLabel = () =>
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
+    ? "在 Finder 中打开"
+    : "在文件夹中打开";
 
-type CommandPaletteItem = {
-  id: string;
-  scope: CommandPaletteScope;
-  title: string;
-  subtitle?: string;
-  shortcut?: string;
-  keywords?: string;
-  run: () => void;
+const isExternalFileDrag = (dataTransfer: DataTransfer | null) =>
+  Boolean(dataTransfer?.types.includes("Files") && !isInternalTreeDrag(dataTransfer) && !isInternalDocumentDrag(dataTransfer));
+
+const filePathForFile = (file: File) => {
+  const legacyPath = (file as File & { path?: string }).path;
+  if (legacyPath) return legacyPath;
+  return window.informio.getPathForFile(file);
 };
 
-const shortcutDisplayPlatform = navigator.platform.toLowerCase().includes("mac") ? "mac" : "windows";
-const isWindowsPlatform = shortcutDisplayPlatform === "windows";
-
-const normalizePath = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
-const normalizePathForCompare = (path: string) => {
-  const normalized = normalizePath(path);
-  return isWindowsPlatform ? normalized.toLowerCase() : normalized;
-};
-
-const pathBaseName = (path: string) => normalizePath(path).split("/").filter(Boolean).at(-1) ?? path;
-
-const pathDirName = (path: string) => normalizePath(path).split("/").slice(0, -1).join("/") || path;
-
-const pathExtName = (path: string) => {
-  const base = pathBaseName(path);
-  const dotIndex = base.lastIndexOf(".");
-  return dotIndex > 0 ? base.slice(dotIndex) : "";
-};
-
-const isAbsoluteAssetPath = (path: string) => path.startsWith("/") || /^[A-Za-z]:\//.test(path);
-
-const hasRenderableScheme = (src: string) => /^(?:https?:|data:|blob:|local-file:)/i.test(src);
-
-const safeDecodeUri = (value: string) => {
-  try {
-    return decodeURI(value);
-  } catch {
-    return value;
-  }
-};
-
-const encodeLocalFilePath = (path: string) => normalizePath(path).split("/").map((part) => encodeURIComponent(part)).join("/");
-
-const localFileUrlForPath = (path: string) => {
-  const encoded = encodeLocalFilePath(path);
-  return `local-file://${encoded.startsWith("/") ? encoded : `/${encoded}`}`;
-};
-
-const joinAssetPath = (folder: string, assetPath: string) => {
-  const normalizedFolder = normalizePath(folder);
-  const normalizedAsset = normalizePath(assetPath).replace(/^\.?\//, "");
-  return `${normalizedFolder}/${normalizedAsset}`;
-};
-
-const resolveMarkdownAssetSrc = (src: string, basePath?: string) => {
-  const trimmed = src.trim();
-  if (!trimmed || hasRenderableScheme(trimmed)) return trimmed;
-  if (/^file:\/\//i.test(trimmed)) return trimmed.replace(/^file:\/\//i, "local-file://");
-  const [pathPart, suffix = ""] = trimmed.split(/([?#].*)/, 2);
-  const decodedPath = safeDecodeUri(pathPart);
-  const baseFolder = basePath ? (pathExtName(basePath) ? pathDirName(basePath) : normalizePath(basePath)) : "";
-  const absolutePath = isAbsoluteAssetPath(decodedPath)
-    ? decodedPath
-    : baseFolder
-      ? joinAssetPath(baseFolder, decodedPath)
-      : "";
-  return absolutePath ? `${localFileUrlForPath(absolutePath)}${suffix}` : trimmed;
-};
-
-const resolveMarkdownAssetPath = (src: string, basePath?: string) => {
-  const trimmed = src.trim();
-  if (!trimmed || /^(?:https?:|data:|blob:)/i.test(trimmed)) return "";
-  if (/^(?:local-file:|file:)/i.test(trimmed)) return assetPathPartFromSrc(trimmed);
-  const [pathPart] = trimmed.split(/[?#]/, 1);
-  const decodedPath = safeDecodeUri(pathPart ?? "");
-  const baseFolder = basePath ? (pathExtName(basePath) ? pathDirName(basePath) : normalizePath(basePath)) : "";
-  if (isAbsoluteAssetPath(decodedPath)) return decodedPath;
-  return baseFolder ? joinAssetPath(baseFolder, decodedPath) : "";
-};
-
-const loadLocalAssetObjectUrl = async (path: string) => {
-  const asset = await window.informio.loadAsset(path);
-  return URL.createObjectURL(new Blob([asset.data], { type: asset.mimeType }));
-};
-
-const assetPathPartFromSrc = (src: string) => {
-  const trimmed = src.trim();
-  if (!trimmed) return "";
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol === "local-file:" || url.protocol === "file:") {
-      const host = decodeURIComponent(url.host);
-      const pathname = decodeURIComponent(url.pathname);
-      if (/^[A-Za-z]:?$/.test(host)) return `${host.replace(/:$/, "")}:${pathname}`;
-      return url.host ? `/${host}${pathname}` : pathname;
-    }
-    if (url.protocol === "http:" || url.protocol === "https:") return decodeURIComponent(url.pathname);
-  } catch {
-    // Fall back to path-style parsing below.
-  }
-  return safeDecodeUri(trimmed.split(/[?#]/, 1)[0] ?? "");
-};
-
-const assetExtensionFromSrc = (src: string) =>
-  pathExtName(assetPathPartFromSrc(src)).slice(1).toLowerCase();
-
-const pathContains = (folder: string, path: string) => {
-  const normalizedFolder = normalizePathForCompare(folder);
-  const normalizedPath = normalizePathForCompare(path);
-  return normalizedPath === normalizedFolder || normalizedPath.startsWith(`${normalizedFolder}/`);
-};
-
-const relativePath = (folder: string, path: string) => {
-  const normalizedFolder = normalizePath(folder);
-  const normalizedPath = normalizePath(path);
-  return pathContains(folder, path) ? normalizedPath.slice(normalizedFolder.length).replace(/^\/+/, "") || pathBaseName(path) : pathBaseName(path);
-};
-
-const markdownTitle = (title: string) => title.replace(/\.(md|markdown|txt)$/i, "");
-
-const normalizeLinkTitle = (value: string) =>
-  decodeURIComponent(value)
-    .replace(/\\/g, "/")
-    .split("#")[0]
-    .split("/")
-    .filter(Boolean)
-    .at(-1)
-    ?.replace(/\.(md|markdown|txt)$/i, "")
-    .trim()
-    .toLowerCase() ?? "";
-
-const wikilinkLabel = (doc: InformioDocument) => markdownTitle(doc.title);
-
-const parseWikiLinkBody = (value: string) => {
-  const [rawTarget, ...aliasParts] = value.split("|");
-  const target = rawTarget.trim();
-  const alias = aliasParts.join("|").trim();
-  return { target, alias: alias || undefined };
-};
-
-const wikiLinkText = (target: string, alias?: string) => `[[${target}${alias ? `|${alias}` : ""}]]`;
-
-type IndexedDocument = {
-  document: InformioDocument;
-  normalizedTitle: string;
-  normalizedFilePath: string;
-  folderPath: string;
-};
-
-type WikiTargetBucket = {
-  candidates: IndexedDocument[];
-  latest: IndexedDocument | null;
-};
-
-type WikiSuggestionItem = {
-  document: InformioDocument;
-  lowerLabel: string;
-};
-
-type DocumentLookupIndex = {
-  byWikiTarget: Map<string, WikiTargetBucket>;
-  byMarkdownTitleLower: Map<string, InformioDocument>;
-  byMarkdownTitleExact: Map<string, InformioDocument>;
-  byExactTitle: Map<string, InformioDocument>;
-  byFilePath: Map<string, InformioDocument>;
-  wikiSuggestions: WikiSuggestionItem[];
-};
-
-const buildDocumentLookupIndex = (documents: InformioDocument[], excludedSuggestionDocumentId?: string): DocumentLookupIndex => {
-  const byWikiTarget = new Map<string, WikiTargetBucket>();
-  const byMarkdownTitleLower = new Map<string, InformioDocument>();
-  const byMarkdownTitleExact = new Map<string, InformioDocument>();
-  const byExactTitle = new Map<string, InformioDocument>();
-  const byFilePath = new Map<string, InformioDocument>();
-  const wikiSuggestions: WikiSuggestionItem[] = [];
-
-  documents.forEach((document) => {
-    if (document.filePath && !byFilePath.has(document.filePath)) byFilePath.set(document.filePath, document);
-    if (!byExactTitle.has(document.title)) byExactTitle.set(document.title, document);
-
-    const markdownBaseTitle = markdownTitle(document.title);
-    const markdownKey = markdownBaseTitle.toLowerCase();
-    if (markdownKey && !byMarkdownTitleLower.has(markdownKey)) byMarkdownTitleLower.set(markdownKey, document);
-    if (markdownBaseTitle && !byMarkdownTitleExact.has(markdownBaseTitle)) byMarkdownTitleExact.set(markdownBaseTitle, document);
-
-    const candidate: IndexedDocument = {
-      document,
-      normalizedTitle: normalizeLinkTitle(document.title),
-      normalizedFilePath: normalizeLinkTitle(document.filePath ?? ""),
-      folderPath: document.filePath ? pathDirName(document.filePath) : ""
-    };
-
-    Array.from(new Set([candidate.normalizedTitle, candidate.normalizedFilePath].filter(Boolean))).forEach((key) => {
-      const bucket = byWikiTarget.get(key) ?? { candidates: [], latest: null };
-      bucket.candidates.push(candidate);
-      if (!bucket.latest || candidate.document.updatedAt.localeCompare(bucket.latest.document.updatedAt) > 0) {
-        bucket.latest = candidate;
-      }
-      byWikiTarget.set(key, bucket);
-    });
-
-    if (document.id !== excludedSuggestionDocumentId) {
-      wikiSuggestions.push({
-        document,
-        lowerLabel: wikilinkLabel(document).toLowerCase()
-      });
-    }
-  });
-
-  wikiSuggestions.sort((left, right) => right.document.updatedAt.localeCompare(left.document.updatedAt));
-
-  return { byWikiTarget, byMarkdownTitleLower, byMarkdownTitleExact, byExactTitle, byFilePath, wikiSuggestions };
-};
-
-const resolveWikiLink = (target: string, documentLookupIndex: DocumentLookupIndex, currentDocument?: InformioDocument) => {
-  const normalizedTarget = normalizeLinkTitle(target);
-  if (!normalizedTarget) return undefined;
-  const bucket = documentLookupIndex.byWikiTarget.get(normalizedTarget);
-  if (!bucket?.candidates.length) return undefined;
-  const exact = bucket.candidates.find((candidate) => candidate.normalizedTitle === normalizedTarget)?.document;
-  if (exact) return exact;
-  const currentFolder = currentDocument?.filePath ? pathDirName(currentDocument.filePath) : "";
-  const sameFolder = bucket.candidates.find((candidate) => candidate.folderPath && currentFolder && candidate.folderPath === currentFolder)?.document;
-  if (sameFolder) return sameFolder;
-  return bucket.latest?.document;
-};
-
-const resolveReferencedDocuments = (message: string, documentLookupIndex: DocumentLookupIndex) => {
-  const names = Array.from(message.matchAll(/\[\[([^\]\n|]+)(?:\|[^\]\n]+)?\]\]/g)).map((match) => match[1].trim().toLowerCase());
-  const uniqueNames = Array.from(new Set(names));
-  return uniqueNames
-    .map((name) => documentLookupIndex.byMarkdownTitleLower.get(name))
-    .filter((document): document is InformioDocument => Boolean(document));
-};
-
-const findDocumentForActionPath = (path: string, documentLookupIndex: DocumentLookupIndex) =>
-  documentLookupIndex.byFilePath.get(path)
-  ?? documentLookupIndex.byExactTitle.get(path)
-  ?? documentLookupIndex.byMarkdownTitleExact.get(markdownTitle(path));
-
-const collectWikiSuggestions = (documentLookupIndex: DocumentLookupIndex, query: string) => {
-  const normalizedQuery = query.trim().toLowerCase();
-  if (!normalizedQuery) return documentLookupIndex.wikiSuggestions.slice(0, 8).map((item) => item.document);
-
-  const startsWith: InformioDocument[] = [];
-  const contains: InformioDocument[] = [];
-  documentLookupIndex.wikiSuggestions.forEach((item) => {
-    if (!item.lowerLabel.includes(normalizedQuery)) return;
-    if (item.lowerLabel.startsWith(normalizedQuery)) {
-      if (startsWith.length < 8) startsWith.push(item.document);
-      return;
-    }
-    contains.push(item.document);
-  });
-  return [...startsWith, ...contains].slice(0, 8);
-};
-
-const replaceWikiLinkTargets = (markdown: string, oldTitle: string, newTitle: string) =>
-  markdown.replace(/\[\[([^\]\n]+)\]\]/g, (match, body: string) => {
-    const parsed = parseWikiLinkBody(body);
-    return normalizeLinkTitle(parsed.target) === normalizeLinkTitle(oldTitle) ? wikiLinkText(newTitle, parsed.alias) : match;
-  });
-
-type FrontmatterParseResult = {
-  hasFrontmatter: boolean;
-  raw: string;
-  body: string;
-  values: Record<string, unknown>;
-  error?: string;
-};
-
-const parseFrontmatter = (markdown: string): FrontmatterParseResult => {
-  if (!markdown.startsWith("---\n") && markdown.trim() !== "---") return { hasFrontmatter: false, raw: "", body: markdown, values: {} };
-  const end = markdown.indexOf("\n---", 4);
-  if (end < 0) return { hasFrontmatter: true, raw: markdown.slice(4), body: "", values: {}, error: "Frontmatter is missing a closing --- line." };
-  const closeEnd = markdown.indexOf("\n", end + 4);
-  const raw = markdown.slice(4, end).replace(/^\n/, "");
-  const body = closeEnd >= 0 ? markdown.slice(closeEnd + 1) : "";
-  try {
-    const parsed = YAML.parse(raw || "{}");
-    return { hasFrontmatter: true, raw, body, values: parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {} };
-  } catch (error) {
-    return { hasFrontmatter: true, raw, body, values: {}, error: error instanceof Error ? error.message : String(error) };
-  }
-};
-
-const stringifyFrontmatter = (values: Record<string, unknown>) => {
-  const yaml = YAML.stringify(values, { lineWidth: 0 }).trim();
-  return yaml ? `---\n${yaml}\n---\n` : "";
-};
-
-const composeMarkdownWithFrontmatter = (frontmatter: FrontmatterParseResult, body: string) =>
-  frontmatter.hasFrontmatter ? `---\n${frontmatter.raw.trimEnd()}\n---\n${body.replace(/^\n+/, "")}` : body;
-
-const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
-const pdfExtensions = new Set(["pdf"]);
-const videoExtensions = new Set(["mp4", "mov", "webm"]);
-const audioExtensions = new Set(["mp3", "wav", "m4a", "ogg"]);
-
-const documentKindFromPath = (path?: string): InformioDocumentKind => {
-  if (!path) return "markdown";
-  const extension = assetExtensionFromSrc(path);
-  if (extension === "md" || extension === "markdown") return "markdown";
-  if (extension === "txt") return "text";
-  if (imageExtensions.has(extension)) return "image";
-  if (videoExtensions.has(extension)) return "video";
-  if (audioExtensions.has(extension)) return "audio";
-  if (pdfExtensions.has(extension)) return "pdf";
-  return "unknown";
-};
-
-const documentKind = (document?: InformioDocument | null): InformioDocumentKind =>
-  document ? (document.kind ?? documentKindFromPath(document.filePath ?? document.title)) : "unknown";
-
-const isImageFile = (path?: string) => Boolean(path && imageExtensions.has(assetExtensionFromSrc(path)));
-
-const isPdfFile = (path?: string) => Boolean(path && pdfExtensions.has(assetExtensionFromSrc(path)));
-
-const isWritableTextDocument = (document?: InformioDocument | null) => {
-  if (!document) return false;
-  const kind = documentKind(document);
-  return kind === "markdown" || kind === "text";
-};
-
-const isMarkdownDocument = (document?: InformioDocument | null) => {
-  if (!document) return false;
-  return documentKind(document) === "markdown";
-};
-
-const mediaExtensions = new Set([...videoExtensions, ...audioExtensions]);
-const lowlight = createLowlight(common);
-lowlight.registerAlias({
-  javascript: ["js", "jsx"],
-  typescript: ["ts", "tsx"],
-  markdown: ["md"],
-  shell: ["sh", "zsh"],
-  xml: ["html"]
-});
-
-const codeLanguageAliases: Record<string, string> = {
-  text: "plaintext",
-  txt: "plaintext",
-  plain: "plaintext",
-  plaintext: "plaintext",
-  js: "javascript",
-  jsx: "jsx",
-  ts: "typescript",
-  py: "python",
-  sh: "bash",
-  yml: "yaml"
-};
-
-const isVideoFile = (path?: string) => Boolean(path && videoExtensions.has(assetExtensionFromSrc(path)));
-
-const isAudioFile = (path?: string) => Boolean(path && audioExtensions.has(assetExtensionFromSrc(path)));
-
-const mediaKindFromSrc = (src: string) => {
-  const extension = assetExtensionFromSrc(src);
-  if (videoExtensions.has(extension)) return "video";
-  if (audioExtensions.has(extension)) return "audio";
-  return "";
-};
-
-const isEmbeddableAssetFile = (path?: string) =>
-  isPdfFile(path) || isImageFile(path) || isVideoFile(path) || isAudioFile(path);
-
-const isEmbeddableAssetDocument = (document?: InformioDocument | null) => {
-  const kind = documentKind(document);
-  return kind === "pdf" || kind === "image" || kind === "video" || kind === "audio";
-};
-
-const imageExtensionFromMimeType = (mimeType: string) => {
-  if (mimeType === "image/jpeg") return "jpg";
-  if (mimeType === "image/png") return "png";
-  if (mimeType === "image/gif") return "gif";
-  if (mimeType === "image/webp") return "webp";
-  if (mimeType === "image/svg+xml") return "svg";
-  return "png";
-};
-
-type MarkdownTokenLike = {
-  raw?: string;
-  text?: string;
-  title?: string;
-  summary?: string;
-  index?: string;
-  kind?: string;
-  src?: string;
-  base?: string;
-  script?: string;
-};
-
-type MarkdownHelperLike = {
-  createTextNode: (text: string) => unknown;
-  createNode: (name: string, attrs?: Record<string, unknown>, content?: unknown[]) => unknown;
-};
-
-type SecretKind = "inline" | "block";
-
-type EncryptedSecretAttrs = {
-  kind: SecretKind;
-  version: string;
-  salt: string;
-  iv: string;
-  iterations: number;
-  algorithm: string;
-  kdf: string;
-  cipherText: string;
-};
-
-type SecretDecryptRequest = {
-  pos: number;
-  kind: SecretKind;
-  attrs: EncryptedSecretAttrs;
-};
-
-const documentSecretPassphraseCache = new Map<string, string>();
-
-const plainText = (value: string) =>
-  value
-    .replace(/<[^>]*>/g, "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
-    .trim();
-
-const parseHtmlAttr = (html: string, name: string) => {
-  const match = new RegExp(`${name}=["']([^"']*)["']`, "i").exec(html);
-  return match?.[1] ?? "";
-};
-
-const chartLabels = (text: string) => Array.from(text.matchAll(/\b[A-Za-z0-9_]+\[([^\]]+)\]/g)).map((match) => match[1]);
-
-const defaultBlockSource = (name: string) => {
-  if (name === "mathInline") return "$x$";
-  if (name === "mathBlock") return "$$\nE = mc^2\n$$";
-  if (name === "chartBlock") return "```mermaid\nflowchart TD\n  A[Start] --> B[End]\n```";
-  if (name === "footnoteBlock") return "[^1]: Footnote";
-  if (name === "detailsBlock") return "> [!note]- Summary\n> Content";
-  return "> [!NOTE]\n> Important note";
-};
-
-const nodeSourceAttr = (node: { attrs?: Record<string, unknown> }, fallbackType: string) => {
-  const source = node.attrs?.source;
-  return typeof source === "string" ? source : defaultBlockSource(fallbackType);
-};
-
-const sourceText = (node: ReactNodeViewProps["node"]) => {
-  return node.textContent !== "" ? node.textContent : nodeSourceAttr(node as { attrs?: { source?: string } }, node.type.name);
-};
-
-const jsonTextContent = (node?: JSONContent): string =>
-  node?.text ?? node?.content?.map((child) => jsonTextContent(child)).join("") ?? "";
-
-const jsonSourceText = (node: JSONContent, fallbackType: string) =>
-  jsonTextContent(node) !== ""
-    ? jsonTextContent(node)
-    : nodeSourceAttr(node as { attrs?: { source?: string } }, fallbackType);
-
-const sourceContent = (source: string, h: MarkdownHelperLike) => [h.createTextNode(source)];
-
-const sourceBackedBlockContent = (source: string) => [{ type: "text", text: source }];
-
-const sourceBackedBlockJson = (type: string, source: string, focus = false): JSONContent => ({
-  type,
-  attrs: { source, focusKey: focus ? String(Date.now()) : "" },
-  content: sourceBackedBlockContent(source)
-});
-
-const bytesToBase64 = (bytes: Uint8Array) => {
-  let binary = "";
-  bytes.forEach((value) => {
-    binary += String.fromCharCode(value);
-  });
-  return window.btoa(binary);
-};
-
-const base64ToBytes = (value: string) => Uint8Array.from(window.atob(value), (char) => char.charCodeAt(0));
-const normalizeSecretBytes = (bytes: Uint8Array) => Uint8Array.from(bytes);
-
-const secretAttrsFromElement = (element: HTMLElement, kind: SecretKind): EncryptedSecretAttrs => ({
-  kind,
-  version: element.getAttribute("version") ?? "1",
-  salt: element.getAttribute("salt") ?? "",
-  iv: element.getAttribute("iv") ?? "",
-  iterations: Number.parseInt(element.getAttribute("iterations") ?? "", 10) || SECRET_ITERATIONS,
-  algorithm: element.getAttribute("algorithm") ?? SECRET_ALGORITHM,
-  kdf: element.getAttribute("kdf") ?? SECRET_KDF,
-  cipherText: (element.textContent ?? "").trim()
-});
-
-const secretAttrsAreValid = (attrs: Partial<EncryptedSecretAttrs> | null | undefined): attrs is EncryptedSecretAttrs =>
-  Boolean(
-    attrs
-    && (attrs.kind === "inline" || attrs.kind === "block")
-    && attrs.version === "1"
-    && typeof attrs.salt === "string"
-    && typeof attrs.iv === "string"
-    && typeof attrs.cipherText === "string"
-    && attrs.salt
-    && attrs.iv
-    && attrs.cipherText
-    && Number.isFinite(Number(attrs.iterations))
-    && Number(attrs.iterations) > 0
-    && attrs.algorithm === SECRET_ALGORITHM
-    && attrs.kdf === SECRET_KDF
-  );
-
-const renderSecretMarkdown = (attrs: EncryptedSecretAttrs) => {
-  const serialized = `<${INFORMIO_SECRET_TAG} kind="${attrs.kind}" version="${attrs.version}" salt="${attrs.salt}" iv="${attrs.iv}" iterations="${attrs.iterations}" algorithm="${attrs.algorithm}" kdf="${attrs.kdf}">${attrs.cipherText}</${INFORMIO_SECRET_TAG}>`;
-  return attrs.kind === "block" ? `\n${serialized}\n` : serialized;
-};
-
-const importSecretKeyMaterial = async (passphrase: string) =>
-  window.crypto.subtle.importKey("raw", new TextEncoder().encode(passphrase), "PBKDF2", false, ["deriveKey"]);
-
-const deriveSecretKey = async (passphrase: string, salt: Uint8Array, iterations: number) =>
-  window.crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      hash: "SHA-256",
-      salt: normalizeSecretBytes(salt),
-      iterations
-    },
-    await importSecretKeyMaterial(passphrase),
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  );
-
-const encryptSecretMarkdown = async (markdown: string, passphrase: string, kind: SecretKind): Promise<EncryptedSecretAttrs> => {
-  const salt = normalizeSecretBytes(window.crypto.getRandomValues(new Uint8Array(16)));
-  const iv = normalizeSecretBytes(window.crypto.getRandomValues(new Uint8Array(12)));
-  const key = await deriveSecretKey(passphrase, salt, SECRET_ITERATIONS);
-  const cipherBuffer = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(markdown));
-
-  return {
-    kind,
-    version: "1",
-    salt: bytesToBase64(salt),
-    iv: bytesToBase64(iv),
-    iterations: SECRET_ITERATIONS,
-    algorithm: SECRET_ALGORITHM,
-    kdf: SECRET_KDF,
-    cipherText: bytesToBase64(new Uint8Array(cipherBuffer))
-  };
-};
-
-const decryptSecretMarkdown = async (attrs: EncryptedSecretAttrs, passphrase: string) => {
-  const salt = normalizeSecretBytes(base64ToBytes(attrs.salt));
-  const iv = normalizeSecretBytes(base64ToBytes(attrs.iv));
-  const cipherText = normalizeSecretBytes(base64ToBytes(attrs.cipherText));
-  const key = await deriveSecretKey(passphrase, salt, attrs.iterations);
-  const plainBuffer = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipherText);
-  return new TextDecoder().decode(plainBuffer);
-};
-
-const serializeSelectionFragmentToMarkdown = (editor: Editor, from: number, to: number, kind: SecretKind) => {
-  const fragment = editor.state.doc.slice(from, to).content.toJSON() as JSONContent[];
-  if (!editor.markdown) return editor.state.doc.textBetween(from, to, "\n");
-  if (kind === "inline") {
-    return editor.markdown.serialize({
-      type: "doc",
-      content: [{ type: "paragraph", content: fragment }]
-    } as JSONContent);
-  }
-  return editor.markdown.serialize({ type: "doc", content: fragment } as JSONContent);
-};
-
-const parseInlineMarkdownContent = (editor: Editor, markdown: string): JSONContent[] => {
-  const parsed = editor.markdown?.parse(markdown);
-  if (!parsed?.content?.length) return [{ type: "text", text: markdown }];
-  const first = parsed.content[0];
-  if (first.type === "paragraph" && first.content?.length) return first.content;
-  return [{ type: "text", text: markdown }];
-};
-
-const selectionShouldUseBlockSecret = (editor: Editor) => {
-  const { selection } = editor.state;
-  if (selection.empty) return false;
-  if (!selection.$from.sameParent(selection.$to)) return true;
-  if (!selection.$from.parent.isTextblock) return true;
-  return selection.from <= selection.$from.start() && selection.to >= selection.$to.end();
-};
-
-const selectionContainsSecretNode = (editor: Editor, from: number, to: number) => {
-  let containsSecret = false;
-  editor.state.doc.nodesBetween(from, to, (node) => {
-    if (node.type.name === "encryptedInline" || node.type.name === "encryptedBlock") {
-      containsSecret = true;
-      return false;
-    }
-    return true;
-  });
-  return containsSecret;
-};
-
-const findFirstValidSecretInDocument = (editor: Editor) => {
-  let found: EncryptedSecretAttrs | null = null;
-  editor.state.doc.descendants((node) => {
-    if (node.type.name !== "encryptedInline" && node.type.name !== "encryptedBlock") return true;
-    const attrs = node.attrs as Partial<EncryptedSecretAttrs>;
-    if (secretAttrsAreValid(attrs)) {
-      found = attrs;
-      return false;
-    }
-    return true;
-  });
-  return found;
-};
-
-const documentContainsSecretNode = (editor: Editor) => {
-  let containsSecret = false;
-  editor.state.doc.descendants((node) => {
-    if (node.type.name === "encryptedInline" || node.type.name === "encryptedBlock") {
-      containsSecret = true;
-      return false;
-    }
-    return true;
-  });
-  return containsSecret;
-};
+const dataTransferFilePaths = (dataTransfer: DataTransfer | null) =>
+  Array.from(dataTransfer?.files ?? [])
+    .map(filePathForFile)
+    .filter(Boolean);
 
 const mathTextFromSource = (source: string) => {
   const trimmed = source.trim();
@@ -2131,76 +997,6 @@ const normalizeCalloutTitle = (title: string) => {
   return ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"].includes(normalized) ? normalized : "NOTE";
 };
 
-type LowlightNode = {
-  type?: string;
-  tagName?: string;
-  value?: string;
-  properties?: Record<string, unknown>;
-  children?: LowlightNode[];
-};
-
-const hastToHtml = (node: LowlightNode): string => {
-  if (node.type === "text") return escapeHtml(node.value ?? "");
-  const tag = node.tagName ?? "span";
-  const className = Array.isArray(node.properties?.className) ? ` class="${node.properties.className.join(" ")}"` : "";
-  return `<${tag}${className}>${(node.children ?? []).map(hastToHtml).join("")}</${tag}>`;
-};
-
-const normalizeCodeLanguage = (value: string) => {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return "plaintext";
-  return codeLanguageAliases[normalized] ?? normalized;
-};
-
-const highlightedCodeHtml = (language: string, code: string) => {
-  const normalizedLanguage = normalizeCodeLanguage(language);
-  if (normalizedLanguage === "plaintext") return escapeHtml(code);
-  try {
-    const tree = lowlight.highlight(normalizedLanguage, code);
-    return tree.children.map((child) => hastToHtml(child as LowlightNode)).join("");
-  } catch {
-    return escapeHtml(code);
-  }
-};
-
-const codeBlockRawMarkdown = (language: string, code: string) => {
-  const languageSuffix = language === "plaintext" ? "" : language;
-  return `\`\`\`${languageSuffix}\n${code}\n\`\`\``;
-};
-
-const parseCodeBlockRawMarkdown = (value: string) => {
-  const match = value.match(/^```([^\n`]*)\n([\s\S]*?)\n```$/);
-  if (!match) return null;
-  return {
-    language: normalizeCodeLanguage(match[1] ?? "plaintext"),
-    code: match[2] ?? ""
-  };
-};
-
-const codeBlockEditableRange = (value: string) => {
-  const firstLineEnd = value.indexOf("\n");
-  const closingFenceStart = value.lastIndexOf("\n```");
-  if (firstLineEnd < 0 || closingFenceStart <= firstLineEnd) return null;
-  return {
-    from: firstLineEnd + 1,
-    to: closingFenceStart
-  };
-};
-
-const replaceNodeWithPlainText = (editor: Editor, getPos: NodeViewPositionGetter, node: NodeViewNode, text: string) => {
-  const position = getPos();
-  if (typeof position !== "number") return;
-  const paragraph = editor.schema.nodes.paragraph;
-  if (!paragraph) return;
-  const paragraphs = text.split("\n").map((line) => paragraph.create(null, line ? editor.schema.text(line) : undefined));
-  const tr = editor.state.tr.replaceWith(position, position + node.nodeSize, paragraphs);
-  tr.setSelection(TextSelection.create(tr.doc, Math.min(position + Math.max(1, text.length), tr.doc.content.size)));
-  editor.view.dispatch(tr);
-};
-
-type NodeViewPositionGetter = ReactNodeViewProps["getPos"];
-type NodeViewNode = ReactNodeViewProps["node"];
-
 const isSelectionInsideNode = (editor: Editor, getPos: NodeViewPositionGetter, node: NodeViewNode) => {
   const position = getPos();
   if (typeof position !== "number") return false;
@@ -2236,16 +1032,6 @@ const focusNodeSource = (editor: Editor, getPos: NodeViewPositionGetter) => {
   const position = getPos();
   if (typeof position !== "number") return;
   editor.chain().focus().setTextSelection(position + 1).run();
-};
-
-const markdownOffsetForLine = (markdown: string, line: number) => {
-  if (line <= 1) return 0;
-  const lines = markdown.split("\n");
-  let offset = 0;
-  for (let index = 0; index < Math.min(line - 1, lines.length); index += 1) {
-    offset += lines[index].length + 1;
-  }
-  return offset;
 };
 
 function CodeBlockView({ editor, getPos, node, selected, updateAttributes }: ReactNodeViewProps) {
@@ -2623,20 +1409,6 @@ function StructuredBlockPreview({ name, source }: { name: string; source: string
   );
 }
 
-const replaceSourceBlockWithParagraph = (editor: Editor, getPos: NodeViewPositionGetter, node: NodeViewNode) => {
-  const position = getPos();
-  if (typeof position !== "number") return false;
-  const paragraph = editor.schema.nodes.paragraph?.create();
-  if (!paragraph) return false;
-  const tr = editor.state.tr.replaceWith(position, position + node.nodeSize, paragraph);
-  tr.setSelection(TextSelection.create(tr.doc, Math.min(position + 1, tr.doc.content.size)));
-  editor.view.dispatch(tr);
-  return true;
-};
-
-const isDiscardableSourceRemainder = (typeName: string, source: string) =>
-  source.trim() === "" || (typeName === "chartBlock" && isDiscardableMermaidSource(source));
-
 function EditableSourceBlockView({ editor, getPos, node, selected, updateAttributes }: ReactNodeViewProps) {
   const focusKey = (node.attrs as { focusKey?: string }).focusKey;
   const savedSource = (node.attrs as { source?: string }).source;
@@ -2700,10 +1472,6 @@ const editableSourceAttributes = () => ({
   source: { default: "" },
   focusKey: { default: "" }
 });
-
-type EncryptedTextOptions = {
-  onRequestDecrypt: (request: SecretDecryptRequest) => void;
-};
 
 const selectEncryptedNode = (editor: Editor, getPos: NodeViewPositionGetter) => {
   const position = getPos();
@@ -2924,13 +1692,6 @@ const InformioCodeBlock = CodeBlockLowlight.extend({
   }
 });
 
-type WikiLinkOptions = {
-  documentLookupIndex: DocumentLookupIndex;
-  currentDocument?: InformioDocument;
-  onOpen: (documentId: string) => void;
-  onCreate: (title: string) => void;
-};
-
 function WikiLinkView({ node, extension }: ReactNodeViewProps) {
   const options = extension.options as WikiLinkOptions;
   const target = String((node.attrs as { target?: string }).target ?? "");
@@ -3107,12 +1868,6 @@ const findPastedHttpUrlMatches = (text: string): PasteRuleMatch[] => {
 };
 
 const MarkdownLink = Link.extend({} as never);
-
-type MarkdownParserEditor = Editor & {
-  markdown?: {
-    parse: (markdown: string) => JSONContent | JSONContent[];
-  };
-};
 
 const MARKDOWN_PASTE_BLOCK_PATTERN =
   /(^|\n)(#{1,6}\s+\S|>\s+\S|[-*+]\s+\S|\d+\.\s+\S|-\s+\[[ xX]\]\s+\S|```|~~~|\|.+\|(?:\n\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?)?|\$\$|\[\^[^\]]+]:\s+\S)/;
@@ -4107,92 +2862,6 @@ const FootnoteBlock = Node.create({
   }
 } as never);
 
-type MarkdownAutoBlockMatch = {
-  from: number;
-  to: number;
-  node: ProseMirrorNodeLike;
-  selectionOffset?: number;
-  selectAfterNode?: boolean;
-};
-
-type ProseMirrorNodeLike = {
-  type: { name: string };
-  isText?: boolean;
-  isTextblock: boolean;
-  nodeSize: number;
-  text?: string;
-  textContent: string;
-  forEach: (callback: (node: ProseMirrorNodeLike, offset: number) => void) => void;
-  descendants?: (
-    callback: (node: ProseMirrorNodeLike, pos: number, parent: ProseMirrorNodeLike | null, index: number) => boolean | void
-  ) => void;
-};
-
-type ProseMirrorSchemaLike = {
-  nodes: Record<string, { create: (attrs?: Record<string, unknown> | null, content?: unknown) => ProseMirrorNodeLike }>;
-  text: (text: string) => ProseMirrorNodeLike;
-};
-
-type MarkdownTextBlock = {
-  node: ProseMirrorNodeLike;
-  pos: number;
-  text: string;
-};
-
-const calloutTypes = new Set(["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"]);
-
-const textContentNode = (schema: ProseMirrorSchemaLike, text: string) => (text ? schema.text(text) : undefined);
-
-const sourceBackedNode = (
-  schema: ProseMirrorSchemaLike,
-  typeName: "mathBlock" | "chartBlock" | "footnoteBlock" | "detailsBlock" | "calloutBlock",
-  source: string,
-  attrs: Record<string, unknown> = {}
-) => schema.nodes[typeName].create({ source, ...attrs }, textContentNode(schema, source));
-
-const parseMarkdownTableRow = (line: string) => {
-  const trimmed = line.trim();
-  if (!trimmed.includes("|")) return null;
-  const body = trimmed.replace(/^\|/, "").replace(/\|$/, "");
-  const cells = body.split("|").map((cell) => cell.trim());
-  return cells.length >= 2 ? cells : null;
-};
-
-const isExplicitMarkdownTableRow = (line: string) => /^\|.*\|$/.test(line.trim());
-
-const isMarkdownTableSeparator = (line: string, expectedCells: number) => {
-  const cells = parseMarkdownTableRow(line);
-  return Boolean(cells && cells.length === expectedCells && cells.every((cell) => /^:?-{3,}:?$/.test(cell)));
-};
-
-const markdownTableAlign = (separatorCell: string): HorizontalCellAlign => {
-  const trimmed = separatorCell.trim();
-  if (trimmed.startsWith(":") && trimmed.endsWith(":")) return "center";
-  if (trimmed.endsWith(":")) return "right";
-  return "left";
-};
-
-const createTableFromMarkdown = (schema: ProseMirrorSchemaLike, lines: string[]) => {
-  const header = parseMarkdownTableRow(lines[0]);
-  if (!header || !isMarkdownTableSeparator(lines[1], header.length)) return null;
-  const separator = parseMarkdownTableRow(lines[1]) ?? header.map(() => "---");
-  const dataRows = lines.slice(2).map(parseMarkdownTableRow).filter((row): row is string[] => Boolean(row && row.length === header.length));
-  const rows = [header, ...(dataRows.length ? dataRows : [header.map(() => "")])];
-
-  return schema.nodes.table.create(
-    null,
-    rows.map((cells, rowIndex) =>
-      schema.nodes.tableRow.create(
-        null,
-        cells.map((cell, columnIndex) => {
-          const cellType = rowIndex === 0 ? schema.nodes.tableHeader : schema.nodes.tableCell;
-          return cellType.create({ align: markdownTableAlign(separator[columnIndex] ?? "---") }, schema.nodes.paragraph.create(null, textContentNode(schema, cell)));
-        })
-      )
-    )
-  );
-};
-
 const codeBlockFromFence = (schema: ProseMirrorSchemaLike, language: string, lines: string[]) =>
   schema.nodes.codeBlock.create({ language: language.trim() || "plaintext" }, textContentNode(schema, lines.join("\n")));
 
@@ -4392,9 +3061,8 @@ function markdownToStatusText(markdown: string) {
 }
 
 function countWords(markdown: string) {
-  const plainText = markdownToStatusText(markdown);
-  const latinWords = plainText.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?/g)?.length ?? 0;
-  const cjkChars = plainText.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
+  const latinWords = markdown.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?/g)?.length ?? 0;
+  const cjkChars = markdown.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
   return latinWords + cjkChars;
 }
 
@@ -4697,77 +3365,6 @@ function PanelResizeHandle({
     />
   );
 }
-
-type FileTreeNode = {
-  folder: InformioFolder;
-  documents: InformioDocument[];
-  children: FileTreeNode[];
-  documentCount: number;
-};
-
-type FileContextTarget =
-  | { type: "folder"; path: string; title: string }
-  | { type: "file"; path: string; title: string; documentId: string };
-
-type FileContextMenuState = {
-  x: number;
-  y: number;
-  target: FileContextTarget;
-};
-
-type ProjectContextMenuState = {
-  x: number;
-  y: number;
-  path: string;
-  title: string;
-  pinned: boolean;
-};
-
-type BlankContextMenuState = {
-  x: number;
-  y: number;
-};
-
-type InlineRenameState =
-  | { type: "file"; path: string; documentId: string; value: string; originalValue: string; selectBaseName?: boolean }
-  | { type: "folder"; path: string; value: string; originalValue: string }
-  | { type: "project"; path: string; value: string; originalValue: string };
-
-type PendingCreationState =
-  | { type: "file"; folderPath?: string }
-  | { type: "folder"; folderPath?: string };
-
-type TreeDropTarget = {
-  path: string;
-  depth: number;
-};
-
-type LinkRequest = {
-  from: number;
-  to: number;
-  text: string;
-  url: string;
-  title?: string;
-};
-
-type ImageRequest = {
-  pos: number;
-  alt: string;
-  src: string;
-  title: string;
-};
-
-type EditorTextSearchIndex = {
-  text: string;
-  positions: number[];
-};
-
-type FindMatch = {
-  start: number;
-  end: number;
-  from: number;
-  to: number;
-};
 
 const buildEditorTextSearchIndex = (doc: ProseMirrorNode): EditorTextSearchIndex => {
   const chars: string[] = [];
@@ -5866,30 +4463,6 @@ function ImageDialog({
   );
 }
 
-type SecretPromptRequest =
-  | {
-      mode: "set-passphrase";
-      error?: string;
-    }
-  | {
-      mode: "unlock-passphrase";
-      intent: "encrypt" | "decrypt";
-      error?: string;
-    };
-
-type PendingSecretAction =
-  | {
-      type: "encrypt";
-      from: number;
-      to: number;
-      kind: SecretKind;
-      verifyAttrs?: EncryptedSecretAttrs | null;
-    }
-  | {
-      type: "decrypt";
-      request: SecretDecryptRequest;
-    };
-
 function SecretPassphraseDialog({
   request,
   onClose,
@@ -5990,18 +4563,6 @@ function SecretPassphraseDialog({
     </Dialog.Root>
   );
 }
-
-type ConflictDiffLine = {
-  key: string;
-  kind: "same" | "removed" | "added";
-  text: string;
-};
-
-type MarkdownDiffHunk = {
-  baseStart: number;
-  baseEnd: number;
-  replacement: string[];
-};
 
 const MAX_DIFF_MATRIX_CELLS = 600_000;
 const MAX_CONFLICT_PREVIEW_LINES = 80;
@@ -6674,9 +5235,9 @@ function EditorPane({
   const composingRef = useRef(false);
   const applyingMarkdownAutoBlockRef = useRef(false);
   const markdownAutoBlockTimerRef = useRef<number | null>(null);
+  const sourceTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editorScrollTimerRef = useRef<number | null>(null);
   const editorInstanceRef = useRef<Editor | null>(null);
-  const sourceTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const findQueryInputRef = useRef<HTMLInputElement | null>(null);
   const shellRef = useRef<HTMLElement | null>(null);
   const contentColumnRef = useRef<HTMLDivElement | null>(null);
@@ -8740,36 +7301,6 @@ function CommandPalette({ open, commands, onClose }: { open: boolean; commands: 
   );
 }
 
-type TableOverlayState = {
-  table: HTMLTableElement;
-  tablePos: number;
-  rect: { top: number; left: number; width: number; height: number };
-  rows: Array<{ top: number; height: number }>;
-  columns: Array<{ left: number; width: number }>;
-};
-
-type TableSelectionShape = {
-  top: number;
-  bottom: number;
-  left: number;
-  right: number;
-  rowSelection: boolean;
-  columnSelection: boolean;
-  fullTable: boolean;
-};
-
-type TableColumnWidthInfo = {
-  width: number;
-  fixed: boolean;
-};
-
-type TableHoverTarget =
-  | {
-      axis: "row" | "column";
-      index: number;
-    }
-  | null;
-
 const tablePosFromDom = (editor: Editor, table: HTMLTableElement) => {
   const firstCell = table.querySelector("th, td");
   if (firstCell instanceof HTMLTableCellElement) {
@@ -9652,20 +8183,6 @@ function AgentApprovalCard({
     </div>
   );
 }
-
-type ProviderExecutionFlowProps = {
-  provider: AgentProvider;
-  message: AgentSessionMessage;
-  transcriptFontSize: number;
-  transcriptLineHeight: number;
-  processFontSize: number;
-  processLineHeight: number;
-  isExpanded: boolean;
-  now: number;
-  onToggleExpanded: () => void;
-  onApprovalResponse: (approvalId: string, decision: AgentApprovalDecision) => void;
-  onOpenActionPath: (path: string) => void;
-};
 
 const renderActionStatusDot = (status: AgentSessionAction["status"]) =>
   cn("h-2 w-2 rounded-full", status === "pending" ? "bg-amber-400" : status === "error" ? "bg-red-500" : "bg-emerald-500");
@@ -13425,9 +11942,6 @@ export function App() {
     }
   };
 
-  const resolveReferencedDocumentsFromMessage = (message: string) =>
-    documentLookupIndex ? resolveReferencedDocuments(message, documentLookupIndex) : [];
-
   const openActionPath = (path: string) => {
     if (!documentLookupIndex) return;
     const document = findDocumentForActionPath(path, documentLookupIndex);
@@ -13574,6 +12088,9 @@ export function App() {
       setAgentBusy(false);
     }
   };
+
+  const resolveReferencedDocumentsFromMessage = (message: string) =>
+    documentLookupIndex ? resolveReferencedDocuments(message, documentLookupIndex) : [];
 
   const sendAgentSession = async (text: string, permissionMode: AgentPermissionMode, attachments: AgentMessageAttachment[] = []) => {
     if (!data || !activeAgent) return;
@@ -13738,7 +12255,7 @@ export function App() {
                 actions: updateSessionActionByToolId(
                   item.actions,
                   event.toolId,
-                  (action) => ({ ...action, output: `${action.output ?? ""}${event.outputDelta}` })
+                  { output: `${(item.actions.find((a: AgentSessionAction) => a.toolId === event.toolId)?.output ?? "")}${event.outputDelta}` }
                 )
               };
             }
@@ -13748,7 +12265,7 @@ export function App() {
                 actions: updateSessionActionByToolId(
                   item.actions,
                   event.toolId,
-                  (action) => ({ ...action, status: event.status ?? "done", output: event.output ?? action.output })
+                  { status: event.status ?? "done", output: event.output }
                 )
               };
             }
@@ -13758,7 +12275,7 @@ export function App() {
                 actions: updateSessionActionByToolId(
                   item.actions,
                   event.toolId,
-                  (action) => ({ ...action, status: event.status, output: event.output ?? action.output })
+                  { status: event.status, output: event.output }
                 )
               };
             }
