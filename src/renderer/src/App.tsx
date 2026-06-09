@@ -153,6 +153,7 @@ import { sanitizeAgentResponse } from "../../shared/agentResponse";
 import { DEFAULT_CUSTOM_THEME_COLOR } from "../../shared/theme";
 import { buildWorkspaceScopeId } from "../../shared/workspaceScope";
 import { cn } from "./lib/utils";
+import { TranslationResultText } from "./components/TranslationResultText";
 import {
   clipboardPlainTextForPaste,
   htmlFragmentHasContent,
@@ -11162,14 +11163,7 @@ function SelectionToolbar({
               <X size={12} />
             </button>
           </div>
-          {response ? (
-            <div
-              className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-[12px] leading-5 text-[var(--text-main)] cursor-text select-text"
-              onMouseDown={(event) => event.stopPropagation()}
-            >
-              {response}
-            </div>
-          ) : null}
+          {response ? <TranslationResultText text={response} /> : null}
           {error ? (
             <div
               className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 cursor-text select-text"
@@ -11280,14 +11274,7 @@ function SelectionTranslateSection({
           </button>
         ) : null}
       </div>
-      {response ? (
-        <div
-          className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-[12px] leading-5 text-[var(--text-main)] select-text cursor-text"
-          onMouseDown={(event) => event.stopPropagation()}
-        >
-          {response}
-        </div>
-      ) : null}
+      {response ? <TranslationResultText text={response} /> : null}
       {error ? (
         <div
           className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 select-text cursor-text"
