@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import type { Editor, JSONContent } from "@tiptap/core";
 import { Node, mergeAttributes } from "@tiptap/core";
@@ -11,22 +11,11 @@ import {
   nodeSourceAttr,
   jsonSourceText,
   defaultBlockSource,
-  chartLabels,
   sourceBackedBlockContent,
   replaceSourceBlockWithParagraph,
   isDiscardableSourceRemainder,
 } from "../lib/markdown-block-parser";
 import { cn } from "../lib/utils";
-
-export const chartTextFromSource = (source: string) => {
-  const match = source.trim().match(/^```mermaid[^\n]*\n([\s\S]*?)\n```$/);
-  return (match?.[1] ?? source).trim();
-};
-
-const isDiscardableMermaidSource = (source: string) => {
-  const trimmed = source.trim();
-  return !trimmed || /^`{1,3}(?:\s*mermaid)?\s*`{0,3}$/i.test(trimmed) || /^mermaid\s*`{0,3}$/i.test(trimmed);
-};
 
 const isSelectionInsideNode = (editor: Editor, getPos: NodeViewPositionGetter, node: NodeViewNode) => {
   const position = getPos();
@@ -70,97 +59,62 @@ const editableSourceAttributes = () => ({
   focusKey: { default: "" }
 });
 
-export function ChartPreview({ source }: { source: string }) {
-  const [result, setResult] = useState<{ svg?: string; error?: string }>({});
-  const id = useMemo(() => `informio-mermaid-${Math.random().toString(36).slice(2)}`, []);
-  const diagram = chartTextFromSource(source);
-  const discardable = isDiscardableMermaidSource(source) || !diagram;
+const footnoteFromSource = (source: string) => {
+  const match = source.trim().match(/^\[\^([^\]]+)]:\s*([\s\S]*)$/);
+  return { index: match?.[1] ?? "1", text: match?.[2]?.trim() ?? source.trim() };
+};
 
-  useEffect(() => {
-    let cancelled = false;
-    if (discardable) {
-      setResult({});
-      return () => {
-        cancelled = true;
-      };
-    }
-    import("mermaid")
-      .then(({ default: mermaid }) => {
-        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", suppressErrorRendering: true, theme: "neutral" });
-        return mermaid.render(id, diagram);
-      })
-      .then(({ svg }) => {
-        if (!cancelled) setResult({ svg });
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setResult({ error: error instanceof Error ? error.message : String(error) });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [diagram, discardable, id]);
-
-  if (discardable) return <div className="informio-block-preview-muted">Empty diagram</div>;
-  if (result.error) return <div className="informio-block-error">{result.error}</div>;
-  if (!result.svg) return <div className="informio-block-preview-muted">Rendering diagram...</div>;
-  return <div className="informio-mermaid-preview" dangerouslySetInnerHTML={{ __html: result.svg }} />;
-}
-
-export const ChartBlock = Node.create({
-  name: "chartBlock",
+export const FootnoteBlock = Node.create({
+  name: "footnoteBlock",
   group: "block",
   content: "text*",
   marks: "",
   code: true,
   defining: true,
   addAttributes() {
-    return { text: { default: "flowchart TD\\n  A[Start] --> B[End]" }, ...editableSourceAttributes() };
+    return {
+      index: { default: "1" },
+      text: { default: "Footnote" },
+      ...editableSourceAttributes()
+    };
   },
   markdownTokenizer: {
-    name: "chartBlock",
+    name: "footnoteBlock",
     level: "block",
     start(src: string) {
-      return src.match(/^```mermaid/m)?.index ?? -1;
+      return src.match(/^\[\^[^\]]+]:/m)?.index ?? -1;
     },
     tokenize(src: string) {
-      const match = src.match(/^```mermaid[^\n]*\n([\s\S]*?)\n```(?:\n|$)/);
+      const match = src.match(/^\[\^([^\]]+)]:\s*(.*)(?:\n|$)/);
       if (!match) return undefined;
-      return { type: "chartBlock", raw: match[0], text: match[1].trim() };
+      return { type: "footnoteBlock", raw: match[0], index: match[1], text: match[2].trim() };
     }
   },
   parseMarkdown(token: MarkdownTokenLike, h: MarkdownHelperLike) {
-    const source = token.raw?.trim() ?? defaultBlockSource("chartBlock");
-    return h.createNode("chartBlock", { text: token.text ?? "flowchart TD\n  A[Start] --> B[End]", source }, sourceContent(source, h));
+    const source = token.raw?.trim() ?? defaultBlockSource("footnoteBlock");
+    return h.createNode("footnoteBlock", { index: token.index ?? "1", text: token.text ?? "Footnote", source }, sourceContent(source, h));
   },
   parseHTML() {
-    return [{ tag: 'div[data-type="chart-block"]' }];
+    return [{ tag: 'section[data-type="footnote-block"]' }];
   },
-  renderHTML({ HTMLAttributes, node }: { HTMLAttributes: Record<string, unknown>; node: { attrs: { text: string }; textContent?: string } }) {
-    const source = node.textContent !== "" ? (node.textContent ?? "") : nodeSourceAttr(node, "chartBlock");
-    const diagram = chartTextFromSource(source);
-    const labels = chartLabels(diagram);
-    const flow =
-      labels.length > 1
-        ? [
-            "div",
-            { class: "informio-chart-preview" },
-            ...labels.flatMap((label, index) => [
-              ["span", { class: "informio-chart-node" }, label],
-              ...(index < labels.length - 1 ? [["span", { class: "informio-chart-arrow" }, "->"]] : [])
-            ])
-        ]
-        : ["pre", { class: "informio-chart-source" }, diagram];
-
+  renderHTML({
+    HTMLAttributes,
+    node
+  }: {
+    HTMLAttributes: Record<string, unknown>;
+    node: { attrs: { index: string; text: string }; textContent?: string };
+  }) {
+    const source = node.textContent !== "" ? (node.textContent ?? "") : nodeSourceAttr(node, "footnoteBlock");
+    const footnote = footnoteFromSource(source);
     return [
-      "div",
-      mergeAttributes(HTMLAttributes, { "data-type": "chart-block", class: "informio-chart-block" }),
-      ["span", { class: "informio-block-label" }, "Mermaid"],
-      flow,
-      ["pre", { class: "informio-chart-source" }, diagram]
+      "section",
+      mergeAttributes(HTMLAttributes, { "data-type": "footnote-block", class: "informio-footnote-block" }),
+      ["sup", {}, footnote.index],
+      ["span", {}, footnote.text]
     ];
   },
-  renderMarkdown(node: { attrs?: { text?: string } }) {
-    return `\n${jsonSourceText(node as JSONContent, "chartBlock")}\n`;
+  renderMarkdown(node: { attrs?: { index?: string; text?: string } }) {
+    return `\n${jsonSourceText(node as JSONContent, "footnoteBlock")}\n`;
   },
   addNodeView() {
     return ReactNodeViewRenderer(EditableSourceBlockView);
@@ -219,9 +173,19 @@ function EditableSourceBlockView({ editor, getPos, node, selected, updateAttribu
       <NodeViewContent as={"pre" as "div"} className={cn("informio-plain-source-content", !active && "is-hidden-source-content")} />
       {!active ? (
         <div className="informio-source-preview" contentEditable={false}>
-          <ChartPreview source={source} />
+          <FootnoteBlockPreview source={source} />
         </div>
       ) : null}
     </NodeViewWrapper>
+  );
+}
+
+function FootnoteBlockPreview({ source }: { source: string }) {
+  const footnote = footnoteFromSource(source);
+  return (
+    <div className="informio-footnote-preview">
+      <sup>{footnote.index}</sup>
+      <span>{footnote.text}</span>
+    </div>
   );
 }

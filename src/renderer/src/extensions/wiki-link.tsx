@@ -4,7 +4,8 @@ import type { ReactNodeViewProps } from "@tiptap/react";
 import React from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { WikiLinkOptions, MarkdownTokenLike, MarkdownHelperLike } from "../types";
-import { resolveWikiLink, parseWikiLinkBody, wikiLinkText, buildDocumentLookupIndex } from "../lib/markdown-block-parser";
+import { resolveWikiLink, buildDocumentLookupIndex } from "../lib/markdown-block-parser";
+import { parseWikiLinkBody, wikiLinkText } from "../lib/markdown";
 import { cn } from "../lib/utils";
 
 function WikiLinkView({ node, extension }: ReactNodeViewProps) {
