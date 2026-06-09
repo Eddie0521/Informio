@@ -64,12 +64,12 @@ export const setLastToolbarSelectionText = (value: string) => {
   lastToolbarSelectionText = value;
 };
 
-const quoteFontFamily = (family: string) => `"${family.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-const buildConfiguredFontStack = (family: string | undefined, fallback: string) => {
+export const quoteFontFamily = (family: string) => `"${family.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+export const buildConfiguredFontStack = (family: string | undefined, fallback: string) => {
   const trimmed = family?.trim();
   return trimmed ? `${quoteFontFamily(trimmed)}, ${fallback}` : fallback;
 };
-const buildUiFontStack = (
+export const buildUiFontStack = (
   englishFontFamily: string | undefined,
   chineseFontFamily: string | undefined
 ) => {
@@ -89,7 +89,7 @@ const buildUiFontStack = (
   ].filter(Boolean);
   return Array.from(new Set(orderedFamilies)).join(", ");
 };
-const buildShellStyle = (appearance: AppSettings["appearance"]): CSSProperties => {
+export const buildShellStyle = (appearance: AppSettings["appearance"]): CSSProperties => {
   const style: CSSProperties & Record<string, string> = {
     "--informio-font-family": buildUiFontStack(
       appearance.englishFontFamily,
