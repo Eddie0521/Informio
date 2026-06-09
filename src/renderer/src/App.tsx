@@ -422,33 +422,7 @@ import type {
 } from "./pdfSurface";
 import "katex/dist/katex.min.css";
 
-const getThemeSwatchStyle = (themeId: ThemeName, customThemeColor: string): CSSProperties => {
-  const option = themeOptions.find((item) => item.id === themeId) ?? themeOptions[0];
-  const accent = themeId === "custom" ? customThemeColor : option.accent;
-  return {
-    background: `linear-gradient(140deg, ${option.surface} 0 64%, ${accent} 64% 100%)`,
-    boxShadow: "inset 0 0 0 1px rgba(15, 23, 42, 0.12)"
-  };
-};
-
-const isDarkColor = (color: string) => {
-  const normalized = color.replace("#", "");
-  if (normalized.length !== 6) return false;
-  const red = Number.parseInt(normalized.slice(0, 2), 16);
-  const green = Number.parseInt(normalized.slice(2, 4), 16);
-  const blue = Number.parseInt(normalized.slice(4, 6), 16);
-  const luminance = (red * 299 + green * 587 + blue * 114) / 1000;
-  return luminance < 150;
-};
-
-const settingsNav = [
-  { id: "appearance", label: "外观", icon: Palette },
-  { id: "editor", label: "编辑器", icon: Text },
-  { id: "agent", label: "Agent", icon: Unplug },
-  { id: "api", label: "API", icon: Search },
-  { id: "shortcuts", label: "快捷键", icon: Keyboard },
-  { id: "about", label: "关于", icon: Info }
-] as const;
+import { getThemeSwatchStyle, isDarkColor, settingsNav, mergeFontOptions, lastToolbarSelectionText, setLastToolbarSelectionText } from "./lib/settings-helpers";
 
 const quoteFontFamily = (family: string) => `"${family.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
@@ -478,20 +452,6 @@ const buildUiFontStack = (
   return Array.from(new Set(orderedFamilies)).join(", ");
 };
 
-const mergeFontOptions = (fonts: LocalFontOption[], ...currentFamilies: Array<string | undefined>) => {
-  const deduped = new Map<string, LocalFontOption>();
-  fonts.forEach((font) => {
-    const family = font.family.trim();
-    if (!family || deduped.has(family)) return;
-    deduped.set(family, { ...font, family });
-  });
-  currentFamilies.forEach((family) => {
-    const trimmed = family?.trim();
-    if (!trimmed || deduped.has(trimmed)) return;
-    deduped.set(trimmed, { family: trimmed });
-  });
-  return Array.from(deduped.values()).sort((left, right) => left.family.localeCompare(right.family));
-};
 
 const buildShellStyle = (appearance: AppSettings["appearance"]): CSSProperties => {
   const style: CSSProperties & Record<string, string> = {
@@ -863,11 +823,6 @@ const parseTreeDragPayload = (dataTransfer: DataTransfer): TreeDragPayload | nul
 };
 
 let selectionToolbarInteractionLockUntil = 0;
-// Most recent drag-selected text inside the selection-translate toolbar.
-// Captured on mouseup inside TranslationResultText so that Cmd+C can still
-// honor a partial drag even when the DOM Selection collapses before the
-// Electron menu accelerator fires `edit:copy`.
-let lastToolbarSelectionText = "";
 
 const resolveTranslationTarget = (text: string): "zh-CN" | "en" => {
   const normalized = text.trim();
@@ -9689,7 +9644,7 @@ function SelectionToolbar({
             <TranslationResultText
               text={response}
               onSelectionChange={(value) => {
-                lastToolbarSelectionText = value;
+                setLastToolbarSelectionText(value);
               }}
             />
           ) : null}
@@ -9807,7 +9762,7 @@ function SelectionTranslateSection({
         <TranslationResultText
           text={response}
           onSelectionChange={(value) => {
-            lastToolbarSelectionText = value;
+            setLastToolbarSelectionText(value);
           }}
         />
       ) : null}
