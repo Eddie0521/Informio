@@ -12,30 +12,8 @@ import type {
 } from "react";
 import type { Editor, MarkdownParseHelpers, MarkdownRendererHelpers, PasteRuleMatch } from "@tiptap/core";
 import { Extension, InputRule, markPasteRule, mergeAttributes, Node, ResizableNodeView } from "@tiptap/core";
-import type { JSONContent } from "@tiptap/core";
-import type { ReactNodeViewProps } from "@tiptap/react";
-import { EditorContent, NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { DOMParser as ProseMirrorDOMParser, DOMSerializer, Fragment as ProseMirrorFragment } from "@tiptap/pm/model";
-import { NodeSelection, Plugin, TextSelection } from "@tiptap/pm/state";
-import { CellSelection, TableMap } from "@tiptap/pm/tables";
-import StarterKit from "@tiptap/starter-kit";
-import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "@tiptap/markdown";
-import { CodeBlockLowlight } from "@tiptap/extension-code-block-lowlight";
-import Highlight from "@tiptap/extension-highlight";
-import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
-import SubscriptExtension from "@tiptap/extension-subscript";
-import SuperscriptExtension from "@tiptap/extension-superscript";
-import { Table } from "@tiptap/extension-table";
-import TableCell from "@tiptap/extension-table-cell";
-import TableHeader from "@tiptap/extension-table-header";
-import TableRow from "@tiptap/extension-table-row";
-import TaskItem from "@tiptap/extension-task-item";
-import TaskList from "@tiptap/extension-task-list";
-import UnderlineExtension from "@tiptap/extension-underline";
-import katex from "katex";
 import * as YAML from "yaml";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Select from "@radix-ui/react-select";
@@ -402,7 +380,6 @@ import type {
   LowlightNode,
   UnifiedToolbarTranslateState,
 } from "./types";
-import { TranslationResultText } from "./components/TranslationResultText";
 import {
   clipboardPlainTextForPaste,
   htmlFragmentHasContent,
@@ -410,7 +387,6 @@ import {
   sanitizeHtmlFragmentForPaste,
   stripClipboardFragmentMarkers
 } from "./lib/clipboardPaste";
-import { normalizeAgentMathMarkdown } from "./lib/agentMathMarkdown";
 import {
   PdfBlockView as UnifiedPdfBlockView,
   PdfEditorContext as UnifiedPdfEditorContext,
@@ -422,7 +398,6 @@ import type {
 import "katex/dist/katex.min.css";
 
 import { getThemeSwatchStyle, isDarkColor, settingsNav, mergeFontOptions, lastToolbarSelectionText, setLastToolbarSelectionText, syncDocumentAppearanceVariables, buildShellStyle, buildConfiguredFontStack, buildUiFontStack } from "./lib/settings-helpers";
-import { InsertToolbar, insertToolbarActions, markSelectionToolbarInteraction, isSelectionToolbarInteractionActive } from "./components/InsertToolbar";
 
 const resolveTranslationTarget = (text: string): "zh-CN" | "en" => {
   const normalized = text.trim();
