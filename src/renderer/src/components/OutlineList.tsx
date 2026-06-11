@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { InformioDocument, OutlineItem } from "../types";
 import { cn } from "../lib/utils";
 
@@ -29,6 +30,7 @@ export function OutlineList({
   width: number;
   onJump: (item: OutlineItem) => void;
 }) {
+  const { t } = useTranslation();
   const outline = useMemo(() => getDocumentOutline(document.markdown), [document.markdown]);
   const [activeOutlineId, setActiveOutlineId] = useState<string | null>(null);
   const baseLevel = outline.reduce((level, item) => Math.min(level, item.level), 6);
@@ -61,7 +63,7 @@ export function OutlineList({
             );
           })
         ) : (
-          <div className="informio-outline-empty">暂无大纲</div>
+          <div className="informio-outline-empty">{t("outline.empty")}</div>
         )}
       </div>
     </aside>

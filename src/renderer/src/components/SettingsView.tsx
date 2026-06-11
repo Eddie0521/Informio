@@ -1,11 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useAgentStore, useUiStore, useAppStore } from "../stores";
 import * as Select from "@radix-ui/react-select";
 import * as Switch from "@radix-ui/react-switch";
 import {
   Check,
   ChevronDown,
+  Download,
   Github,
   Loader2,
+  RefreshCw,
   Square,
 } from "lucide-react";
 import type {
@@ -49,30 +53,40 @@ import { SettingRow } from "./SettingRow";
 import { ShortcutBindingControl } from "./ShortcutBindingControl";
 import { FontFamilySelect } from "./FontFamilySelect";
 import { WindowControls } from "./WindowControls";
+import { normalizeUiLanguage, uiLanguageToSettingsLanguage } from "../i18n";
+
+const shortcutCategoryKey = (category: string) => {
+  if (category === "查找与编辑") return "findEdit";
+  if (category === "文本格式") return "formatting";
+  return "windowFile";
+};
+
+const shortcutItemKey = (id: string) => id.replace(/\./g, "_");
+
+const formatBytes = (bytes: number) => {
+  if (bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** i).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+};
 
 export function SettingsView({
   settings,
-  connections,
   onChange,
   onCheckAgents,
-  checkingAgents,
   onCheckApiModels,
-  checkingApiModels,
-  apiCheckState,
-  appInfo,
   showWindowControls
 }: {
   settings: AppSettings;
-  connections: AgentConnection[];
   onChange: (settings: AppSettings) => void;
   onCheckAgents: () => void;
-  checkingAgents: boolean;
   onCheckApiModels: () => void;
-  checkingApiModels: boolean;
-  apiCheckState: ApiCheckState;
-  appInfo: AppInfo;
   showWindowControls: boolean;
 }) {
+  const { t, i18n } = useTranslation();
+  const { connections, checkingAgents } = useAgentStore();
+  const { checkingApiModels, apiCheckState } = useUiStore();
+  const { appInfo } = useAppStore();
   const apiSettings = normalizeApiSettings(settings.api);
   const customThemeColor = settings.appearance.customThemeColor || DEFAULT_CUSTOM_THEME_COLOR;
   const updateAppearance = (patch: Partial<AppSettings["appearance"]>) =>
@@ -85,6 +99,17 @@ export function SettingsView({
     const normalized = requested === "markdown" ? "editor" : requested === "integrations" ? "agent" : requested;
     return settingsNav.some((item) => item.id === normalized) ? (normalized as (typeof settingsNav)[number]["id"]) : "appearance";
   });
+  const [updateCheckStatus, setUpdateCheckStatus] = useState<"idle" | "checking" | "available" | "downloading" | "downloaded" | "up-to-date">("idle");
+  const [updateInfo, setUpdateInfo] = useState<{ version: string; releaseNotes: string } | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState({ percent: 0, transferred: 0, total: 0 });
+
+  // Listen for update events from main process
+  useEffect(() => {
+    window.informio.onUpdateAvailable(() => {});
+    window.informio.onUpdateDownloaded(() => setUpdateCheckStatus("downloaded"));
+    window.informio.onDownloadProgress((info) => setDownloadProgress({ percent: info.percent, transferred: info.transferred, total: info.total }));
+  }, []);
+
   const [localFontsState, setLocalFontsState] = useState<{
     status: "idle" | "loading" | "ready" | "error";
     fonts: LocalFontOption[];
@@ -134,7 +159,11 @@ export function SettingsView({
     };
     const conflict = findShortcutConflict(nextBindings, id, nextBindings[id]);
     if (conflict) {
-      setShortcutError(`“${shortcutRegistryById.get(id)?.label || id}” 与 “${conflict.label}” 不能使用同一个快捷键。`);
+      const firstId = shortcutRegistryById.get(id)?.id ?? id;
+      setShortcutError(t("settings.shortcuts.conflictError", {
+        first: t(`shortcuts.items.${shortcutItemKey(firstId)}.label`),
+        second: t(`shortcuts.items.${shortcutItemKey(conflict.id)}.label`)
+      }));
       return;
     }
     setShortcutError(null);
@@ -172,7 +201,7 @@ export function SettingsView({
                     )}
                   >
                     <Icon size={17} />
-                    {item.label}
+                    {t(`settings.nav.${item.id}`)}
                   </button>
                 );
               })}
@@ -184,13 +213,33 @@ export function SettingsView({
               <div className="absolute right-0 top-0 h-full">
                 <WindowControls visible={showWindowControls} />
               </div>
-              <h1 className="text-[12px] font-bold">设置</h1>
+              <h1 className="text-[12px] font-bold">{t("settings.title")}</h1>
             </div>
             <div className="no-drag overflow-y-auto px-10 py-7">
 
             {section === "appearance" && (
               <section>
-                <h2 className="text-[18px] font-bold">主题</h2>
+                <h2 className="text-[18px] font-bold">{t("settings.appearance.language")}</h2>
+                <div className="settings-divide mt-4 divide-y">
+                  <SettingRow title={t("settings.appearance.language")} description={t("settings.appearance.languageDescription")}>
+                    <select
+                      value={normalizeUiLanguage(i18n.language || settings.language)}
+                      onChange={(e) => {
+                        const lang = normalizeUiLanguage(e.target.value);
+                        void i18n.changeLanguage(lang);
+                        localStorage.setItem("informio-language", lang);
+                        onChange({ ...settings, language: uiLanguageToSettingsLanguage(lang) });
+                        window.informio.setLanguage(lang);
+                      }}
+                      className="h-8 cursor-pointer rounded-md border bg-transparent px-2 text-[12px] text-[var(--text-main)]"
+                    >
+                      <option value="zh">{t("settings.appearance.chineseLanguage")}</option>
+                      <option value="en">English</option>
+                    </select>
+                  </SettingRow>
+                </div>
+
+                <h2 className="mt-12 text-[18px] font-bold">{t("settings.appearance.theme")}</h2>
                 <div className="mt-4 flex flex-wrap gap-6">
                   {themeOptions.map((theme) => (
                     <button
@@ -213,16 +262,16 @@ export function SettingsView({
                           />
                         ) : null}
                       </span>
-                      <span className="mt-2 block text-[12px] font-medium text-[var(--text-muted)]">{theme.label}</span>
+                      <span className="mt-2 block text-[12px] font-medium text-[var(--text-muted)]">{t(`theme.${theme.id}`)}</span>
                     </button>
                   ))}
                 </div>
                 {settings.appearance.theme === "custom" ? (
                   <div className="mt-5 flex items-center justify-between gap-4 rounded-2xl border border-[var(--divider)] bg-[var(--surface-elevated)] px-4 py-3">
                     <div>
-                      <div className="text-[14px] font-bold text-[var(--text-main)]">自定义颜色</div>
+                      <div className="text-[14px] font-bold text-[var(--text-main)]">{t("settings.appearance.customColor")}</div>
                       <div className="mt-1 text-[12px] text-[var(--text-muted)]">
-                        保持当前界面对比度，只把整体基调换成你选的颜色。
+                        {t("settings.appearance.customColorDesc")}
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -234,7 +283,7 @@ export function SettingsView({
                         <input
                           type="color"
                           value={customThemeColor}
-                          aria-label="选择自定义主题颜色"
+                          aria-label={t("settings.appearance.selectCustomColor")}
                           onChange={(event) => updateAppearance({ theme: "custom", customThemeColor: event.target.value })}
                           className="absolute inset-0 cursor-pointer opacity-0"
                         />
@@ -246,9 +295,9 @@ export function SettingsView({
                   </div>
                 ) : null}
 
-                <h2 className="mt-12 text-[18px] font-bold">字体</h2>
+                <h2 className="mt-12 text-[18px] font-bold">{t("settings.appearance.font")}</h2>
                 <div className="settings-divide mt-4 divide-y">
-                  <SettingRow title="中文字体" description="影响整个软件里的中文显示，包括侧栏、工具栏、设置页和编辑器正文。">
+                  <SettingRow title={t("settings.appearance.chineseFont")} description={t("settings.appearance.chineseFontDesc")}>
                     <FontFamilySelect
                       value={settings.appearance.chineseFontFamily}
                       options={localFontOptions}
@@ -258,7 +307,7 @@ export function SettingsView({
                       }}
                     />
                   </SettingRow>
-                  <SettingRow title="英文字体" description="影响整个软件里的英文、数字和拉丁字符显示。">
+                  <SettingRow title={t("settings.appearance.englishFont")} description={t("settings.appearance.englishFontDesc")}>
                     <FontFamilySelect
                       value={settings.appearance.englishFontFamily}
                       options={localFontOptions}
@@ -268,7 +317,7 @@ export function SettingsView({
                       }}
                     />
                   </SettingRow>
-                  <SettingRow title="代码字体" description="影响代码块、源码模式，以及路径、命令、日志这类等宽信息。">
+                  <SettingRow title={t("settings.appearance.codeFont")} description={t("settings.appearance.codeFontDesc")}>
                     <FontFamilySelect
                       value={settings.appearance.codeFontFamily}
                       options={localFontOptions}
@@ -280,15 +329,15 @@ export function SettingsView({
                   </SettingRow>
                 </div>
                 {localFontsState.status === "loading" ? (
-                  <p className="mt-3 text-[12px] text-[var(--text-muted)]">正在读取本地字体列表……</p>
+                  <p className="mt-3 text-[12px] text-[var(--text-muted)]">{t("settings.appearance.loadingFonts")}</p>
                 ) : null}
                 {localFontsState.error ? (
                   <p className="mt-3 text-[12px] text-[var(--text-muted)]">{localFontsState.error}</p>
                 ) : null}
 
-                <h2 className="mt-12 text-[18px] font-bold">窗口</h2>
+                <h2 className="mt-12 text-[18px] font-bold">{t("settings.appearance.window")}</h2>
                 <div className="settings-divide mt-4 divide-y">
-                  <SettingRow title="自动隐藏状态栏" description="不交互时隐藏底部统计">
+                  <SettingRow title={t("settings.appearance.autoHideStatusBar")} description={t("settings.appearance.autoHideStatusBarDesc")}>
                     <Switch.Root
                       checked={settings.appearance.autoHideStatusBar}
                       onCheckedChange={(value) => updateAppearance({ autoHideStatusBar: value })}
@@ -299,9 +348,9 @@ export function SettingsView({
                   </SettingRow>
                 </div>
 
-                <h2 className="mt-12 text-[18px] font-bold">编辑器</h2>
+                <h2 className="mt-12 text-[18px] font-bold">{t("settings.editor.title")}</h2>
                 <div className="settings-divide mt-4 divide-y">
-                  <SettingRow title="编辑字号" description={`${settings.editor.fontSize}px，影响正文阅读密度`}>
+                  <SettingRow title={t("settings.editor.fontSizeLabel")} description={t("settings.editor.fontSizeDesc", { size: settings.editor.fontSize })}>
                     <input
                       type="range"
                       min={12}
@@ -312,7 +361,7 @@ export function SettingsView({
                       }
                     />
                   </SettingRow>
-                  <SettingRow title="编辑宽度" description={`${settings.editor.contentWidth}px，控制正文列总宽度`}>
+                  <SettingRow title={t("settings.editor.contentWidthLabel")} description={t("settings.editor.contentWidthDesc", { size: settings.editor.contentWidth })}>
                     <input
                       type="range"
                       min={EDITOR_CONTENT_MIN_WIDTH}
@@ -325,11 +374,11 @@ export function SettingsView({
                   </SettingRow>
                 </div>
 
-                <h2 className="mt-12 text-[18px] font-bold">对话栏</h2>
+                <h2 className="mt-12 text-[18px] font-bold">{t("settings.chat.title")}</h2>
                 <div className="settings-divide mt-4 divide-y">
                   <SettingRow
-                    title="对话字号"
-                    description={`${settings.appearance.chatFontSize}px，影响 User、Agent 名称、用户消息、AI 回复和“已处理”这一行；执行流内部会自动小 2px`}
+                    title={t("settings.chat.fontSize")}
+                    description={t("settings.chat.fontSizeDesc", { size: settings.appearance.chatFontSize })}
                   >
                     <input
                       type="range"
@@ -353,12 +402,12 @@ export function SettingsView({
                 <div className="flex items-start gap-5">
                   <div>
                     <h2 className="text-[18px] font-bold text-[var(--text-main)]">Agent</h2>
-                    <p className="mt-2 text-[13px] text-[var(--text-muted)]">Informio 会用选中文本、当前文档、打开 Tab、项目文件结构作为上下文，调用本机已安装的 Agent。</p>
+                    <p className="mt-2 text-[13px] text-[var(--text-muted)]">{t("settings.agent.description")}</p>
                   </div>
                 </div>
 
                 <div className="settings-divide mt-6 divide-y">
-                  <SettingRow title="启用 Agent" description="关闭后不会启动本机 Agent，也不会发送文档上下文。">
+                  <SettingRow title={t("settings.agent.enabled")} description={t("settings.agent.enabledDesc")}>
                     <Switch.Root
                       checked={settings.agentRuntime.enabled}
                       onCheckedChange={(value) => onChange({ ...settings, agentRuntime: { ...settings.agentRuntime, enabled: value } })}
@@ -367,7 +416,7 @@ export function SettingsView({
                       <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
                     </Switch.Root>
                   </SettingRow>
-                  <SettingRow title="自动启动" description="打开应用后自动预连接全部已启用 Agent，首次切换更快。">
+                  <SettingRow title={t("settings.agent.autoStart")} description={t("settings.agent.autoStartDesc")}>
                     <Switch.Root
                       checked={settings.agentRuntime.autoStart}
                       disabled={!settings.agentRuntime.enabled}
@@ -377,7 +426,7 @@ export function SettingsView({
                       <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
                     </Switch.Root>
                   </SettingRow>
-                  <SettingRow title="保留会话数量" description="每个 Agent 最多保留多少条历史会话。">
+                  <SettingRow title={t("settings.agent.conversationRetentionLimit")} description={t("settings.agent.conversationRetentionLimitDesc")}>
                     <input
                       type="number"
                       min={1}
@@ -395,7 +444,7 @@ export function SettingsView({
                       className="h-9 w-20 rounded-md bg-white px-3 text-center font-mono text-[13px] ring-1 ring-slate-200"
                     />
                   </SettingRow>
-                  <SettingRow title="保留会话时间" description="超出这个时间的历史会话会自动清理。">
+                  <SettingRow title={t("settings.agent.conversationRetentionDays")} description={t("settings.agent.conversationRetentionDaysDesc")}>
                     <input
                       type="number"
                       min={1}
@@ -417,7 +466,7 @@ export function SettingsView({
 
                 <div className="surface-card mt-6 rounded-lg p-4 shadow-[0_1px_5px_rgba(15,23,42,0.12)]">
                   <div className="mb-2 flex items-center justify-between gap-3">
-                    <div className="text-[13px] font-bold text-[var(--text-main)]">工作 Agent</div>
+                    <div className="text-[13px] font-bold text-[var(--text-main)]">{t("settings.agent.workAgent")}</div>
                     <button
                       type="button"
                       onClick={onCheckAgents}
@@ -425,10 +474,10 @@ export function SettingsView({
                       className="inline-flex h-6 items-center gap-1 rounded-md px-2 text-[12px] font-bold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-35"
                     >
                       {checkingAgents ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                      检测
+                      {t("common.detect")}
                     </button>
                   </div>
-                  <p className="mb-3 text-[12px] leading-5 text-[var(--text-muted)]">用于右侧工作面板，适合较重的问答、改写和上下文任务。</p>
+                  <p className="mb-3 text-[12px] leading-5 text-[var(--text-muted)]">{t("settings.agent.workAgentDesc")}</p>
                   <div className="divide-y divide-[var(--divider)]">
                     {settings.agents.map((agent) => {
                       const connection = connections.find((item) => item.providerId === agent.id);
@@ -452,7 +501,7 @@ export function SettingsView({
                           </span>
                           <span className="flex shrink-0 items-center gap-2 text-[12px] font-bold text-[var(--text-muted)]">
                             <span className={cn("h-2.5 w-2.5 rounded-full", connectionTone[status])} />
-                            {connectionLabel[status]}
+                            {t(`status.connection.${status}`)}
                           </span>
                         </button>
                       );
@@ -467,12 +516,12 @@ export function SettingsView({
                 <div className="flex items-start justify-between gap-5">
                   <div>
                     <h2 className="text-[18px] font-bold text-[var(--text-main)]">API</h2>
-                    <p className="mt-2 text-[13px] text-[var(--text-muted)]">Markdown 和 PDF 的划词翻译都会走这里配置的接口，不再依赖 Agent runtime。</p>
+                    <p className="mt-2 text-[13px] text-[var(--text-muted)]">{t("settings.api.translationDesc")}</p>
                   </div>
                 </div>
 
                 <div className="settings-divide mt-6 divide-y">
-                  <SettingRow title="Provider" description={apiProviderOptions.find((item) => item.id === apiSettings.provider)?.description}>
+                  <SettingRow title="Provider" description={t(`apiProvider.${apiSettings.provider}.description`)}>
                     <Select.Root
                       value={apiSettings.provider}
                       onValueChange={(value) => {
@@ -502,7 +551,7 @@ export function SettingsView({
                                 value={item.id}
                                 className="cursor-default rounded-md px-3 py-2 text-[13px] font-semibold text-slate-700 outline-none data-[highlighted]:bg-emerald-50 data-[highlighted]:text-slate-950"
                               >
-                                <Select.ItemText>{item.label}</Select.ItemText>
+                              <Select.ItemText>{item.label}</Select.ItemText>
                               </Select.Item>
                             ))}
                           </Select.Viewport>
@@ -521,7 +570,7 @@ export function SettingsView({
                       }
                       className="h-9 min-w-0 rounded-md bg-white px-3 font-mono text-[13px] text-[var(--text-main)] outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-emerald-500/45"
                     />
-                    <p className="text-[12px] text-[var(--text-muted)]">例如 {defaultApiBaseUrl(apiSettings.provider)}</p>
+                    <p className="text-[12px] text-[var(--text-muted)]">{t("settings.api.example", { url: defaultApiBaseUrl(apiSettings.provider) })}</p>
                   </div>
 
                   <div className="grid gap-2 py-5">
@@ -538,7 +587,7 @@ export function SettingsView({
 
                 <div className="surface-card mt-6 rounded-lg p-4 shadow-[0_1px_5px_rgba(15,23,42,0.12)]">
                   <div className="flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2">
-                    <span className="text-[12px] font-semibold text-[var(--text-muted)]">翻译模型</span>
+                    <span className="text-[12px] font-semibold text-[var(--text-muted)]">{t("settings.api.translationModel")}</span>
                     <div className="flex items-center gap-2">
                       <Select.Root
                         value={apiSettings.model}
@@ -546,9 +595,9 @@ export function SettingsView({
                         disabled={!apiSettings.models.length}
                       >
                         <Select.Trigger className="flex h-8 min-w-[220px] max-w-[320px] items-center justify-between gap-2 rounded-md bg-white px-3 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-1 ring-slate-200 transition-colors hover:bg-slate-50 focus:ring-2 focus:ring-emerald-500/45 disabled:cursor-not-allowed disabled:opacity-45">
-                          <Select.Value placeholder="先检测可用模型">
+                          <Select.Value placeholder={t("settings.api.detectModelsFirst")}>
                             <span className="block truncate text-[13px] leading-8">
-                              {apiSettings.model ? modelLabel(apiSettings.models, apiSettings.model) : "先检测可用模型"}
+                              {apiSettings.model ? modelLabel(apiSettings.models, apiSettings.model) : t("settings.api.detectModelsFirst")}
                             </span>
                           </Select.Value>
                           <Select.Icon>
@@ -578,11 +627,11 @@ export function SettingsView({
                         className="inline-flex h-8 items-center gap-2 rounded-md bg-slate-950 px-3 text-[13px] font-bold text-white transition-transform active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-300"
                       >
                         {checkingApiModels ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                        检测
+                        {t("common.detect")}
                       </button>
                     </div>
                   </div>
-                  <p className="mt-3 text-[12px] leading-5 text-[var(--text-muted)]">检测会读取当前接口下可用模型，成功后即可给划词翻译单独指定一个更快的模型。</p>
+                  <p className="mt-3 text-[12px] leading-5 text-[var(--text-muted)]">{t("settings.api.detectModelsDesc")}</p>
                   {apiCheckState.message ? <p className="mt-3 text-[12px] text-emerald-700">{apiCheckState.message}</p> : null}
                   {apiCheckState.error ? <p className="mt-3 text-[12px] text-red-700">{apiCheckState.error}</p> : null}
                 </div>
@@ -591,7 +640,7 @@ export function SettingsView({
 
             {section === "about" && (
               <section className="max-w-4xl">
-                <h2 className="text-[18px] font-bold text-[var(--text-main)]">关于</h2>
+                <h2 className="text-[18px] font-bold text-[var(--text-main)]">{t("settings.about.title")}</h2>
                 <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-start">
                   <div className="flex items-start gap-5">
                     <img
@@ -601,11 +650,11 @@ export function SettingsView({
                     />
                     <div className="pt-1">
                       <div className="text-[15px] font-bold text-[var(--text-main)]">{appInfo.name || "Informio"}</div>
-                      <p className="mt-1 text-[13px] text-[var(--text-muted)]">版本 {appInfo.version || "-"}</p>
+                      <p className="mt-1 text-[13px] text-[var(--text-muted)]">{t("settings.about.version")} {appInfo.version || "-"}</p>
                     </div>
                   </div>
 
-                  <div className="justify-self-start pt-1 lg:justify-self-end">
+                  <div className="flex flex-col items-start gap-2 pt-1 lg:items-end">
                     <button
                       type="button"
                       disabled={!appInfo.githubUrl}
@@ -617,6 +666,92 @@ export function SettingsView({
                       <Github size={18} />
                       <span className="border-b border-current/25 pb-0.5">GitHub</span>
                     </button>
+                    {updateCheckStatus === "idle" || updateCheckStatus === "up-to-date" ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUpdateCheckStatus("checking");
+                          setUpdateInfo(null);
+                          window.informio.checkForUpdates().then((result) => {
+                            if (result.available && result.version) {
+                              setUpdateInfo({ version: result.version, releaseNotes: result.releaseNotes ?? "" });
+                              setUpdateCheckStatus("available");
+                            } else {
+                              setUpdateCheckStatus("up-to-date");
+                            }
+                          }).catch(() => {
+                            setUpdateCheckStatus("up-to-date");
+                          });
+                        }}
+                        className="inline-flex items-center gap-2 text-[13px] text-[var(--text-muted)] transition-colors hover:text-[var(--text-main)]"
+                      >
+                        <RefreshCw size={14} />
+                        <span className="border-b border-current/25 pb-0.5">
+                          {updateCheckStatus === "up-to-date" ? t("settings.about.upToDate") : t("settings.about.checkUpdate")}
+                        </span>
+                      </button>
+                    ) : updateCheckStatus === "checking" ? (
+                      <span className="inline-flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
+                        <Loader2 size={14} className="animate-spin" />
+                        {t("settings.about.checking")}
+                      </span>
+                    ) : updateCheckStatus === "available" && updateInfo ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="text-[13px] text-[var(--text-main)]">
+                          {t("settings.about.newVersion")} <span className="font-semibold">v{updateInfo.version}</span>
+                        </div>
+                        {updateInfo.releaseNotes ? (
+                          <div className="max-h-32 overflow-y-auto rounded-md bg-[var(--surface-sidebar)] px-3 py-2 text-[12px] leading-5 text-[var(--text-muted)] whitespace-pre-wrap">
+                            {updateInfo.releaseNotes}
+                          </div>
+                        ) : null}
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUpdateCheckStatus("downloading");
+                              window.informio.downloadUpdate();
+                            }}
+                            className="inline-flex items-center gap-2 rounded-md bg-[var(--accent)] px-3 py-1.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
+                          >
+                            <Download size={13} />
+                            {t("settings.about.downloadInstall")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setUpdateCheckStatus("idle"); setUpdateInfo(null); }}
+                            className="text-[12px] text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                          >
+                            {t("settings.about.later")}
+                          </button>
+                        </div>
+                      </div>
+                    ) : updateCheckStatus === "downloading" ? (
+                      <div className="flex flex-col gap-1.5 min-w-48">
+                        <div className="flex items-center justify-between text-[12px] text-[var(--text-muted)]">
+                          <span>{t("settings.about.downloading")}</span>
+                          {downloadProgress.total > 0 ? (
+                            <span>{formatBytes(downloadProgress.transferred)} / {formatBytes(downloadProgress.total)}</span>
+                          ) : null}
+                        </div>
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-sidebar)]">
+                          <div
+                            className="h-full rounded-full bg-[var(--accent)] transition-all duration-300"
+                            style={{ width: `${Math.round(downloadProgress.percent)}%` }}
+                          />
+                        </div>
+                        <div className="text-right text-[11px] text-[var(--text-muted)]">{Math.round(downloadProgress.percent)}%</div>
+                      </div>
+                    ) : updateCheckStatus === "downloaded" ? (
+                      <button
+                        type="button"
+                        onClick={() => window.informio.installUpdate()}
+                        className="inline-flex items-center gap-2 text-[13px] font-semibold text-[var(--accent)] transition-opacity hover:opacity-80"
+                      >
+                        <Download size={14} />
+                        <span className="border-b border-current/25 pb-0.5">{t("settings.about.readyToInstall")}</span>
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </section>
@@ -624,11 +759,11 @@ export function SettingsView({
 
             {section !== "appearance" && section !== "agent" && section !== "api" && section !== "about" && (
               <section>
-                <h2 className="text-[18px] font-bold text-[var(--text-main)]">{settingsNav.find((item) => item.id === section)?.label}</h2>
+                <h2 className="text-[18px] font-bold text-[var(--text-main)]">{t(`settings.nav.${section}`)}</h2>
                 <div className="mt-5 divide-y">
                   {section === "editor" && (
                     <>
-                      <SettingRow title="拼写检查" description="控制正文编辑器的系统拼写检查">
+                      <SettingRow title={t("settings.editor.spellCheck")} description={t("settings.editor.spellCheckDesc")}>
                         <Switch.Root
                           checked={settings.editor.spellcheck}
                           onCheckedChange={(value) =>
@@ -639,7 +774,7 @@ export function SettingsView({
                           <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
                         </Switch.Root>
                       </SettingRow>
-	                      <SettingRow title="自动保存" description="输入后自动保存到本地应用数据">
+	                      <SettingRow title={t("settings.editor.autoSave")} description={t("settings.editor.autoSaveDesc")}>
                         <Switch.Root
                           checked={settings.markdown.autoSave}
                           onCheckedChange={(value) => onChange({ ...settings, markdown: { ...settings.markdown, autoSave: value } })}
@@ -648,7 +783,7 @@ export function SettingsView({
                           <Switch.Thumb className="block h-5 w-5 translate-x-1 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-6" />
                         </Switch.Root>
                       </SettingRow>
-                      <SettingRow title="缩进宽度" description="用于 Markdown 列表与代码块">
+                      <SettingRow title={t("settings.editor.indentWidth")} description={t("settings.editor.indentWidthDesc")}>
                         <input
                           type="number"
                           min={2}
@@ -660,7 +795,7 @@ export function SettingsView({
                           className="h-9 w-18 rounded-md bg-white px-3 text-center font-mono text-[13px] ring-1 ring-slate-200"
                         />
                       </SettingRow>
-                      <SettingRow title="插入文件" description="控制通过菜单插入图片、音频、视频和 PDF 时如何写入路径">
+                      <SettingRow title={t("settings.editor.insertFile")} description={t("settings.editor.insertFileDesc")}>
                         <Select.Root
                           value={settings.editor.assetImportMode}
                           onValueChange={(value) =>
@@ -678,10 +813,10 @@ export function SettingsView({
                             <Select.Content className="z-[80] overflow-hidden rounded-lg bg-white p-1 shadow-xl">
                               <Select.Viewport>
                                 <Select.Item value="copy-to-attachment" className="cursor-default rounded-md px-3 py-2 text-[13px] font-semibold text-slate-700 outline-none data-[highlighted]:bg-emerald-50 data-[highlighted]:text-slate-950">
-                                  <Select.ItemText>复制到 attachments</Select.ItemText>
+                                  <Select.ItemText>{t("settings.editor.copyToAttachments")}</Select.ItemText>
                                 </Select.Item>
                                 <Select.Item value="link-original-file" className="cursor-default rounded-md px-3 py-2 text-[13px] font-semibold text-slate-700 outline-none data-[highlighted]:bg-emerald-50 data-[highlighted]:text-slate-950">
-                                  <Select.ItemText>保持原路径</Select.ItemText>
+                                  <Select.ItemText>{t("settings.editor.keepOriginalPath")}</Select.ItemText>
                                 </Select.Item>
                               </Select.Viewport>
                             </Select.Content>
@@ -689,7 +824,7 @@ export function SettingsView({
                         </Select.Root>
                       </SettingRow>
                       <div className="grid gap-2 py-5">
-                        <div className="text-[15px] font-bold text-[var(--text-main)]">默认文件夹</div>
+                        <div className="text-[15px] font-bold text-[var(--text-main)]">{t("settings.editor.defaultFolder")}</div>
                         <div className="flex gap-3">
                           <input
                             value={settings.shortcuts.quickFolder}
@@ -706,7 +841,7 @@ export function SettingsView({
                             }}
                             className="rounded-md bg-slate-950 px-3 text-[13px] font-bold text-white transition-transform active:scale-95"
                           >
-                            选择
+                            {t("common.select")}
                           </button>
                         </div>
                       </div>
@@ -715,17 +850,23 @@ export function SettingsView({
                   {section === "shortcuts" && (
                     <>
                       <div className="mb-5">
-                        <h2 className="text-[18px] font-bold text-[var(--text-main)]">可配置快捷键</h2>
-                        <p className="mt-2 max-w-2xl text-[13px] leading-6 text-[var(--text-muted)]">这里直接改当前生效的快捷键。点一下键位开始录制，冲突时会当场阻止保存。</p>
+                        <h2 className="text-[18px] font-bold text-[var(--text-main)]">{t("settings.shortcuts.title")}</h2>
+                        <p className="mt-2 max-w-2xl text-[13px] leading-6 text-[var(--text-muted)]">{t("settings.shortcuts.description")}</p>
                       </div>
                       {shortcutError ? <p className="mb-4 rounded-md bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">{shortcutError}</p> : null}
                       <div className="space-y-6">
                         {shortcutGroups.map((group) => (
                           <section key={group.title}>
-                            <div className="mb-2 text-[12px] font-bold tracking-[0.08em] text-[var(--text-muted)] uppercase">{group.title}</div>
+                            <div className="mb-2 text-[12px] font-bold tracking-[0.08em] text-[var(--text-muted)] uppercase">
+                              {t(`shortcuts.categories.${shortcutCategoryKey(group.title)}`)}
+                            </div>
                             <div className="divide-y divide-[var(--divider)] border-y border-[var(--divider)]/80">
                               {group.items.map((entry) => (
-                                <SettingRow key={entry.id} title={entry.label} description={entry.description}>
+                                <SettingRow
+                                  key={entry.id}
+                                  title={t(`shortcuts.items.${shortcutItemKey(entry.id)}.label`)}
+                                  description={t(`shortcuts.items.${shortcutItemKey(entry.id)}.description`)}
+                                >
                                   <ShortcutBindingControl
                                     value={settings.shortcuts.bindings[entry.id]}
                                     recording={recordingShortcutId === entry.id}
@@ -746,10 +887,10 @@ export function SettingsView({
                   )}
                   {section !== "editor" && section !== "shortcuts" && (
                     <>
-                      <SettingRow title="保持极简默认值" description="这一页的高级配置会在后续版本逐步展开">
+                      <SettingRow title={t("settings.advanced.keepMinimal")} description={t("settings.advanced.keepMinimalDesc")}>
                         <Square size={18} className="text-slate-400" />
                       </SettingRow>
-                      <SettingRow title="当前策略" description="先保证写作主路径顺滑，再开放低频细项">
+                      <SettingRow title={t("settings.advanced.currentStrategy")} description={t("settings.advanced.currentStrategyDesc")}>
                         <Check size={18} className="text-emerald-600" />
                       </SettingRow>
                     </>

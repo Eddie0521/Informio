@@ -1,4 +1,5 @@
 import { createOpencode, type OpencodeClient, type EventSubscribeResponse } from "@opencode-ai/sdk";
+import log from "electron-log";
 import { createServer } from "node:net";
 import { basename } from "node:path";
 import type {
@@ -555,7 +556,8 @@ export class OpenCodeSdkManager {
         });
         await this.syncSessionPermissions(session, input.runtimeThreadId, directory, permission);
         return input.runtimeThreadId;
-      } catch {
+      } catch (error) {
+        log.warn("Failed to resume OpenCode session, creating new:", error);
         // fall through
       }
     }
@@ -602,8 +604,8 @@ export class OpenCodeSdkManager {
           if (controller.signal.aborted) break;
           this.handleEvent(session, payload as EventSubscribeResponse);
         }
-      } catch {
-        // Ignore stream shutdown and transient event errors.
+      } catch (error) {
+        log.warn("OpenCode event stream error:", error);
       }
     })();
     session.subscribedDirectory = directory;

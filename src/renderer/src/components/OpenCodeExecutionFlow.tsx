@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import type { ProviderExecutionFlowProps, AgentSessionAction } from "../types";
 import { classifyAgentAction, formatProcessDuration, isCancelledAgentMessage } from "../lib/agent";
@@ -22,6 +23,7 @@ const actionShortLabel = (action?: AgentSessionAction) => {
 };
 
 export function OpenCodeExecutionFlow(props: ProviderExecutionFlowProps) {
+  const { t } = useTranslation();
   const { message, transcriptFontSize, transcriptLineHeight, processFontSize, processLineHeight, isExpanded, now, onToggleExpanded, onApprovalResponse, onOpenActionPath } = props;
   const visibleActions = message.actions.filter((action) => classifyAgentAction(action) !== "system");
   const pendingApprovalActions = visibleActions.filter((action) => action.approval && action.status === "pending");
@@ -33,24 +35,24 @@ export function OpenCodeExecutionFlow(props: ProviderExecutionFlowProps) {
   const hasProcessContent = Boolean(message.reasoning.trim() || visibleActions.length || pendingApprovalActions.length);
   const subtitle =
     pendingApprovalActions.length
-      ? `需要确认: ${actionShortLabel(pendingApprovalActions[0]) || "当前操作"}`
+      ? t("executionflow.needsConfirm", { action: actionShortLabel(pendingApprovalActions[0]) || t("executionflow.currentAction") })
       : lastAction
-        ? `最近步骤: ${actionShortLabel(lastAction)}`
+        ? t("executionflow.recentStep", { step: actionShortLabel(lastAction) })
         : message.reasoning.trim()
-          ? "正在组织回复"
+          ? t("executionflow.organizingReply")
           : "";
   const phaseLabel =
     pendingApprovalActions.length
-      ? "等待授权"
+      ? t("executionflow.pendingApproval")
       : actionError
-        ? "部分失败"
+        ? t("executionflow.partialFailure")
       : message.status === "tool-executing"
-        ? "运行工具"
+        ? t("executionflow.runningTool")
         : message.status === "thinking"
-          ? "生成中"
+          ? t("executionflow.generating")
           : message.status === "error"
-            ? isCancelledAgentMessage(message) ? "已中断" : "运行失败"
-            : "已完成";
+            ? isCancelledAgentMessage(message) ? t("executionflow.cancelled") : t("executionflow.runFailed")
+            : t("executionflow.done");
   return (
     <div className="mb-3 px-0 py-1">
       <button
@@ -78,13 +80,13 @@ export function OpenCodeExecutionFlow(props: ProviderExecutionFlowProps) {
         <div className="mt-2 space-y-3 pl-4">
           {message.reasoning.trim() ? (
             <div className="text-slate-600" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>可见过程</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>{t("executionflow.visibleProcess")}</SectionLabel>
               <div className="whitespace-pre-wrap">{message.reasoning}</div>
             </div>
           ) : null}
           {pendingApprovalActions.length ? (
             <div className="space-y-2">
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>授权</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>{t("executionflow.approval")}</SectionLabel>
               {pendingApprovalActions.map((action) => (
                 <AgentApprovalCard
                   key={action.approval?.id ?? action.toolId}
@@ -99,7 +101,7 @@ export function OpenCodeExecutionFlow(props: ProviderExecutionFlowProps) {
           ) : null}
           {completedActions.length ? (
             <div className="space-y-2">
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>执行流</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>{t("executionflow.executionFlow")}</SectionLabel>
               {completedActions.map((action) => (
                 <AgentActionDetails
                   key={action.toolId}
@@ -115,12 +117,12 @@ export function OpenCodeExecutionFlow(props: ProviderExecutionFlowProps) {
           ) : null}
           {!message.reasoning.trim() && !visibleActions.length && (message.status === "thinking" || message.status === "tool-executing") ? (
             <div className="text-slate-500" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
-              正在等待 OpenCode 返回阶段事件。
+              {t("executionflow.waitingForOpenCode")}
             </div>
           ) : null}
           {!hasProcessContent && message.status !== "thinking" && message.status !== "tool-executing" ? (
             <div className="text-slate-400" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
-              这次运行没有返回可展示的中间过程。
+              {t("executionflow.noIntermediateProcess")}
             </div>
           ) : null}
         </div>

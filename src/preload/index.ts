@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import "electron-log/preload";
 import type {
   AppInfo,
   ApiModelDetectionInput,
@@ -160,7 +161,23 @@ const api = {
   cancelAgentRun: (providerId: string) =>
     ipcRenderer.invoke("agent:cancel-run", providerId) as Promise<{ ok: boolean }>,
   openExternal: (url: string) => ipcRenderer.invoke("app:open-external", url) as Promise<void>,
-  openPath: (path: string) => ipcRenderer.invoke("app:open-path", path) as Promise<void>
+  openPath: (path: string) => ipcRenderer.invoke("app:open-path", path) as Promise<void>,
+  checkForUpdates: () => ipcRenderer.invoke("updater:check") as Promise<{ available: boolean; version?: string; releaseNotes?: string; error?: string }>,
+  downloadUpdate: () => ipcRenderer.invoke("updater:download") as Promise<{ success: boolean; error?: string }>,
+  installUpdate: () => { ipcRenderer.invoke("updater:install"); },
+  onUpdateAvailable: (callback: (info: { version: string }) => void) => {
+    ipcRenderer.on("updater:update-available", (_event, info) => callback(info));
+  },
+  onUpdateDownloaded: (callback: (info: { version: string }) => void) => {
+    ipcRenderer.on("updater:update-downloaded", (_event, info) => callback(info));
+  },
+  onDownloadProgress: (callback: (info: { percent: number; transferred: number; total: number }) => void) => {
+    ipcRenderer.on("updater:download-progress", (_event, info) => callback(info));
+  },
+  setLanguage: (lang: string) => { ipcRenderer.invoke("app:set-language", lang); },
+  onLanguageChanged: (callback: (lang: string) => void) => {
+    ipcRenderer.on("app:language-changed", (_event, lang) => callback(lang));
+  }
 };
 
 contextBridge.exposeInMainWorld("informio", api);

@@ -1,4 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { Languages, Loader2, Shield, X } from "lucide-react";
 import type { SelectionToolbarAction } from "../types";
 import { cn } from "../lib/utils";
@@ -32,6 +33,7 @@ export function SelectionToolbar({
   onTranslate: () => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const preserveSelection = (event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault();
   };
@@ -70,7 +72,7 @@ export function SelectionToolbar({
             <div className="h-5 w-px bg-slate-200" aria-hidden="true" />
             {onEncrypt ? (
               <ToolbarGlyphButton
-                label="加密"
+                label={t("common.encrypt")}
                 icon={Shield}
                 disabled={!enabled}
                 onMouseDown={preserveSelection}
@@ -84,7 +86,7 @@ export function SelectionToolbar({
               />
             ) : null}
             <ToolbarGlyphButton
-              label="翻译"
+              label={t("common.translate")}
               icon={busy ? Loader2 : Languages}
               disabled={!enabled || busy}
               onMouseDown={preserveSelection}
@@ -102,7 +104,7 @@ export function SelectionToolbar({
               onMouseDown={preserveSelection}
               onClick={onClose}
               className="ml-0.5 grid h-6 w-6 place-items-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
-              aria-label="关闭工具栏"
+              aria-label={t("selectiontoolbar.closeToolbar")}
             >
               <X size={12} />
             </button>

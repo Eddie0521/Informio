@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useAgentStore } from "../stores";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Select from "@radix-ui/react-select";
@@ -32,10 +35,7 @@ import type {
 import { cn } from "../lib/utils";
 import {
   connectionTone,
-  connectionLabel,
-  permissionModeLabel,
   agentPermissionModes,
-  processCategoryLabel,
   CHAT_PANEL_FONT_MIN,
   CHAT_PANEL_FONT_MAX,
 } from "../constants";
@@ -98,16 +98,10 @@ export function AgentPanel({
   provider,
   connection,
   conversations,
-  activeConversationId,
-  pendingNewConversation,
-  messages,
-  selectedSelection,
-  busy,
   enabled,
   currentModel,
   availableModels,
   chatFontSize,
-  connections,
   onConnect,
   onSend,
   onCancel,
@@ -125,16 +119,10 @@ export function AgentPanel({
   provider: AgentProvider;
   connection?: AgentConnection;
   conversations: AgentConversation[];
-  activeConversationId: string | null;
-  pendingNewConversation: boolean;
-  messages: AgentSessionMessage[];
-  selectedSelection: AgentSelection | null;
-  busy: boolean;
   enabled: boolean;
   currentModel: string;
   availableModels: AgentModel[];
   chatFontSize: number;
-  connections: AgentConnection[];
   onConnect: () => void;
   onSend: (text: string, permissionMode: AgentPermissionMode, attachments: AgentMessageAttachment[]) => void;
   onCancel: () => void;
@@ -148,6 +136,7 @@ export function AgentPanel({
   onOpenSettings: () => void;
   width: number;
 }) {
+  const { connections, activeConversationId, pendingNewConversation, agentMessages: messages, agentSelection: selectedSelection, agentBusy: busy } = useAgentStore();
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<AgentMessageAttachment[]>([]);
   const [composerHeight, setComposerHeight] = useState(() => {
@@ -173,14 +162,24 @@ export function AgentPanel({
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const previousMessageCountRef = useRef(messages.length);
+  const { t } = useTranslation();
+
+  // Virtual scrolling for messages
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => transcriptScrollRef.current,
+    estimateSize: () => 120,
+    overscan: 3,
+    getItemKey: (index) => messages[index]?.id ?? index
+  });
   const status = connection?.status ?? "idle";
-  const reconnectLabel = status === "connected" ? `重新连接 ${provider.name}` : "连接 Agent";
+  const reconnectLabel = status === "connected" ? t("agentpanel.reconnect", { name: provider.name }) : t("agentpanel.connectAgent");
   const transcriptFontSize = clamp(chatFontSize, CHAT_PANEL_FONT_MIN, CHAT_PANEL_FONT_MAX);
   const transcriptLineHeight = Math.max(Math.round(transcriptFontSize * 1.7), transcriptFontSize + 6);
   const processFontSize = Math.max(CHAT_PANEL_FONT_MIN - 1, transcriptFontSize - 2);
   const processLineHeight = Math.max(Math.round(processFontSize * 1.6), processFontSize + 5);
-  const currentModelLabel = modelLabel(availableModels, currentModel);
-  const currentPermissionLabel = permissionModeLabel[permissionMode];
+  const currentModelLabel = modelLabel(availableModels, currentModel, t("settings.api.detectModelsFirst"));
+  const currentPermissionLabel = t(`permission.${permissionMode}`);
   const handlePermissionModeChange = (value: string) => {
     const next = value as AgentPermissionMode;
     if (next === "full_access" && permissionMode !== "full_access") {
@@ -196,7 +195,7 @@ export function AgentPanel({
     const nextAttachments = attachments;
     setDraft("");
     setAttachments([]);
-    onSend(text || "请处理这些附件。", permissionMode, nextAttachments);
+    onSend(text || t("agentpanel.processAttachments"), permissionMode, nextAttachments);
   };
 
   const addAttachmentFiles = (files: File[]) => {
@@ -307,12 +306,12 @@ export function AgentPanel({
 
     if (!shouldStickToBottomRef.current) return;
     const frame = window.requestAnimationFrame(() => {
-      const container = transcriptScrollRef.current;
-      if (!container) return;
-      container.scrollTop = container.scrollHeight;
+      if (messages.length > 0) {
+        virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
+      }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages]);
+  }, [messages, virtualizer]);
 
   useEffect(() => {
     shouldStickToBottomRef.current = true;
@@ -401,7 +400,7 @@ export function AgentPanel({
           {agentMenuOpen ? (
             <div className="absolute left-0 top-[38px] z-30 w-[220px] overflow-hidden rounded-xl bg-white shadow-[0_20px_48px_rgba(15,23,42,0.18),0_0_0_1px_rgba(15,23,42,0.08)]">
               <div className="border-b px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-muted)]">
-                切换 Agent
+                {t("agentpanel.switchAgent")}
               </div>
               <div className="p-2">
                 <div className="space-y-1">
@@ -427,7 +426,7 @@ export function AgentPanel({
                         </span>
                         <span className="flex shrink-0 items-center gap-2 text-[10px] text-slate-400">
                           <span className={cn("h-2 w-2 rounded-full", connectionTone[itemStatus])} />
-                          {connectionLabel[itemStatus]}
+                          {t(`status.connection.${itemStatus}`)}
                         </span>
                       </button>
                     );
@@ -439,7 +438,7 @@ export function AgentPanel({
         </div>
         <div className="flex gap-1" ref={historyMenuRef}>
           <IconButton
-            label="历史会话"
+            label={t("agentpanel.history")}
             className="h-7 w-7"
             onClick={() => {
               setAgentMenuOpen(false);
@@ -452,13 +451,13 @@ export function AgentPanel({
           <IconButton label={reconnectLabel} className="h-7 w-7" onClick={onConnect} disabled={!enabled}>
             {busy ? <Loader2 size={15} className="animate-spin" /> : <Unplug size={15} />}
           </IconButton>
-          <IconButton label="Agent 设置" className="h-7 w-7" onClick={onOpenSettings}>
+          <IconButton label={t("agentpanel.agentSettings")} className="h-7 w-7" onClick={onOpenSettings}>
             <Settings size={15} />
           </IconButton>
           {historyOpen ? (
             <div className="absolute right-4 top-[42px] z-30 w-[min(240px,calc(100vw-32px))] overflow-hidden rounded-xl bg-white shadow-[0_20px_48px_rgba(15,23,42,0.18),0_0_0_1px_rgba(15,23,42,0.08)]">
               <div className="border-b px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-muted)]">
-                此 Agent 的历史会话
+                {t("agentpanel.agentHistory")}
               </div>
               <div className="max-h-[320px] overflow-y-auto p-2">
                 <button
@@ -470,7 +469,7 @@ export function AgentPanel({
                   disabled={busy}
                   className="mb-2 flex w-full items-center justify-center rounded-lg border border-slate-200 px-3 py-2 text-[12px] font-semibold text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  新建会话
+                  {t("agentpanel.newSession")}
                 </button>
                 {conversations.length ? (
                   <div className="space-y-1">
@@ -495,15 +494,15 @@ export function AgentPanel({
                           )}
                         >
                           <span className="block truncate text-[12px] font-semibold text-[inherit]">{conversation.title}</span>
-                          <span className="block truncate text-[10px] text-slate-400">来自：{conversation.workspaceLabel || "未命名工作区"}</span>
+                          <span className="block truncate text-[10px] text-slate-400">{t("agentpanel.from", { workspace: conversation.workspaceLabel || t("agentpanel.unnamedWorkspace") })}</span>
                           <span className="block truncate text-[11px] text-slate-400">
-                            {conversation.messages.find((message) => message.role === "user")?.content || "空会话"}
+                            {conversation.messages.find((message) => message.role === "user")?.content || t("agentpanel.emptySession")}
                           </span>
                         </button>
                         <span className="shrink-0 text-[10px] text-slate-400">{formatConversationUpdatedAt(conversation.updatedAt)}</span>
                         <button
                           type="button"
-                          aria-label={`删除 ${conversation.title}`}
+                          aria-label={t("agentpanel.deleteSession", { title: conversation.title })}
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
@@ -518,7 +517,7 @@ export function AgentPanel({
                     ))}
                   </div>
                 ) : (
-                  <div className="px-3 py-4 text-[12px] leading-5 text-[var(--text-muted)]">还没有历史会话。</div>
+                  <div className="px-3 py-4 text-[12px] leading-5 text-[var(--text-muted)]">{t("agentpanel.noHistoryYet")}</div>
                 )}
               </div>
             </div>
@@ -555,7 +554,7 @@ export function AgentPanel({
               onClick={() => void copySelectedTranscriptText(transcriptContextMenu.text)}
             >
               <Copy size={14} />
-              <span>复制</span>
+              <span>{t("common.copy")}</span>
             </button>
           </div>
         ) : null}
@@ -563,7 +562,7 @@ export function AgentPanel({
           <div className="rounded-md px-2 py-1.5 text-[12px] leading-5 text-[var(--text-muted)]">
             <div className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-              已包含当前选区
+              {t("agentpanel.selectionIncluded")}
             </div>
           </div>
         ) : null}
@@ -574,9 +573,17 @@ export function AgentPanel({
           </div>
         ) : null}
 
-        <div className="space-y-4">
-          {messages.map((message) => (
-            <div key={message.id} className="space-y-2">
+        <div className="space-y-4" style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const message = messages[virtualRow.index];
+            return (
+            <div
+              key={message.id}
+              className="space-y-2 absolute left-0 right-0"
+              style={{ top: virtualRow.start }}
+              ref={(node) => virtualizer.measureElement(node)}
+              data-index={virtualRow.index}
+            >
               {(() => {
                 const isExpanded = expandedProcessIds.has(message.id);
                 const ExecutionFlow = providerExecutionRenderer(provider.id);
@@ -587,7 +594,7 @@ export function AgentPanel({
                   <div className="mb-1 flex items-center justify-end gap-1">
                     <button
                       type="button"
-                      aria-label="复制用户消息"
+                      aria-label={t("agentpanel.copyUserMessage")}
                       onClick={() => void copyAgentMessage(`${message.id}:user`, message.userMessage)}
                       className="no-drag inline-grid h-5 w-5 place-items-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
                     >
@@ -597,7 +604,7 @@ export function AgentPanel({
                       className="font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]"
                       style={{ fontSize: `${transcriptFontSize}px`, lineHeight: `${transcriptLineHeight}px` }}
                     >
-                      User
+                      {t("agent.user")}
                     </div>
                   </div>
                   <AgentMarkdownPreview
@@ -620,7 +627,7 @@ export function AgentPanel({
                   {message.response ? (
                     <button
                       type="button"
-                      aria-label="复制 AI 回复"
+                      aria-label={t("agentpanel.copyAiReply")}
                       onClick={() => void copyAgentMessage(`${message.id}:assistant`, message.response)}
                       className="no-drag inline-grid h-5 w-5 place-items-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
                     >
@@ -657,7 +664,8 @@ export function AgentPanel({
                 );
               })()}
             </div>
-          ))}
+          );
+          })}
         </div>
       </div>
 
@@ -681,7 +689,7 @@ export function AgentPanel({
         <div className="surface-card rounded-lg p-3 shadow-[0_1px_5px_rgba(15,23,42,0.12),inset_0_0_0_1px_rgba(15,23,42,0.08)]">
           <div
             className="-mx-3 -mt-3 mb-2 h-2 cursor-row-resize rounded-t-lg"
-            title="拖拽调整输入区高度"
+            title={t("agentpanel.dragToResize")}
             onPointerDown={startComposerResize}
           />
           {attachments.length ? (
@@ -695,7 +703,7 @@ export function AgentPanel({
                   <div className="max-w-56 truncate text-[13px] font-semibold leading-5 text-slate-900">{attachment.name}</div>
                   <button
                     type="button"
-                    aria-label={`移除 ${attachment.name}`}
+                    aria-label={t("agentpanel.removeAttachment", { name: attachment.name })}
                     onClick={() => setAttachments((items) => items.filter((item) => item.id !== attachment.id))}
                     className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-slate-950 text-white transition-colors hover:bg-slate-700"
                   >
@@ -753,8 +761,8 @@ export function AgentPanel({
               />
               <button
                 type="button"
-                aria-label="添加图片或文件"
-                title="添加图片或文件"
+                aria-label={t("agentpanel.addImageOrFile")}
+                title={t("agentpanel.addImageOrFile")}
                 onClick={() => attachmentInputRef.current?.click()}
                 disabled={!enabled || busy}
                 className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-slate-400 transition-colors hover:bg-slate-500/5 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-45"
@@ -763,8 +771,8 @@ export function AgentPanel({
               </button>
               <Select.Root value={currentModel} onValueChange={onModelChange} disabled={!enabled || !availableModels.length}>
                 <Select.Trigger
-                  aria-label={`模型：${currentModelLabel}`}
-                  title={`模型：${currentModelLabel}`}
+                  aria-label={t("agentpanel.modelLabel", { label: currentModelLabel })}
+                  title={t("agentpanel.modelLabel", { label: currentModelLabel })}
                   className={cn(
                     "flex h-8 min-w-0 items-center rounded-md bg-transparent text-[13px] font-semibold text-slate-400 outline-none transition-colors hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-45",
                     compactAgentControls ? "w-8 shrink-0 justify-center px-0" : "shrink-0 gap-1 whitespace-nowrap px-1.5"
@@ -801,8 +809,8 @@ export function AgentPanel({
               </Select.Root>
               <Select.Root value={permissionMode} onValueChange={handlePermissionModeChange}>
                 <Select.Trigger
-                  aria-label={`权限：${currentPermissionLabel}`}
-                  title={`权限：${currentPermissionLabel}`}
+                  aria-label={t("agentpanel.permissionLabel", { label: currentPermissionLabel })}
+                  title={t("agentpanel.permissionLabel", { label: currentPermissionLabel })}
                   className={cn(
                     "flex h-8 min-w-0 items-center rounded-md bg-transparent text-[13px] font-semibold text-slate-400 outline-none transition-colors hover:text-slate-600",
                     compactAgentControls ? "w-8 shrink-0 justify-center px-0" : "shrink-0 gap-1 whitespace-nowrap px-1.5"
@@ -830,7 +838,7 @@ export function AgentPanel({
                           value={item}
                           className="cursor-default rounded-md px-3 py-2 text-[13px] font-semibold text-slate-700 outline-none data-[highlighted]:bg-emerald-50 data-[highlighted]:text-slate-950"
                         >
-                          <Select.ItemText>{permissionModeLabel[item]}</Select.ItemText>
+                          <Select.ItemText>{t(`permission.${item}`)}</Select.ItemText>
                         </Select.Item>
                       ))}
                     </Select.Viewport>
@@ -848,7 +856,7 @@ export function AgentPanel({
                   : "text-slate-600 hover:bg-slate-500/5 hover:text-slate-800 disabled:text-slate-300"
               )}
               disabled={!enabled || (!busy && !draft.trim() && !attachments.length)}
-              aria-label={busy ? "取消当前运行" : "发送"}
+              aria-label={busy ? t("agentpanel.cancelRun") : t("agentpanel.send")}
             >
               {busy ? <X size={15} /> : <ArrowUp size={16} />}
             </button>
@@ -866,9 +874,9 @@ export function AgentPanel({
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-[90] bg-slate-950/22 backdrop-blur-[1px]" />
           <Dialog.Content className="fixed left-1/2 top-1/2 z-[91] w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-4 text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
-            <Dialog.Title className="text-[16px] font-bold text-[var(--text-main)]">切换到默认权限</Dialog.Title>
+            <Dialog.Title className="text-[16px] font-bold text-[var(--text-main)]">{t("agentpanel.switchToDefaultPermission")}</Dialog.Title>
             <Dialog.Description className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-[var(--text-muted)]">
-              默认权限下，Agent 将不再请求审批，并且可以访问和修改工作区外的系统文件。
+              {t("agentpanel.defaultPermissionDesc")}
             </Dialog.Description>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -879,7 +887,7 @@ export function AgentPanel({
                 }}
                 className="rounded-md px-3 py-2 text-[13px] font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
               >
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 type="button"
@@ -890,7 +898,7 @@ export function AgentPanel({
                 }}
                 className="rounded-md bg-[#d8c2a1] px-3 py-2 text-[13px] font-semibold text-[#3d2d1f] transition-colors hover:bg-[#ccb089]"
               >
-                确认切换
+                {t("agentpanel.confirmSwitch")}
               </button>
             </div>
           </Dialog.Content>

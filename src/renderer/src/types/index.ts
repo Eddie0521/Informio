@@ -28,7 +28,6 @@ import type {
   DocumentConflict,
   FileSystemOperationInput,
 } from "../../../shared/types";
-import type { ToolbarTranslateState as UnifiedToolbarTranslateState } from "../pdfSurface";
 
 // Re-export shared types that are heavily used in renderer
 export type {
@@ -58,7 +57,42 @@ export type {
   FileSystemOperationInput,
 };
 
-export type { UnifiedToolbarTranslateState };
+// ─── PDF types ───
+
+export type UnifiedToolbarTranslateState = {
+  status: "idle" | "loading" | "done" | "error";
+  response: string;
+  error?: string;
+  anchor?: {
+    kind: "markdown" | "pdf";
+    left: number;
+    top: number;
+  };
+};
+
+export type PdfAgentSelection = {
+  kind: "markdown" | "pdf";
+  documentId: string;
+  from: number;
+  to: number;
+  text: string;
+  markdown: string;
+  title?: string;
+  filePath?: string;
+  page?: number;
+  rects?: PdfSelectionRect[];
+  overlayLeft?: number;
+  overlayTop?: number;
+};
+
+export type UnifiedPdfEditorContextValue = {
+  paneId: string;
+  document: InformioDocument;
+  settings: AppSettings;
+  toolbarTranslate: UnifiedToolbarTranslateState;
+  onTranslateSelection: (selection: PdfAgentSelection) => void;
+  onClearToolbarTranslate: () => void;
+};
 
 // ─── Editor types ───
 

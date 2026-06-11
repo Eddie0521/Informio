@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { SecretPromptRequest } from "../types";
 
@@ -11,6 +12,7 @@ export function SecretPassphraseDialog({
   onClose: () => void;
   onConfirm: (input: { passphrase: string; confirmPassphrase?: string }) => void;
 }) {
+  const { t } = useTranslation();
   const [passphrase, setPassphrase] = useState("");
   const [confirmPassphrase, setConfirmPassphrase] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -38,14 +40,14 @@ export function SecretPassphraseDialog({
         <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/18" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white p-4 text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
           <Dialog.Title className="text-[14px] font-extrabold">
-            {request?.mode === "set-passphrase" ? "设置文档加密口令" : "输入文档加密口令"}
+            {request?.mode === "set-passphrase" ? t("secretdialog.setPassphrase") : t("secretdialog.enterPassphrase")}
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
             {request?.mode === "set-passphrase"
-              ? "首次加密这篇文档时需要先设置口令。后续同文档的所有加密片段都会共用它。"
+              ? t("secretdialog.setDescription")
               : request?.intent === "decrypt"
-                ? "请输入这篇文档的加密口令。每次点击密文解密前都需要再次验证口令。"
-                : "请输入这篇文档的加密口令。验证通过后才能继续新增加密内容。"}
+                ? t("secretdialog.decryptDescription")
+                : t("secretdialog.encryptDescription")}
           </Dialog.Description>
           <form
             className="mt-4 space-y-3"
@@ -59,7 +61,7 @@ export function SecretPassphraseDialog({
             }}
           >
             <label className="grid gap-1.5">
-              <span className="text-[12px] font-bold text-[var(--text-muted)]">口令</span>
+              <span className="text-[12px] font-bold text-[var(--text-muted)]">{t("secretdialog.passphrase")}</span>
               <input
                 ref={inputRef}
                 type="password"
@@ -70,7 +72,7 @@ export function SecretPassphraseDialog({
             </label>
             {needsConfirmation ? (
               <label className="grid gap-1.5">
-                <span className="text-[12px] font-bold text-[var(--text-muted)]">确认口令</span>
+                <span className="text-[12px] font-bold text-[var(--text-muted)]">{t("secretdialog.confirmPassphrase")}</span>
                 <input
                   type="password"
                   value={confirmPassphrase}
@@ -86,14 +88,14 @@ export function SecretPassphraseDialog({
                 className="h-8 rounded-md px-3 text-[12px] font-bold text-slate-600 transition-[background-color,transform] hover:bg-slate-100 active:scale-[0.99]"
                 onClick={onClose}
               >
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 type="submit"
                 disabled={!canSubmit}
                 className="h-8 rounded-md bg-emerald-600 px-3 text-[12px] font-bold text-white transition-[background-color,opacity,transform] hover:bg-emerald-700 active:scale-[0.99] disabled:opacity-45"
               >
-                确认
+                {t("common.confirm")}
               </button>
             </div>
           </form>

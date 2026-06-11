@@ -44,7 +44,8 @@ const cleanPastedHttpUrl = (value: string) => {
   try {
     const parsed = new URL(cleaned);
     return parsed.protocol === "http:" || parsed.protocol === "https:" ? cleaned : "";
-  } catch {
+  } catch (error) {
+    console.warn("Failed to parse pasted URL:", error);
     return "";
   }
 };

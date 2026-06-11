@@ -1,4 +1,5 @@
 import { statSync } from "node:fs";
+import log from "electron-log";
 import { isAbsolute, normalize, relative, resolve } from "node:path";
 
 type FileSnapshotKind = "missing" | "file" | "directory" | "other";
@@ -61,7 +62,8 @@ const snapshotFile = (targetPath: string): FileSnapshot => {
       size: null,
       mtimeMs: stats.mtimeMs
     };
-  } catch {
+  } catch (error) {
+    log.warn("Failed to snapshot file:", targetPath, error);
     return { kind: "missing", size: null, mtimeMs: null };
   }
 };

@@ -1,0 +1,587 @@
+{
+  "common": {
+    "retry": "Retry",
+    "cancel": "Later",
+    "save": "Save",
+    "delete": "Delete",
+    "close": "Close",
+    "loading": "Loading...",
+    "error": "Error",
+    "offline": "Offline",
+    "confirm": "Confirm",
+    "open": "Open",
+    "copy": "Copy",
+    "optional": "Optional",
+    "detect": "Detect",
+    "select": "Select",
+    "reject": "Reject",
+    "undo": "Undo",
+    "redo": "Redo",
+    "rename": "Rename",
+    "encrypt": "Encrypt",
+    "translate": "Translate"
+  },
+  "settings": {
+    "title": "Settings",
+    "nav": {
+      "appearance": "Appearance",
+      "editor": "Editor",
+      "agent": "Agent",
+      "api": "API",
+      "shortcuts": "Shortcuts",
+      "about": "About"
+    },
+    "appearance": {
+      "title": "Appearance",
+      "theme": "Theme",
+      "language": "Interface Language",
+      "languageDescription": "Switch the app display language immediately.",
+      "font": "Font",
+      "fontSize": "Font Size",
+      "chatFontSize": "Chat Font Size",
+      "contentWidth": "Content Width",
+      "customColor": "Custom Color",
+      "chineseLanguage": "Chinese",
+      "customColorDesc": "Keep the current contrast, just change the overall tone to your chosen color.",
+      "selectCustomColor": "Select custom theme color",
+      "chineseFont": "Chinese Font",
+      "chineseFontDesc": "Affects Chinese text throughout the app, including sidebar, toolbar, settings, and editor body.",
+      "englishFont": "English Font",
+      "englishFontDesc": "Affects English, numbers, and Latin characters throughout the app.",
+      "codeFont": "Code Font",
+      "codeFontDesc": "Affects code blocks, source mode, and monospace text like paths, commands, and logs.",
+      "loadingFonts": "Loading local font list...",
+      "window": "Window",
+      "autoHideStatusBar": "Auto-hide status bar",
+      "autoHideStatusBarDesc": "Hide bottom statistics when idle"
+    },
+    "editor": {
+      "title": "Editor",
+      "spellCheck": "Spell Check",
+      "lineNumbers": "Line Numbers",
+      "typewriterMode": "Typewriter Mode",
+      "fontSizeLabel": "Editor Font Size",
+      "fontSizeDesc": "{{size}}px, affects reading density",
+      "contentWidthLabel": "Editor Width",
+      "contentWidthDesc": "{{size}}px, controls body column width",
+      "spellCheckDesc": "Controls system spell check in the editor",
+      "autoSave": "Auto-save",
+      "autoSaveDesc": "Auto-save to local app data after typing",
+      "indentWidth": "Indent Width",
+      "indentWidthDesc": "Used for Markdown lists and code blocks",
+      "insertFile": "Insert File",
+      "insertFileDesc": "Controls how file paths are written when inserting images, audio, video, and PDF",
+      "copyToAttachments": "Copy to attachments",
+      "keepOriginalPath": "Keep original path",
+      "defaultFolder": "Default Folder"
+    },
+    "agent": {
+      "title": "Agent",
+      "enabled": "Enable Agent",
+      "connect": "Connect Agent",
+      "reconnect": "Reconnect",
+      "description": "Informio uses selected text, current document, open tabs, and project file structure as context to call locally installed Agents.",
+      "enabledDesc": "When disabled, the local Agent won't start and no document context will be sent.",
+      "autoStart": "Auto-start",
+      "autoStartDesc": "Pre-connect all enabled Agents on app launch for faster first switch.",
+      "conversationRetentionLimit": "Conversation Retention Limit",
+      "conversationRetentionLimitDesc": "Maximum number of historical conversations per Agent.",
+      "conversationRetentionDays": "Conversation Retention Days",
+      "conversationRetentionDaysDesc": "Conversations older than this will be automatically cleaned up.",
+      "workAgent": "Working Agent",
+      "workAgentDesc": "Used in the right panel, suitable for heavier Q&A, rewriting, and context tasks."
+    },
+    "chat": {
+      "title": "Chat Panel",
+      "fontSize": "Chat Font Size",
+      "fontSizeDesc": "{{size}}px, affects User/Agent names, messages, AI replies, and 'Processed' line; execution flow is 2px smaller"
+    },
+    "api": {
+      "translationDesc": "Text selection translation for Markdown and PDF uses this API, independent of Agent runtime.",
+      "example": "e.g. {{url}}",
+      "translationModel": "Translation Model",
+      "detectModelsFirst": "Detect available models first",
+      "detectModelsDesc": "Detection reads available models from the current API. Once successful, you can assign a faster model for translation."
+    },
+    "shortcuts": {
+      "title": "Configurable Shortcuts",
+      "description": "Edit active shortcuts directly. Click a key to start recording. Conflicts are caught immediately.",
+      "conflictError": "\"{{first}}\" and \"{{second}}\" cannot use the same shortcut."
+    },
+    "advanced": {
+      "keepMinimal": "Keep Minimal Defaults",
+      "keepMinimalDesc": "Advanced settings on this page will be expanded in future versions",
+      "currentStrategy": "Current Strategy",
+      "currentStrategyDesc": "Prioritize smooth writing experience, then unlock low-frequency options"
+    },
+    "about": {
+      "title": "About",
+      "version": "Version",
+      "github": "GitHub",
+      "checkUpdate": "Check for Updates",
+      "checking": "Checking...",
+      "upToDate": "Up to date",
+      "newVersion": "New version available",
+      "downloadInstall": "Download & Install",
+      "downloading": "Downloading...",
+      "readyToInstall": "Update ready, restart to install",
+      "later": "Later"
+    }
+  },
+  "theme": {
+    "white": "White",
+    "paper": "Paper",
+    "night": "Night",
+    "custom": "Custom"
+  },
+  "apiProvider": {
+    "openai-compatible": {
+      "description": "For services compatible with OpenAI Chat Completions."
+    },
+    "anthropic": {
+      "description": "For the Anthropic Messages API."
+    }
+  },
+  "status": {
+    "connection": {
+      "idle": "Not checked",
+      "connecting": "Checking",
+      "connected": "Available",
+      "error": "Unavailable"
+    }
+  },
+  "permission": {
+    "read_only": "Read only",
+    "default": "Review mode",
+    "full_access": "Default permission"
+  },
+  "processCategory": {
+    "explore": "Explore",
+    "search": "Search",
+    "read": "Read",
+    "edit": "Edit",
+    "command": "Command",
+    "approval": "Approval",
+    "other": "Step"
+  },
+  "app": {
+    "loading": "Loading Informio",
+    "startFailed": "Informio failed to start",
+    "editorLoadFailed": "Editor failed to load",
+    "reload": "Reload",
+    "startingAgent": "Starting {{name}}...",
+    "startingAgentGeneric": "Starting Agent...",
+    "reconnectingAgent": "Reconnecting Agent...",
+    "checkingAgent": "Checking {{name}}...",
+    "agentStartFailed": "Agent failed to start.",
+    "loadDataFailed": "Unable to load app data.",
+    "unnamedWorkspace": "Unnamed workspace",
+    "conflictBeforeSave": "This document has an external change conflict. Choose whether to keep the local version or use the external version first.",
+    "saveFailedCancelClose": "Save failed, so the tab was kept open.",
+    "saveFailedCancelCloseWithMessage": "Save failed, so the tab was kept open.\n{{message}}",
+    "confirmDeleteFolder": "Delete this folder and all files inside it?",
+    "confirmDeleteFile": "Delete this file?",
+    "apiMissingCredentials": "Fill in base_url and api_key first.",
+    "apiCheckingModels": "Checking available models...",
+    "apiModelsDetected": "{{count}} available models detected.",
+    "apiModelDetectionFailed": "Model detection failed. Check your API configuration.",
+    "agentDisabled": "Agent is disabled. Turn on \"Enable Agent\" in Settings -> Agent.",
+    "translationApiIncomplete": "Translation API is not configured yet. Fill in base_url and api_key in Settings -> API, then detect and choose a model.",
+    "expandPane": "Show current pane full screen",
+    "conflictBanner": "Merge required. Auto-save is paused. Click to view the diff and choose how to handle it.",
+    "view": "View",
+    "loadingSettings": "Loading settings...",
+    "fileList": "File list",
+    "agentPanel": "Agent panel",
+    "splitLeft": "Split left",
+    "splitRight": "Split right",
+    "splitTop": "Split top",
+    "splitBottom": "Split bottom",
+    "files": "Files",
+    "outline": "Outline",
+    "properties": "Properties",
+    "addProject": "Add project",
+    "wordCount": "{{count}} words",
+    "characterCount": "{{count}} chars",
+    "lineCount": "{{count}} lines",
+    "switchToRichText": "Switch to rich text view",
+    "switchToMarkdownSource": "Switch to Markdown source view"
+  },
+  "commands": {
+    "newDocument": "New Document",
+    "newDocumentKeywords": "new document",
+    "openFile": "Open File",
+    "openFileKeywords": "open file files",
+    "openProject": "Open Project",
+    "openProjectKeywords": "open workspace project",
+    "openSettings": "Open Settings",
+    "openSettingsKeywords": "settings preferences",
+    "exportHtml": "Export {{name}}.HTML",
+    "exportHtmlKeywords": "export html save current document",
+    "exportPdf": "Export {{name}}.PDF",
+    "exportPdfKeywords": "export pdf save current document",
+    "hideFileSidebar": "Hide file sidebar",
+    "showFileSidebar": "Show file sidebar",
+    "toggleFileSidebarKeywords": "toggle file sidebar",
+    "hideAgentSession": "Hide Agent Session",
+    "showAgentSession": "Show Agent Session",
+    "toggleAgentSessionKeywords": "assistant agent session ai right panel task toggle",
+    "collapseWritingPanels": "Collapse writing panels",
+    "collapseWritingPanelsKeywords": "hide left right close workspace collapse panels"
+  },
+  "pdf": {
+    "translateSelection": "Translate selected PDF text",
+    "missingFilePath": "This PDF document has no file path.",
+    "contextMissing": "PDF context is missing, so the document cannot be opened.",
+    "more": "More",
+    "removePdf": "Remove PDF"
+  },
+  "encrypted": {
+    "content": "Encrypted content",
+    "damaged": "Encrypted content damaged",
+    "damagedShort": "Damaged",
+    "checkSourceTag": "Check the source tag",
+    "missingRequiredFields": "Required tag fields are missing, so this cannot be decrypted safely"
+  },
+  "editor": {
+    "loading": "Loading file...",
+    "noDocument": "No open document",
+    "assetError": "File path missing, cannot open.",
+    "assetLoading": "Loading file...",
+    "assetDecodeError": "File identified as {{type}}, but cannot be decoded by the built-in viewer.",
+    "openInSystem": "Open in system",
+    "words": "{{count}} words",
+    "lines": "{{count}} lines"
+  },
+  "agent": {
+    "user": "User",
+    "sendPlaceholder": "Type a message...",
+    "connectFirst": "Connect an Agent first",
+    "noConversations": "No conversations",
+    "copy": "Copy",
+    "deleteConversation": "Delete conversation"
+  },
+  "files": {
+    "localDrafts": "Local Drafts",
+    "untitled": "Untitled",
+    "newFile": "New Document",
+    "newFolder": "New Folder"
+  },
+  "errorBoundary": {
+    "loadFailed": "Failed to load",
+    "retry": "Retry",
+    "componentLoadFailed": "{{name}} failed to load"
+  },
+  "agentpanel": {
+    "reconnect": "Reconnect {{name}}",
+    "connectAgent": "Connect Agent",
+    "processAttachments": "Please process these attachments.",
+    "switchAgent": "Switch Agent",
+    "history": "History",
+    "agentSettings": "Agent Settings",
+    "agentHistory": "This Agent's conversation history",
+    "newSession": "New Session",
+    "from": "From: {{workspace}}",
+    "unnamedWorkspace": "Unnamed Workspace",
+    "emptySession": "Empty Session",
+    "deleteSession": "Delete {{title}}",
+    "noHistoryYet": "No conversation history yet.",
+    "selectionIncluded": "Current selection included",
+    "copyUserMessage": "Copy user message",
+    "copyAiReply": "Copy AI reply",
+    "dragToResize": "Drag to resize input area",
+    "removeAttachment": "Remove {{name}}",
+    "addImageOrFile": "Add image or file",
+    "modelLabel": "Model: {{label}}",
+    "permissionLabel": "Permission: {{label}}",
+    "cancelRun": "Cancel current run",
+    "send": "Send",
+    "switchToDefaultPermission": "Switch to default permission",
+    "defaultPermissionDesc": "With default permissions, the Agent will no longer request approval and can access and modify system files outside the workspace.",
+    "confirmSwitch": "Confirm switch"
+  },
+  "agentapproval": {
+    "approveOnce": "Approve once",
+    "approveSession": "Approve for session"
+  },
+  "executionflow": {
+    "pendingApproval": "Awaiting approval",
+    "partialFailure": "Partial failure",
+    "executing": "Executing",
+    "processing": "Processing",
+    "cancelled": "Cancelled",
+    "runFailed": "Run failed",
+    "failed": "Failed",
+    "completed": "Completed",
+    "done": "Done",
+    "recentStep": "Recent step: {{step}}",
+    "visibleProcess": "Visible process",
+    "approval": "Approval",
+    "executionFlow": "Execution flow",
+    "inspect": "Inspect {{count}}",
+    "command": "Command {{count}}",
+    "edit": "Edit {{count}}",
+    "verify": "Verify {{count}}",
+    "inspectLabel": "Inspect",
+    "commandLabel": "Command",
+    "editLabel": "Edit",
+    "verifyLabel": "Verify",
+    "otherLabel": "Other",
+    "needsConfirm": "Needs confirmation: {{action}}",
+    "currentAction": "Current action",
+    "organizingReply": "Organizing reply",
+    "runningTool": "Running tool",
+    "generating": "Generating",
+    "processed": "Processed {{duration}}",
+    "waitingForProcess": "Waiting for Agent to return process events.",
+    "noProcessEvents": "This run did not return any process events.",
+    "waitingForOpenCode": "Waiting for OpenCode to return stage events.",
+    "noIntermediateProcess": "This run did not return any intermediate process.",
+    "hiddenSteps": "{{count}} routine context steps hidden"
+  },
+  "assetviewer": {
+    "previewUnsupported": "This file type cannot be previewed inline.",
+    "imageType": "Image",
+    "videoType": "Video",
+    "audioType": "Audio"
+  },
+  "codeblock": {
+    "codeLanguage": "Code language"
+  },
+  "commandpalette": {
+    "searchPlaceholder": "Search commands or documents",
+    "noMatches": "No matching commands"
+  },
+  "documentconflict": {
+    "diffTooLarge": "Document too long, skipped line-by-line diff to avoid UI lag. External: {{removed}} lines, mine: {{added}} lines.",
+    "externalPreview": "External version preview: {{preview}}",
+    "localPreview": "My version preview: {{preview}}",
+    "mergeChanges": "Merge changes required",
+    "currentDocument": "Current document",
+    "conflictDescription": "The same section in {{title}} was modified by you and externally. Auto-save is paused. Please choose how to proceed.",
+    "howToHandle": "How to handle",
+    "colorExplanation": "Green is your current editor content. Red is content replaced or deleted in the external version.",
+    "closeWontResolve": "Closing won't resolve the conflict. Auto-save will remain paused.",
+    "copyExternal": "Copy external version",
+    "manualMergeHint": "You can also manually merge and then choose \"Keep my version\" to save.",
+    "handleLater": "Handle later",
+    "useExternal": "Use external version",
+    "keepMyVersion": "Keep my version"
+  },
+  "fontfamily": {
+    "searchPlaceholder": "Search font name, e.g. PingFang, Mono",
+    "noMatches": "No matching fonts. Try different keywords."
+  },
+  "filecontextmenu": {
+    "openInFinder": "Open in Finder",
+    "openInFolder": "Open in folder",
+    "renameProject": "Rename project",
+    "unpinProject": "Unpin project",
+    "pinProject": "Pin project",
+    "removeFromList": "Remove from list",
+    "duplicate": "Duplicate"
+  },
+  "inserttoolbar": {
+    "insertImage": "Insert image",
+    "insertVideo": "Insert video",
+    "insertAudio": "Insert audio",
+    "insertPdf": "Insert PDF",
+    "insertMermaidChart": "Insert Mermaid chart",
+    "insertTable": "Insert table",
+    "insertBulletList": "Insert bullet list",
+    "insertOrderedList": "Insert ordered list",
+    "insertTaskList": "Insert task list",
+    "insertNote": "Insert Note",
+    "insertCallout": "Insert Callout",
+    "insertCodeBlock": "Insert code block",
+    "insertFootnote": "Insert footnote",
+    "insertHorizontalRule": "Insert horizontal rule",
+    "hideProperties": "Hide properties",
+    "showProperties": "Show properties"
+  },
+  "editorpane": {
+    "bold": "Bold",
+    "italic": "Italic",
+    "underline": "Underline",
+    "strikethrough": "Strikethrough",
+    "subscript": "Subscript",
+    "superscript": "Superscript",
+    "highlight": "Highlight",
+    "addLink": "Add link",
+    "goToLink": "Go to link",
+    "encryptedInSelection": "The current selection contains encrypted content. Please decrypt these fragments first, then re-encrypt.",
+    "corruptedEncryption": "This document contains corrupted encrypted fragments. Please repair or delete them before adding new encrypted content.",
+    "passphraseMismatch": "The two passphrases don't match. Please confirm again.",
+    "encryptionFailed": "Encryption failed. Please retry.",
+    "passphraseIncorrectVerify": "Incorrect passphrase. Cannot verify existing encrypted content in this document.",
+    "passphraseIncorrectDecrypt": "Incorrect passphrase, or the current encrypted fragment is corrupted.",
+    "placeholder": "Start writing. Select text for AI, or ask the Agent on the right.",
+    "find": {
+      "inputRequired": "Enter text to search first.",
+      "noMatch": "No matches found in the current document.",
+      "matchRequiredForReplace": "Find a match first, then replace.",
+      "matchLocated": "Current match located.",
+      "collapseReplace": "Collapse replace",
+      "expandReplace": "Expand replace",
+      "findText": "Find text",
+      "findNext": "Find next",
+      "closeFind": "Close find",
+      "replaceText": "Replace text",
+      "replaceCurrent": "Replace current"
+    },
+    "wiki": {
+      "unnamed": "Untitled",
+      "createNote": "Create {{name}}",
+      "newNote": "New note",
+      "noMatch": "No matching documents"
+    }
+  },
+  "imagedialog": {
+    "title": "Image",
+    "description": "Edit image URL, alt text, and caption.",
+    "url": "URL",
+    "altText": "Alt text",
+    "caption": "Caption"
+  },
+  "linkdialog": {
+    "linkText": "Link text",
+    "title": "Link",
+    "description": "Enter link text and URL, then confirm to insert or update the hyperlink.",
+    "text": "Text",
+    "url": "URL",
+    "titleLabel": "Title"
+  },
+  "selectiontoolbar": {
+    "translating": "Translating",
+    "translationResult": "Translation result",
+    "closeToolbar": "Close toolbar"
+  },
+  "secretdialog": {
+    "setPassphrase": "Set document encryption passphrase",
+    "enterPassphrase": "Enter document encryption passphrase",
+    "setDescription": "Set a passphrase for first-time encryption. All encrypted fragments in this document will share it.",
+    "decryptDescription": "Enter the encryption passphrase for this document. You need to verify the passphrase each time you decrypt.",
+    "encryptDescription": "Enter the encryption passphrase for this document. Verification is required before adding new encrypted content.",
+    "passphrase": "Passphrase",
+    "confirmPassphrase": "Confirm passphrase"
+  },
+  "outline": {
+    "empty": "No outline"
+  },
+  "table": {
+    "addColumn": "Add column",
+    "addRow": "Add row",
+    "alignLeft": "Align left",
+    "alignCenter": "Align center",
+    "alignRight": "Align right",
+    "alignTop": "Align top",
+    "alignMiddle": "Align middle",
+    "alignBottom": "Align bottom",
+    "mergeCells": "Merge cells",
+    "splitCells": "Split cells",
+    "deleteRow": "Delete row",
+    "deleteColumn": "Delete column",
+    "deleteTable": "Delete table",
+    "selectAll": "Select entire table",
+    "selectColumn": "Select column {{column}}",
+    "resizeColumn": "Resize column {{column}}",
+    "selectRow": "Select row {{row}}",
+    "resizeRow": "Resize row {{row}}"
+  },
+  "shortcuts": {
+    "categories": {
+      "windowFile": "Window & File",
+      "findEdit": "Find & Edit",
+      "formatting": "Text Formatting"
+    },
+    "items": {
+      "app_quickCapture": {
+        "label": "Quick capture window",
+        "description": "Open a blank quick note window with both sidebars collapsed"
+      },
+      "file_new": {
+        "label": "New document",
+        "description": "Create a new Markdown document immediately"
+      },
+      "window_new": {
+        "label": "New window",
+        "description": "Open a new Informio window"
+      },
+      "commandPalette_open": {
+        "label": "Command palette",
+        "description": "Search system commands and documents"
+      },
+      "file_open": {
+        "label": "Quick open",
+        "description": "Open the file picker"
+      },
+      "workspace_open": {
+        "label": "Open project",
+        "description": "Switch to or load a new project folder"
+      },
+      "file_closeTab": {
+        "label": "Close tab",
+        "description": "Close the current document tab"
+      },
+      "window_close": {
+        "label": "Close window",
+        "description": "Close the current window"
+      },
+      "file_save": {
+        "label": "Save",
+        "description": "Save the current document"
+      },
+      "file_saveAs": {
+        "label": "Save as",
+        "description": "Save the current document to a new location"
+      },
+      "settings_open": {
+        "label": "Open settings",
+        "description": "Open the settings window"
+      },
+      "edit_find": {
+        "label": "Find and replace",
+        "description": "Open find and replace for the current document"
+      },
+      "edit_findNext": {
+        "label": "Find next",
+        "description": "Jump to the next match for the current query"
+      },
+      "format_bold": {
+        "label": "Bold",
+        "description": "Toggle bold for the current selection"
+      },
+      "format_italic": {
+        "label": "Italic",
+        "description": "Toggle italic for the current selection"
+      },
+      "format_underline": {
+        "label": "Underline",
+        "description": "Toggle underline for the current selection"
+      },
+      "format_strike": {
+        "label": "Strikethrough",
+        "description": "Toggle strikethrough for the current selection"
+      },
+      "format_highlight": {
+        "label": "Highlight",
+        "description": "Highlight the current selection"
+      }
+    }
+  },
+  "shortcutbinding": {
+    "pressNewKey": "Press new shortcut",
+    "default": "Default",
+    "clear": "Clear"
+  },
+  "windowcontrols": {
+    "minimize": "Minimize",
+    "maximizeRestore": "Maximize or restore",
+    "close": "Close"
+  },
+  "translationresult": {
+    "copyResult": "Copy translation result",
+    "copied": "Copied",
+    "copy": "Copy"
+  }
+}

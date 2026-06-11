@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Copy, X } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -140,7 +141,7 @@ export const mergeMarkdownWithBase = (
   return { mergedMarkdown: merged.join("\n"), conflicted: false };
 };
 
-export const buildConflictDiffLines = (externalMarkdown: string, localMarkdown: string): ConflictDiffLine[] => {
+export const buildConflictDiffLines = (externalMarkdown: string, localMarkdown: string, t?: (key: string, opts?: Record<string, unknown>) => string): ConflictDiffLine[] => {
   const removed = externalMarkdown.split("\n");
   const added = localMarkdown.split("\n");
   if (!canBuildDiffMatrix(removed.length, added.length)) {
@@ -148,10 +149,10 @@ export const buildConflictDiffLines = (externalMarkdown: string, localMarkdown: 
       {
         key: "diff-too-large",
         kind: "same",
-        text: `文档过长，已跳过逐行 Diff 以避免界面卡顿。外部版本 ${removed.length} 行，我的版本 ${added.length} 行。`
+        text: t ? t("documentconflict.diffTooLarge", { removed: removed.length, added: added.length }) : `文档过长，已跳过逐行 Diff 以避免界面卡顿。外部版本 ${removed.length} 行，我的版本 ${added.length} 行。`
       },
-      { key: "diff-too-large-external", kind: "removed", text: `外部版本预览：${conflictPreviewText(removed)}` },
-      { key: "diff-too-large-local", kind: "added", text: `我的版本预览：${conflictPreviewText(added)}` }
+      { key: "diff-too-large-external", kind: "removed", text: t ? t("documentconflict.externalPreview", { preview: conflictPreviewText(removed) }) : `外部版本预览：${conflictPreviewText(removed)}` },
+      { key: "diff-too-large-local", kind: "added", text: t ? t("documentconflict.localPreview", { preview: conflictPreviewText(added) }) : `我的版本预览：${conflictPreviewText(added)}` }
     ];
   }
   const table = Array.from({ length: removed.length + 1 }, () => Array(added.length + 1).fill(0) as number[]);
@@ -203,9 +204,10 @@ export function DocumentConflictDialog({
   onKeepLocal: (documentId: string) => void;
   onUseExternal: (documentId: string) => void;
 }) {
+  const { t } = useTranslation();
   const diffLines = useMemo(
-    () => (conflict ? buildConflictDiffLines(conflict.externalMarkdown, conflict.localMarkdown) : []),
-    [conflict]
+    () => (conflict ? buildConflictDiffLines(conflict.externalMarkdown, conflict.localMarkdown, t) : []),
+    [conflict, t]
   );
   const copyExternal = () => {
     if (!conflict) return;
@@ -219,14 +221,14 @@ export function DocumentConflictDialog({
         <Dialog.Content className="fixed left-1/2 top-1/2 z-[93] flex h-[min(720px,calc(100vh-40px))] w-[min(980px,calc(100vw-40px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg bg-white text-[var(--text-main)] shadow-[0_24px_64px_rgba(15,23,42,0.24),0_0_0_1px_rgba(15,23,42,0.08)] focus:outline-none">
           <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-3">
             <div className="min-w-0">
-              <Dialog.Title className="truncate text-[15px] font-extrabold">需要合并更改</Dialog.Title>
+              <Dialog.Title className="truncate text-[15px] font-extrabold">{t("documentconflict.mergeChanges")}</Dialog.Title>
               <Dialog.Description className="mt-1 truncate text-[12px] leading-5 text-[var(--text-muted)]">
-                {document?.title ?? conflict?.filePath ?? "当前文档"} 的同一段内容同时被你和外部修改。自动保存已暂停，请选择如何处理。
+                {t("documentconflict.conflictDescription", { title: document?.title ?? conflict?.filePath ?? t("documentconflict.currentDocument") })}
               </Dialog.Description>
             </div>
             <button
               type="button"
-              aria-label="关闭"
+              aria-label={t("common.close")}
               className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
               onClick={onClose}
             >
@@ -235,16 +237,16 @@ export function DocumentConflictDialog({
           </div>
           <div className="grid min-h-0 flex-1 grid-cols-[220px_1fr]">
             <aside className="border-r border-slate-200 bg-slate-50/80 p-3 text-[12px] leading-5 text-slate-600">
-              <div className="font-bold text-slate-900">处理方式</div>
-              <p className="mt-2">绿色是你当前编辑器里的内容，红色是外部版本中被替换或删除的内容。</p>
-              <p className="mt-2">关闭不会解决冲突，自动保存会继续暂停。</p>
+              <div className="font-bold text-slate-900">{t("documentconflict.howToHandle")}</div>
+              <p className="mt-2">{t("documentconflict.colorExplanation")}</p>
+              <p className="mt-2">{t("documentconflict.closeWontResolve")}</p>
               <button
                 type="button"
                 className="mt-3 inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] font-bold text-slate-600 transition-colors hover:bg-white hover:text-slate-900"
                 onClick={copyExternal}
               >
                 <Copy size={13} />
-                复制外部版本
+                {t("documentconflict.copyExternal")}
               </button>
             </aside>
             <div className="min-h-0 overflow-auto p-3">
@@ -269,14 +271,14 @@ export function DocumentConflictDialog({
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3">
-            <div className="text-[12px] text-[var(--text-muted)]">也可以手动合并后再选择"保留我的版本"保存。</div>
+            <div className="text-[12px] text-[var(--text-muted)]">{t("documentconflict.manualMergeHint")}</div>
             <div className="flex gap-2">
               <button
                 type="button"
                 className="h-8 rounded-md px-3 text-[12px] font-bold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-800"
                 onClick={onClose}
               >
-                稍后处理
+                {t("documentconflict.handleLater")}
               </button>
               <button
                 type="button"
@@ -284,7 +286,7 @@ export function DocumentConflictDialog({
                 className="h-8 rounded-md bg-slate-900 px-3 text-[12px] font-bold text-white transition-colors hover:bg-slate-700 disabled:opacity-45"
                 onClick={() => conflict && onUseExternal(conflict.documentId)}
               >
-                采用外部版本
+                {t("documentconflict.useExternal")}
               </button>
               <button
                 type="button"
@@ -292,7 +294,7 @@ export function DocumentConflictDialog({
                 className="h-8 rounded-md bg-emerald-600 px-3 text-[12px] font-bold text-white transition-colors hover:bg-emerald-700 disabled:opacity-45"
                 onClick={() => conflict && onKeepLocal(conflict.documentId)}
               >
-                保留我的版本
+                {t("documentconflict.keepMyVersion")}
               </button>
             </div>
           </div>

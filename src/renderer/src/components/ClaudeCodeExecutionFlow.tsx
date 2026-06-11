@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import type { ProviderExecutionFlowProps, AgentSessionAction } from "../types";
 import { classifyAgentAction, summarizeAgentProcess, formatProcessDuration, isCancelledAgentMessage } from "../lib/agent";
@@ -13,15 +14,16 @@ const hasVisibleActionError = (actions: AgentSessionAction[]) =>
 const firstProcessLine = (processText: string) => processText.trim().split("\n").find(Boolean) ?? "";
 
 export function ClaudeCodeExecutionFlow(props: ProviderExecutionFlowProps) {
+  const { t } = useTranslation();
   const { message, transcriptFontSize, transcriptLineHeight, processFontSize, processLineHeight, isExpanded, now, onToggleExpanded, onApprovalResponse, onOpenActionPath } = props;
   const visibleActions = message.actions.filter((action) => classifyAgentAction(action) !== "system");
   const pendingApprovalActions = visibleActions.filter((action) => action.approval && action.status === "pending");
-  const processSummary = summarizeAgentProcess(message.actions);
+  const processSummary = summarizeAgentProcess(message.actions, (category) => t(`processCategory.${category}`));
   const duration = formatProcessDuration((message.completedAt ?? now) - message.submittedAt);
   const reasoningPreview = firstProcessLine(message.reasoning);
   const actionError = hasVisibleActionError(visibleActions);
   const statusLabel =
-    pendingApprovalActions.length ? "等待授权" : actionError ? "部分失败" : message.status === "tool-executing" ? "执行中" : message.status === "thinking" ? "处理中" : message.status === "error" ? isCancelledAgentMessage(message) ? "已中断" : "运行失败" : "完成";
+    pendingApprovalActions.length ? t("executionflow.pendingApproval") : actionError ? t("executionflow.partialFailure") : message.status === "tool-executing" ? t("executionflow.executing") : message.status === "thinking" ? t("executionflow.processing") : message.status === "error" ? isCancelledAgentMessage(message) ? t("executionflow.cancelled") : t("executionflow.runFailed") : t("executionflow.completed");
   return (
     <div className="mb-3 px-0 py-1">
       <button
@@ -39,7 +41,7 @@ export function ClaudeCodeExecutionFlow(props: ProviderExecutionFlowProps) {
                 <Loader2 size={Math.max(10, transcriptFontSize)} className="shrink-0 animate-spin text-slate-400" />
               ) : null}
             </div>
-            <div className="mt-1 text-slate-500">{reasoningPreview ? `最近步骤: ${reasoningPreview}` : "最近步骤: Claude Code"}</div>
+            <div className="mt-1 text-slate-500">{reasoningPreview ? t("executionflow.recentStep", { step: reasoningPreview }) : t("executionflow.recentStep", { step: "Claude Code" })}</div>
             <div className="mt-1 flex flex-wrap gap-2 text-slate-400">
               {processSummary.summary ? <span>{processSummary.summary}</span> : null}
               {message.reasoning.trim() ? <span>summary</span> : null}
@@ -53,13 +55,13 @@ export function ClaudeCodeExecutionFlow(props: ProviderExecutionFlowProps) {
         <div className="mt-2 space-y-3 pl-4">
           {message.reasoning.trim() ? (
             <div className="text-[var(--text-muted)]" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>可见过程</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>{t("executionflow.visibleProcess")}</SectionLabel>
               <div className="mt-1 whitespace-pre-wrap">{message.reasoning}</div>
             </div>
           ) : null}
           {pendingApprovalActions.length ? (
             <div className="space-y-2">
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>授权</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>{t("executionflow.approval")}</SectionLabel>
               {pendingApprovalActions.map((action) => (
                 <AgentApprovalCard
                   key={action.approval?.id ?? action.toolId}
@@ -74,7 +76,7 @@ export function ClaudeCodeExecutionFlow(props: ProviderExecutionFlowProps) {
           ) : null}
           {visibleActions.length ? (
             <div className="space-y-1.5">
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>执行流</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>{t("executionflow.executionFlow")}</SectionLabel>
               {visibleActions.map((action) => (
                 <AgentActionDetails
                   key={action.toolId}

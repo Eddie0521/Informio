@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
@@ -47,7 +48,8 @@ const tablePosFromDom = (editor: Editor, table: HTMLTableElement) => {
       const nextCellPos = Math.max(0, contentPos - 1);
       const node = editor.state.doc.nodeAt(nextCellPos);
       if (node?.type.name === "tableCell" || node?.type.name === "tableHeader") cellPos = nextCellPos;
-    } catch {
+    } catch (error) {
+      console.warn("Failed to resolve table cell position:", error);
       cellPos = null;
     }
     if (cellPos !== null) {
@@ -267,6 +269,7 @@ const nearestTableHoverTarget = (overlay: TableOverlayState, clientX: number, cl
 };
 
 export function TableControls({ editor, containerRef }: { editor: Editor | null; containerRef: React.RefObject<HTMLElement | null> }) {
+  const { t } = useTranslation();
   const [overlay, setOverlay] = useState<TableOverlayState | null>(null);
   const [hoverTarget, setHoverTarget] = useState<TableHoverTarget>(null);
   const selectionTableRef = useRef<HTMLTableElement | null>(null);
@@ -611,8 +614,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
           type="button"
           className="informio-table-context-add"
           style={contextAddButtonPosition}
-          aria-label={hoverTarget?.axis === "column" ? "添加列" : "添加行"}
-          title={hoverTarget?.axis === "column" ? "添加列" : "添加行"}
+          aria-label={hoverTarget?.axis === "column" ? t("table.addColumn") : t("table.addRow")}
+          title={hoverTarget?.axis === "column" ? t("table.addColumn") : t("table.addRow")}
           onMouseDown={(event) => event.preventDefault()}
           onClick={runContextAdd}
         >
@@ -630,8 +633,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className={cn("informio-table-toolbutton", currentHorizontalAlign === "left" && "is-active")}
-          aria-label="水平左对齐"
-          title="水平左对齐"
+          aria-label={t("table.alignLeft")}
+          title={t("table.alignLeft")}
           disabled={!selectionInOverlayTable}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => applyCellAttribute("align", "left")}
@@ -641,8 +644,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className={cn("informio-table-toolbutton", currentHorizontalAlign === "center" && "is-active")}
-          aria-label="水平居中"
-          title="水平居中"
+          aria-label={t("table.alignCenter")}
+          title={t("table.alignCenter")}
           disabled={!selectionInOverlayTable}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => applyCellAttribute("align", "center")}
@@ -652,8 +655,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className={cn("informio-table-toolbutton", currentHorizontalAlign === "right" && "is-active")}
-          aria-label="水平右对齐"
-          title="水平右对齐"
+          aria-label={t("table.alignRight")}
+          title={t("table.alignRight")}
           disabled={!selectionInOverlayTable}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => applyCellAttribute("align", "right")}
@@ -664,8 +667,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className={cn("informio-table-toolbutton", currentVerticalAlign === "top" && "is-active")}
-          aria-label="垂直顶对齐"
-          title="垂直顶对齐"
+          aria-label={t("table.alignTop")}
+          title={t("table.alignTop")}
           disabled={!selectionInOverlayTable}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => applyCellAttribute("verticalAlign", "top")}
@@ -675,8 +678,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className={cn("informio-table-toolbutton", currentVerticalAlign === "middle" && "is-active")}
-          aria-label="垂直居中"
-          title="垂直居中"
+          aria-label={t("table.alignMiddle")}
+          title={t("table.alignMiddle")}
           disabled={!selectionInOverlayTable}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => applyCellAttribute("verticalAlign", "middle")}
@@ -686,8 +689,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className={cn("informio-table-toolbutton", currentVerticalAlign === "bottom" && "is-active")}
-          aria-label="垂直底对齐"
-          title="垂直底对齐"
+          aria-label={t("table.alignBottom")}
+          title={t("table.alignBottom")}
           disabled={!selectionInOverlayTable}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => applyCellAttribute("verticalAlign", "bottom")}
@@ -698,8 +701,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className="informio-table-toolbutton"
-          aria-label="合并单元格"
-          title="合并单元格"
+          aria-label={t("table.mergeCells")}
+          title={t("table.mergeCells")}
           disabled={!canMergeCells}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => runTableTool("merge-cells")}
@@ -709,8 +712,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className="informio-table-toolbutton"
-          aria-label="拆分单元格"
-          title="拆分单元格"
+          aria-label={t("table.splitCells")}
+          title={t("table.splitCells")}
           disabled={!canSplitCell}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => runTableTool("split-cell")}
@@ -721,8 +724,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className="informio-table-toolbutton is-danger"
-          aria-label="删除行"
-          title="删除行"
+          aria-label={t("table.deleteRow")}
+          title={t("table.deleteRow")}
           disabled={!canDeleteRow}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => runTableTool("delete-row")}
@@ -732,8 +735,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className="informio-table-toolbutton is-danger"
-          aria-label="删除列"
-          title="删除列"
+          aria-label={t("table.deleteColumn")}
+          title={t("table.deleteColumn")}
           disabled={!canDeleteColumn}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => runTableTool("delete-column")}
@@ -743,8 +746,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         <button
           type="button"
           className="informio-table-toolbutton is-danger"
-          aria-label="删除表格"
-          title="删除表格"
+          aria-label={t("table.deleteTable")}
+          title={t("table.deleteTable")}
           disabled={!canDeleteTable}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => runTableTool("delete-table")}
@@ -762,8 +765,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
           width: TABLE_HEADER_STRIP_SIZE,
           height: TABLE_HEADER_STRIP_SIZE
         }}
-        aria-label="选中整个表格"
-        title="选中整个表格"
+        aria-label={t("table.selectAll")}
+        title={t("table.selectAll")}
         onMouseDown={(event) => event.preventDefault()}
         onClick={selectWholeTable}
       >
@@ -788,8 +791,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
               selectionShape && columnIndex >= selectionShape.left && columnIndex < selectionShape.right && "is-active"
             )}
             style={{ width: column.width, height: TABLE_HEADER_STRIP_SIZE }}
-            aria-label={`选中第 ${columnIndex + 1} 列`}
-            title={`选中第 ${columnIndex + 1} 列`}
+            aria-label={t("table.selectColumn", { column: columnIndex + 1 })}
+            title={t("table.selectColumn", { column: columnIndex + 1 })}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => selectTableColumnAt(columnIndex)}
           >
@@ -798,8 +801,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
           <button
             type="button"
             className="informio-table-column-resize-handle"
-            aria-label={`调整第 ${columnIndex + 1} 列宽度`}
-            title={`调整第 ${columnIndex + 1} 列宽度`}
+            aria-label={t("table.resizeColumn", { column: columnIndex + 1 })}
+            title={t("table.resizeColumn", { column: columnIndex + 1 })}
             onMouseDown={(event) => startColumnResize(columnIndex, event)}
           />
         </div>
@@ -823,8 +826,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
               selectionShape && rowIndex >= selectionShape.top && rowIndex < selectionShape.bottom && "is-active"
             )}
             style={{ width: TABLE_HEADER_STRIP_SIZE, height: row.height }}
-            aria-label={`选中第 ${rowIndex + 1} 行`}
-            title={`选中第 ${rowIndex + 1} 行`}
+            aria-label={t("table.selectRow", { row: rowIndex + 1 })}
+            title={t("table.selectRow", { row: rowIndex + 1 })}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => selectTableRowAt(rowIndex)}
           >
@@ -833,8 +836,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
           <button
             type="button"
             className="informio-table-row-resize-handle"
-            aria-label={`调整第 ${rowIndex + 1} 行高度`}
-            title={`调整第 ${rowIndex + 1} 行高度`}
+            aria-label={t("table.resizeRow", { row: rowIndex + 1 })}
+            title={t("table.resizeRow", { row: rowIndex + 1 })}
             onMouseDown={(event) => startRowResize(rowIndex, event)}
           />
         </div>

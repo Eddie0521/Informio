@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import log from "electron-log";
 import type {
   AgentModel,
   AgentConversationMessage,
@@ -452,7 +453,8 @@ export class CodexAppServerManager {
           ),
           resumed: true
         };
-      } catch {
+      } catch (error) {
+        log.warn("Failed to resume Codex thread, starting new:", error);
         return {
           result: asRecord(
             await this.request(session, "thread/start", {

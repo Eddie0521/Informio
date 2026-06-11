@@ -125,7 +125,8 @@ export const MediaBlock = Node.create({
             return;
           }
           media.setAttribute("src", objectUrl);
-        } catch {
+        } catch (error) {
+          console.warn("Failed to load local media asset:", error);
           media.setAttribute("src", resolveMarkdownAssetSrc(rawSrc, this.options.assetBasePath));
         }
       };

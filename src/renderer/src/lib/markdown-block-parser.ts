@@ -47,7 +47,8 @@ export const highlightedCodeHtml = (language: string, code: string) => {
   try {
     const tree = lowlight.highlight(normalizedLanguage, code);
     return tree.children.map((child) => hastToHtml(child as LowlightNode)).join("");
-  } catch {
+  } catch (error) {
+    console.warn("Syntax highlighting failed:", error);
     return escapeHtml(code);
   }
 };

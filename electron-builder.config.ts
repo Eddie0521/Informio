@@ -6,6 +6,8 @@ const [githubOwner = "", githubRepo = ""] = APP_GITHUB_REPOSITORY.split("/");
 const config: Configuration = {
   appId: APP_ID,
   productName: APP_NAME,
+  afterSign: "scripts/remove-quarantine.cjs",
+  afterPack: "scripts/remove-quarantine.cjs",
   directories: {
     output: "release",
     buildResources: "build"

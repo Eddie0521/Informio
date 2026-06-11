@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
+import log from "electron-log";
 import { constants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -89,7 +90,8 @@ const readLoginShellPath = async () => {
       }
     });
     return parseShellPath(stdout);
-  } catch {
+  } catch (error) {
+    log.warn("Failed to read login shell PATH:", error);
     return [];
   }
 };
@@ -152,7 +154,8 @@ const resolveWindowsShimExecutable = async (command: string) => {
         // Try the next executable mentioned by the shim.
       }
     }
-  } catch {
+  } catch (error) {
+    log.warn("Failed to read Windows shim executable:", error);
     return command;
   }
   return command;

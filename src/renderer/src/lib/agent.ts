@@ -14,9 +14,9 @@ import type {
 } from "../types";
 import { defaultApiSettings, processCategoryLabel } from "../constants";
 
-export const modelLabel = (models: AgentModel[], id?: string) => {
+export const modelLabel = (models: AgentModel[], id?: string, fallback = "Detect models first") => {
   const model = models.find((item) => item.id === id);
-  return model?.label || id || "先检测模型";
+  return model?.label || id || fallback;
 };
 
 export const defaultApiBaseUrl = (provider: ApiProviderKind) =>
@@ -33,19 +33,19 @@ export const normalizeApiSettings = (api: AppSettings["api"] | undefined) => ({
   models: api?.models ?? defaultApiSettings.models
 });
 
-export const buildWorkspaceLabel = (data: Pick<AppData, "projects" | "workspacePath">) => {
+export const buildWorkspaceLabel = (data: Pick<AppData, "projects" | "workspacePath">, fallback = "Unnamed workspace") => {
   const titles = (data.projects ?? []).map((project) => project.title?.trim() || project.path).filter(Boolean);
   if (titles.length) return titles.join(" · ");
   if (data.workspacePath) {
     const normalized = data.workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
     return normalized.split("/").filter(Boolean).at(-1) || normalized;
   }
-  return "未命名工作区";
+  return fallback;
 };
 
-export const createConversationTitle = (text: string) => {
+export const createConversationTitle = (text: string, fallback = "New session") => {
   const singleLine = text.replace(/\s+/g, " ").trim();
-  return singleLine.length > 36 ? `${singleLine.slice(0, 36)}…` : singleLine || "新会话";
+  return singleLine.length > 36 ? `${singleLine.slice(0, 36)}…` : singleLine || fallback;
 };
 
 const codexFinalResponseBoundaryPattern = /(^|\n)(结论(?:先行)?\s*[:：]|Conclusion\s*[:：])/i;
@@ -264,7 +264,10 @@ export const classifyAgentAction = (action: AgentSessionAction): AgentProcessCat
 export const didAgentEditFiles = (messages: AgentSessionMessage[]) =>
   messages.some((message) => message.actions.some((action) => action.kind === "file_change" && action.status !== "error"));
 
-export const summarizeAgentProcess = (actions: AgentSessionAction[]) => {
+export const summarizeAgentProcess = (
+  actions: AgentSessionAction[],
+  labelForCategory: (category: Exclude<AgentProcessCategory, "system">) => string = (category) => processCategoryLabel[category]
+) => {
   const counts: Record<Exclude<AgentProcessCategory, "system">, number> = {
     explore: 0,
     search: 0,
@@ -287,7 +290,7 @@ export const summarizeAgentProcess = (actions: AgentSessionAction[]) => {
 
   const segments = (Object.entries(counts) as Array<[Exclude<AgentProcessCategory, "system">, number]>)
     .filter(([, count]) => count > 0)
-    .map(([category, count]) => `${processCategoryLabel[category]} ${count}`);
+    .map(([category, count]) => `${labelForCategory(category)} ${count}`);
 
   return {
     summary: segments.join(" · "),

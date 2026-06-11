@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { AgentSessionAction, AgentApprovalDecision } from "../types";
 import { cn } from "../lib/utils";
 import { AgentApprovalCard } from "./AgentApprovalCard";
@@ -20,6 +21,7 @@ export function AgentActionDetails({
   onOpenActionPath: (path: string) => void;
   mode?: "generic" | "opencode" | "claude" | "codex";
 }) {
+  const { t } = useTranslation();
   const shellClassName =
     mode === "opencode"
       ? "px-0 py-1 text-slate-700"
@@ -41,7 +43,7 @@ export function AgentActionDetails({
             className="rounded px-1.5 py-0.5 font-semibold text-slate-500 hover:bg-slate-200"
             style={{ fontSize: `${fontSize}px`, lineHeight: `${lineHeight}px` }}
           >
-            打开
+            {t("common.open")}
           </button>
         ) : null}
       </summary>

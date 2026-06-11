@@ -1,3 +1,4 @@
+import log from "electron-log";
 import type {
   AgentConversationMessage,
   AgentSessionInput,
@@ -21,7 +22,8 @@ export const asErrorMessage = (error: unknown): string => {
   }
   try {
     return JSON.stringify(error);
-  } catch {
+  } catch (cause) {
+    log.warn("Failed to stringify error for logging:", cause);
     return Object.prototype.toString.call(error);
   }
 };

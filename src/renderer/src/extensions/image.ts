@@ -64,7 +64,8 @@ export const ResizableImage = Image.extend({
             return;
           }
           el.src = objectUrl;
-        } catch {
+        } catch (error) {
+          console.warn("Failed to load local image asset:", error);
           el.src = resolveMarkdownAssetSrc(rawSrc, this.options.assetBasePath);
         }
       };

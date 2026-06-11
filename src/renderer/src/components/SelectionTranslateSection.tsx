@@ -1,6 +1,6 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { Loader2, X } from "lucide-react";
-import { selectionToolbarLabel } from "../constants";
 import { cn } from "../lib/utils";
 import { TranslationResultText } from "./TranslationResultText";
 import { setLastToolbarSelectionText } from "../lib/settings-helpers";
@@ -28,6 +28,7 @@ export function SelectionTranslateSection({
   preserveSelection?: (event: ReactMouseEvent<HTMLElement>) => void;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const preserveSelection = (event: ReactMouseEvent<HTMLElement>) => {
     preserveSelectionHandler?.(event);
   };
@@ -65,7 +66,7 @@ export function SelectionTranslateSection({
             disabled={!enabled}
             className={buttonClassName}
           >
-            <span>加密</span>
+            <span>{t("common.encrypt")}</span>
           </button>
         )}
         {onTranslate ? (
@@ -76,14 +77,14 @@ export function SelectionTranslateSection({
             disabled={!enabled || busy}
             className={buttonClassName}
           >
-            <span>{selectionToolbarLabel}</span>
+            <span>{t("common.translate")}</span>
             <span className={spinnerSlotClassName} aria-hidden="true">
               {busy ? <Loader2 size={spinnerSize} className="animate-spin" /> : null}
             </span>
           </button>
         ) : (
           <div className={cn(buttonClassName, "text-[var(--text-main)]")} aria-live="polite">
-            <span>{busy ? "正在翻译" : "翻译结果"}</span>
+            <span>{busy ? t("selectiontoolbar.translating") : t("selectiontoolbar.translationResult")}</span>
             <span className={spinnerSlotClassName} aria-hidden="true">
               {busy ? <Loader2 size={spinnerSize} className="animate-spin" /> : null}
             </span>
@@ -95,7 +96,7 @@ export function SelectionTranslateSection({
             onMouseDown={preserveSelection}
             onClick={onClose}
             className={closeButtonClassName}
-            aria-label="关闭工具栏"
+            aria-label={t("selectiontoolbar.closeToolbar")}
           >
             <X size={variant === "compact" ? 12 : 14} />
           </button>

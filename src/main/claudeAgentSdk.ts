@@ -1,3 +1,4 @@
+import log from "electron-log";
 import {
   query,
   resolveSettings,
@@ -95,7 +96,8 @@ const truncate = (value: string, maxLength = 12000) => (value.length > maxLength
 const compactJson = (value: unknown) => {
   try {
     return truncate(JSON.stringify(value, null, 2));
-  } catch {
+  } catch (error) {
+    log.warn("Failed to serialize value to JSON:", error);
     return String(value);
   }
 };

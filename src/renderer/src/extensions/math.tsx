@@ -135,7 +135,8 @@ export function MathInlineView({ editor, getPos, node, selected, updateAttribute
         <span contentEditable={false} dangerouslySetInnerHTML={{ __html: html }} />
       </NodeViewWrapper>
     );
-  } catch {
+  } catch (error) {
+    console.warn("Failed to parse math expression:", error);
     return (
       <NodeViewWrapper
         as="span"

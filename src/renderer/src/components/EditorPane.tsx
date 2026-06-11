@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useAppStore, useDocumentStore, useAgentStore } from "../stores";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Editor, JSONContent } from "@tiptap/core";
-import { useEditor, EditorContent, ReactNodeViewRenderer, NodeViewWrapper } from "@tiptap/react";
+import { useEditor, EditorContent, ReactNodeViewRenderer } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Fragment as ProseMirrorFragment } from "@tiptap/pm/model";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { TableMap } from "@tiptap/pm/tables";
 import StarterKit from "@tiptap/starter-kit";
@@ -68,6 +69,10 @@ import {
 } from "../constants";
 import { cn } from "../lib/utils";
 import { pathBaseName } from "../lib/path";
+import { markdownToStatusText, countWords, countCharacters, countLines } from "../lib/text-stats";
+import { getDocumentOutline, buildOutlineTree } from "../lib/outline";
+import { normalizeEditorPanes, formatRelative, clamp, sameAgentSelection, samePdfSelectionRects, buildEditorTextSearchIndex, findNextTextMatch } from "../lib/editor-utils";
+import { isInternalDocumentDrag, documentStructureKey } from "../lib/file-tree";
 import {
   documentKind,
   isEmbeddableAssetDocument,
@@ -98,8 +103,6 @@ import {
   buildDocumentLookupIndex,
   collectWikiSuggestions,
   lowlight,
-  normalizeCodeLanguage,
-  highlightedCodeHtml,
   sourceBackedNode,
   textContentNode,
   parseMarkdownTableRow,
@@ -129,109 +132,15 @@ import { TyporaMarkdownInput } from "../extensions/typora-markdown-input";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { SelectionTranslateSection } from "./SelectionTranslateSection";
 import { InsertToolbar, markSelectionToolbarInteraction, isSelectionToolbarInteractionActive } from "./InsertToolbar";
+import { CodeBlockView } from "./CodeBlockView";
+import { AssetViewerSurface } from "./AssetViewerSurface";
 import { TableControls } from "./TableControls";
 import { LinkDialog } from "./LinkDialog";
 import { ImageDialog } from "./ImageDialog";
 import { SecretPassphraseDialog } from "./SecretPassphraseDialog";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { PdfEditorContext as UnifiedPdfEditorContext, PdfViewerSurface as UnifiedPdfViewerSurface } from "../pdfSurface";
-import type { PdfEditorContextValue as UnifiedPdfEditorContextValue } from "../pdfSurface";
-
-export function normalizeEditorPanes(
-  panes: EditorPaneState[],
-  isValidDocument: (documentId: string) => boolean = () => true
-): EditorPaneState[] {
-  const valid = panes.filter((pane) => isValidDocument(pane.documentId)).slice(0, 2);
-  if (!valid.length) return [];
-  const normalized = valid.map((pane, index) => ({
-    id: (index === 0 ? "main" : "secondary") as EditorPaneState["id"],
-    documentId: pane.documentId
-  }));
-  if (normalized.length === 2 && normalized[0].documentId === normalized[1].documentId) {
-    return [{ id: "main", documentId: normalized[0].documentId }];
-  }
-  return normalized;
-}
-
-export function markdownToStatusText(markdown: string) {
-  return markdown
-    .replace(/\r\n/g, "\n")
-    .replace(/```([\s\S]*?)```/g, (_match, code: string) => code)
-    .replace(/`([^`]*)`/g, "$1")
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "$1")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
-    .replace(/^>\s?/gm, "")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^[-+*]\s+/gm, "")
-    .replace(/^\d+\.\s+/gm, "")
-    .replace(/^\s*[-+*]\s+\[(?: |x)\]\s+/gim, "")
-    .replace(/[*_~]/g, "")
-    .replace(/<\/?[^>]+>/g, "");
-}
-
-export function countWords(markdown: string) {
-  const latinWords = markdown.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?/g)?.length ?? 0;
-  const cjkChars = markdown.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
-  return latinWords + cjkChars;
-}
-
-export function countCharacters(markdown: string) {
-  return markdownToStatusText(markdown).length;
-}
-
-export function countLines(markdown: string) {
-  const content = markdownToStatusText(markdown).replace(/\n+$/g, "");
-  return content ? content.split("\n").filter((line) => line.trim().length > 0).length : 0;
-}
-
-export function getDocumentOutline(markdown: string): OutlineItem[] {
-  return markdown
-    .split("\n")
-    .map((line, index) => {
-      const match = /^(#{1,6})\s+(.+)$/.exec(line.trim());
-      if (!match) return null;
-      return {
-        id: `${index}-${match[2]}`,
-        title: match[2].replace(/[#*_`]/g, "").trim(),
-        level: match[1].length,
-        line: index + 1,
-        order: -1
-      };
-    })
-    .filter((item): item is OutlineItem => Boolean(item))
-    .map((item, order) => ({ ...item, order }));
-}
-
-export function buildOutlineTree(items: OutlineItem[]): OutlineTreeItem[] {
-  const roots: OutlineTreeItem[] = [];
-  const stack: OutlineTreeItem[] = [];
-
-  for (const item of items) {
-    const next: OutlineTreeItem = { ...item, children: [] };
-    while (stack.length && stack[stack.length - 1].level >= next.level) {
-      stack.pop();
-    }
-    const parent = stack[stack.length - 1];
-    if (parent) parent.children.push(next);
-    else roots.push(next);
-    stack.push(next);
-  }
-
-  return roots;
-}
-
-export function formatRelative(value: string) {
-  const diff = Date.now() - new Date(value).getTime();
-  const minutes = Math.max(1, Math.round(diff / 60000));
-  if (minutes < 60) return `edited ${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `edited ${hours}h ago`;
-  return "edited yesterday";
-}
-
-export function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
+import type { UnifiedPdfEditorContextValue } from "../types";
 
 const mathTextFromSource = (source: string) => {
   const trimmed = source.trim();
@@ -293,253 +202,16 @@ const topLevelTextBlocks = (doc: ProseMirrorNodeLike): MarkdownTextBlock[] => {
   return blocks;
 };
 
-const selectionToolbarActions: SelectionToolbarAction[] = [
-  { id: "bold", label: "加粗", icon: Bold },
-  { id: "italic", label: "倾斜", icon: Italic },
-  { id: "underline", label: "下划线", icon: UnderlineIcon },
-  { id: "strike", label: "删除线", icon: Strikethrough },
-  { id: "subscript", label: "下标", icon: SubscriptIcon },
-  { id: "superscript", label: "上标", icon: SuperscriptIcon },
-  { id: "highlight", label: "高亮", icon: Highlighter },
-  { id: "link", label: "加链接", icon: Link2 }
+const getSelectionToolbarActions = (t: (key: string) => string): SelectionToolbarAction[] => [
+  { id: "bold", label: t("editorpane.bold"), icon: Bold },
+  { id: "italic", label: t("editorpane.italic"), icon: Italic },
+  { id: "underline", label: t("editorpane.underline"), icon: UnderlineIcon },
+  { id: "strike", label: t("editorpane.strikethrough"), icon: Strikethrough },
+  { id: "subscript", label: t("editorpane.subscript"), icon: SubscriptIcon },
+  { id: "superscript", label: t("editorpane.superscript"), icon: SuperscriptIcon },
+  { id: "highlight", label: t("editorpane.highlight"), icon: Highlighter },
+  { id: "link", label: t("editorpane.addLink"), icon: Link2 }
 ];
-
-const CodeBlockView = ({ editor, getPos, node, selected }: { editor: Editor; getPos: () => number | undefined; node: { attrs: Record<string, unknown>; textContent: string; nodeSize: number }; selected: boolean; updateAttributes: (attrs: Record<string, unknown>) => void }) => {
-  const language = normalizeCodeLanguage(String(node.attrs.language || "plaintext"));
-  const displayLanguage = language === "plaintext" ? "" : language;
-  const [sourceFocused, setSourceFocused] = useState(false);
-  const [draftCode, setDraftCode] = useState(node.textContent);
-  const [draftLanguage, setDraftLanguage] = useState(displayLanguage);
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const sourceRef = useRef<HTMLTextAreaElement | null>(null);
-  const previewHtml = highlightedCodeHtml(language, node.textContent);
-
-  const resizeSourceTextarea = () => {
-    const textarea = sourceRef.current;
-    if (!textarea || !sourceFocused) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${textarea.scrollHeight}px`;
-  };
-
-  useEffect(() => {
-    if (sourceFocused) return;
-    setDraftCode(node.textContent);
-    setDraftLanguage(displayLanguage);
-  }, [displayLanguage, node.textContent, sourceFocused]);
-
-  useLayoutEffect(() => {
-    resizeSourceTextarea();
-  }, [sourceFocused, draftCode]);
-
-  const commitLanguage = (value = draftLanguage) => {
-    const position = getPos();
-    if (typeof position !== "number") return;
-    const nextLanguage = normalizeCodeLanguage(value || "plaintext");
-    if (nextLanguage === language) return;
-    editor.view.dispatch(editor.state.tr.setNodeMarkup(position, undefined, { ...node.attrs, language: nextLanguage }));
-  };
-
-  useEffect(() => {
-    if (!sourceFocused) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const wrapper = wrapperRef.current;
-      if (!wrapper || !(event.target instanceof globalThis.Node) || wrapper.contains(event.target)) return;
-      commitLanguage();
-      setSourceFocused(false);
-      sourceRef.current?.blur();
-    };
-    window.addEventListener("pointerdown", handlePointerDown, true);
-    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [commitLanguage, sourceFocused]);
-
-  const applyCode = (value: string) => {
-    setDraftCode(value);
-    const position = getPos();
-    if (typeof position !== "number") return;
-    const textContent = value ? editor.schema.text(value) : ProseMirrorFragment.empty;
-    const tr = editor.state.tr.replaceWith(position + 1, position + node.nodeSize - 1, textContent);
-    editor.view.dispatch(tr);
-  };
-
-  return (
-    <NodeViewWrapper
-      ref={wrapperRef}
-      className={cn("informio-code-block", sourceFocused && "is-editing")}
-      onMouseDown={(event: ReactMouseEvent) => {
-        if (sourceFocused) return;
-        event.preventDefault();
-        setSourceFocused(true);
-        const position = getPos();
-        if (typeof position === "number") editor.chain().focus().setTextSelection(position + 1).run();
-      }}
-    >
-      <div className={cn("informio-code-source", !sourceFocused && "is-hidden-source-content")}>
-        <textarea
-          ref={sourceRef}
-          value={draftCode}
-          rows={Math.max(3, draftCode.split("\n").length)}
-          contentEditable={false}
-          spellCheck={false}
-          autoCapitalize="off"
-          autoCorrect="off"
-          className="informio-code-source-textarea"
-          onMouseDown={(event) => event.stopPropagation()}
-          onFocus={() => setSourceFocused(true)}
-          onBlur={() => {
-            window.setTimeout(() => {
-              const wrapper = wrapperRef.current;
-              const activeElement = document.activeElement;
-              if (wrapper && activeElement && wrapper.contains(activeElement)) return;
-              commitLanguage();
-              setSourceFocused(false);
-            }, 0);
-          }}
-          onChange={(event) => applyCode(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            event.stopPropagation();
-            if (event.key === "Escape") {
-              const position = getPos();
-              if (typeof position !== "number") return;
-              event.preventDefault();
-              setSourceFocused(false);
-              event.currentTarget.blur();
-              editor.chain().focus().setTextSelection(position + node.nodeSize).run();
-            }
-          }}
-        />
-        <input
-          value={draftLanguage}
-          aria-label="代码语言"
-          placeholder="plain text"
-          spellCheck={false}
-          className="informio-code-language-widget"
-          onMouseDown={(event) => event.stopPropagation()}
-          onFocus={() => setSourceFocused(true)}
-          onBlur={() => {
-            window.setTimeout(() => {
-              const wrapper = wrapperRef.current;
-              const activeElement = document.activeElement;
-              if (wrapper && activeElement && wrapper.contains(activeElement)) return;
-              commitLanguage();
-              setSourceFocused(false);
-            }, 0);
-          }}
-          onChange={(event) => setDraftLanguage(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            event.stopPropagation();
-            if (event.key !== "Escape" && event.key !== "Enter") return;
-            event.preventDefault();
-            if (event.key === "Enter") commitLanguage(event.currentTarget.value);
-            else setDraftLanguage(displayLanguage);
-            setSourceFocused(false);
-            event.currentTarget.blur();
-            const position = getPos();
-            if (typeof position === "number") editor.chain().focus().setTextSelection(position + node.nodeSize).run();
-          }}
-        />
-      </div>
-      {!sourceFocused ? (
-        <pre contentEditable={false}>
-          <code className={`language-${language}`} dangerouslySetInnerHTML={{ __html: previewHtml }} />
-        </pre>
-      ) : null}
-    </NodeViewWrapper>
-  );
-};
-
-function AssetViewerSurface({ document }: { document: InformioDocument }) {
-  const filePath = document.filePath ?? "";
-  const title = document.title || pathBaseName(filePath) || "Asset";
-  const kind = documentKind(document);
-  const [assetUrl, setAssetUrl] = useState("");
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  useEffect(() => {
-    if (!filePath || (kind !== "image" && kind !== "video" && kind !== "audio")) {
-      setAssetUrl("");
-      setLoadFailed(false);
-      setIsLoading(false);
-      return;
-    }
-    let disposed = false;
-    let objectUrl = "";
-    setIsLoading(true);
-    setLoadFailed(false);
-    window.informio.loadAsset(filePath)
-      .then((asset) => {
-        if (disposed) return;
-        objectUrl = URL.createObjectURL(new Blob([asset.data], { type: asset.mimeType }));
-        setAssetUrl(objectUrl);
-      })
-      .catch(() => {
-        if (!disposed) setLoadFailed(true);
-      })
-      .finally(() => {
-        if (!disposed) setIsLoading(false);
-      });
-    return () => {
-      disposed = true;
-      setAssetUrl("");
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [filePath, kind]);
-  const openInSystem = () => {
-    if (filePath) void window.informio.openPath(filePath);
-  };
-
-  if (!filePath) {
-    return <div className="informio-asset-message is-error">文件路径缺失，无法打开。</div>;
-  }
-
-  const isLoadableAsset = kind === "image" || kind === "video" || kind === "audio";
-  const body = isLoadableAsset
-    ? isLoading || (!assetUrl && !loadFailed) ? (
-      <div className="informio-asset-message">正在加载文件...</div>
-    ) : loadFailed ? (
-      <div className="informio-asset-message is-error">文件已识别为{kind === "image" ? "图片" : kind === "video" ? "视频" : "音频"}，但当前文件无法被内置预览器解码。</div>
-    ) : kind === "image" ? (
-      <img className="informio-asset-image" src={assetUrl} alt={title} onError={() => setLoadFailed(true)} />
-    ) : kind === "video" ? (
-      <video className="informio-asset-video" src={assetUrl} controls onError={() => setLoadFailed(true)} />
-    ) : (
-      <audio className="informio-asset-audio" src={assetUrl} controls onError={() => setLoadFailed(true)} />
-    )
-    : <div className="informio-asset-message">当前文件类型无法内置预览。</div>;
-
-  return (
-    <div className="informio-asset-surface">
-      <div className={cn("informio-asset-stage", kind === "audio" && "is-audio")}>{body}</div>
-      <div className="informio-asset-footer">
-        <span>{title}</span>
-        <button type="button" onClick={openInSystem}>
-          在系统中打开
-        </button>
-      </div>
-    </div>
-  );
-}
-
-export const sameAgentSelection = (left: AgentSelection | null, right: AgentSelection | null) => {
-  if (left === right) return true;
-  if (!left || !right) return false;
-  return (
-    left.kind === right.kind &&
-    left.documentId === right.documentId &&
-    left.from === right.from &&
-    left.to === right.to &&
-    left.text === right.text &&
-    left.markdown === right.markdown &&
-    left.title === right.title &&
-    left.filePath === right.filePath &&
-    left.page === right.page &&
-    left.overlayLeft === right.overlayLeft &&
-    left.overlayTop === right.overlayTop &&
-    samePdfSelectionRects(left.rects, right.rects)
-  );
-};
-
-const isInternalDocumentDrag = (dataTransfer: DataTransfer | null | undefined) =>
-  Boolean(dataTransfer && Array.from(dataTransfer.types).includes(DOCUMENT_DRAG_MIME));
 
 const InformioCodeBlock = CodeBlockLowlight.extend({
   addNodeView() {
@@ -586,7 +258,8 @@ const tablePosFromDom = (editor: Editor, table: HTMLTableElement) => {
       const nextCellPos = Math.max(0, contentPos - 1);
       const node = editor.state.doc.nodeAt(nextCellPos);
       if (node?.type.name === "tableCell" || node?.type.name === "tableHeader") cellPos = nextCellPos;
-    } catch {
+    } catch (error) {
+      console.warn("Failed to resolve table cell position:", error);
       cellPos = null;
     }
     if (cellPos !== null) {
@@ -626,23 +299,6 @@ const measureNaturalTableColumnWidthInfo = (
   }
 };
 
-
-const samePdfSelectionRects = (left: PdfSelectionRect[] | undefined, right: PdfSelectionRect[] | undefined) => {
-  const leftRects = left ?? [];
-  const rightRects = right ?? [];
-  if (leftRects.length !== rightRects.length) return false;
-  return leftRects.every((rect, index) => {
-    const other = rightRects[index];
-    return (
-      rect.x === other?.x &&
-      rect.y === other?.y &&
-      rect.width === other?.width &&
-      rect.height === other?.height
-    );
-  });
-};
-
-const DOCUMENT_DRAG_MIME = "application/x-informio-document-id";
 
 const markdownAutoBlockMatch = (schema: ProseMirrorSchemaLike, doc: ProseMirrorNodeLike): MarkdownAutoBlockMatch | null => {
   const blocks = topLevelTextBlocks(doc);
@@ -786,48 +442,6 @@ const markdownAutoInlineMathMatch = (schema: ProseMirrorSchemaLike, doc: ProseMi
   return found;
 };
 
-export const buildEditorTextSearchIndex = (doc: ProseMirrorNode): EditorTextSearchIndex => {
-  const chars: string[] = [];
-  const positions: number[] = [];
-  let firstBlock = true;
-
-  doc.descendants((node, pos) => {
-    if (!node.isTextblock) return true;
-    if (!firstBlock) {
-      chars.push("\n");
-      positions.push(Math.max(0, pos));
-    }
-    firstBlock = false;
-    node.descendants((child, childPos) => {
-      const absolutePos = pos + 1 + childPos;
-      if (child.isText) {
-        Array.from(child.text ?? "").forEach((char, index) => {
-          chars.push(char);
-          positions.push(absolutePos + index);
-        });
-      } else if (child.type.name === "hardBreak") {
-        chars.push("\n");
-        positions.push(absolutePos);
-      }
-      return true;
-    });
-    return false;
-  });
-
-  return { text: chars.join(""), positions };
-};
-
-export const findNextTextMatch = (text: string, query: string, fromIndex: number) => {
-  if (!query) return null;
-  const firstIndex = text.indexOf(query, Math.max(0, fromIndex));
-  if (firstIndex >= 0) return { start: firstIndex, end: firstIndex + query.length };
-  const wrappedIndex = text.indexOf(query, 0);
-  return wrappedIndex >= 0 ? { start: wrappedIndex, end: wrappedIndex + query.length } : null;
-};
-
-const documentStructureKey = (documents: InformioDocument[]) =>
-  documents.map((doc) => `${doc.id}:${doc.title}:${doc.filePath ?? ""}:${documentKind(doc)}:${doc.collection}:${doc.pinned ? "1" : "0"}`).join("|");
-
 const tableCellPosAt = (tableNode: ProseMirrorNode, tablePos: number, rowIndex: number, columnIndex: number): number | null => {
   const map = TableMap.get(tableNode);
   const index = rowIndex * map.width + columnIndex;
@@ -875,11 +489,7 @@ const tableColumnWidthInfo = (editor: Editor, table: HTMLTableElement, tablePos:
 
 function EditorPane({
   paneId,
-  document,
-  documents,
-  settings,
-  viewMode,
-  outlineJumpRequest,
+  documentId,
   onOutlineJumpHandled,
   onChange,
   onOpenInternalLink,
@@ -887,16 +497,11 @@ function EditorPane({
   onSelection,
   onCompositionChange,
   toolbarEnabled,
-  toolbarTranslate,
   onTranslateSelection,
   onClearToolbarTranslate
 }: {
   paneId: EditorPaneState["id"];
-  document: InformioDocument;
-  documents: InformioDocument[];
-  settings: AppSettings;
-  viewMode: EditorViewMode;
-  outlineJumpRequest: OutlineJumpRequest | null;
+  documentId: string;
   onOutlineJumpHandled: (request: OutlineJumpRequest) => void;
   onChange: (documentId: string, markdown: string, options?: { composing?: boolean }) => void;
   onOpenInternalLink: (documentId: string, sourcePaneId: EditorPaneState["id"]) => void;
@@ -904,10 +509,17 @@ function EditorPane({
   onSelection: (selection: AgentSelection | null) => void;
   onCompositionChange: (documentId: string, composing: boolean) => void;
   toolbarEnabled: boolean;
-  toolbarTranslate: UnifiedToolbarTranslateState;
   onTranslateSelection: (selection: AgentSelection) => void;
   onClearToolbarTranslate: () => void;
 }) {
+  const { t } = useTranslation();
+  const { data } = useAppStore();
+  const { editorViewModes, outlineJumpRequest } = useDocumentStore();
+  const { toolbarTranslate } = useAgentStore();
+  const documents = data?.documents ?? [];
+  const settings = data?.settings!;
+  const document = documents.find((d) => d.id === documentId) ?? documents[0];
+  const viewMode = editorViewModes[paneId] ?? "rich-text";
   const composingRef = useRef(false);
   const applyingMarkdownAutoBlockRef = useRef(false);
   const markdownAutoBlockTimerRef = useRef<number | null>(null);
@@ -960,7 +572,7 @@ function EditorPane({
   };
   const applyEncryptedSelection = async (currentEditor: Editor, action: Extract<PendingSecretAction, { type: "encrypt" }>, passphrase: string) => {
     if (selectionContainsSecretNode(currentEditor, action.from, action.to)) {
-      window.alert("当前选区包含已加密内容，请先解密这些片段，再重新执行加密。");
+      window.alert(t("editorpane.encryptedInSelection"));
       return;
     }
 
@@ -996,7 +608,7 @@ function EditorPane({
     const { from, to, empty } = currentEditor.state.selection;
     if (empty) return;
     if (selectionContainsSecretNode(currentEditor, from, to)) {
-      window.alert("当前选区包含已加密内容，请先解密这些片段，再重新执行加密。");
+      window.alert(t("editorpane.encryptedInSelection"));
       return;
     }
 
@@ -1016,7 +628,7 @@ function EditorPane({
     if (documentContainsSecretNode(currentEditor)) {
       const verifyAttrs = findFirstValidSecretInDocument(currentEditor);
       if (!verifyAttrs) {
-        window.alert("这篇文档里已有损坏的加密片段。请先修复或删除损坏片段，再继续新增加密内容。");
+        window.alert(t("editorpane.corruptedEncryption"));
         return;
       }
       pendingSecretActionRef.current = { ...action, verifyAttrs };
@@ -1046,7 +658,7 @@ function EditorPane({
 
     if (secretPromptRequest?.mode === "set-passphrase") {
       if (!confirmPassphrase || passphrase !== confirmPassphrase) {
-        setSecretPromptRequest({ mode: "set-passphrase", error: "两次输入的口令不一致，请重新确认。" });
+        setSecretPromptRequest({ mode: "set-passphrase", error: t("editorpane.passphraseMismatch") });
         return;
       }
       try {
@@ -1055,7 +667,7 @@ function EditorPane({
         closeSecretPrompt();
       } catch (error) {
         clearSecretPassphrase();
-        setSecretPromptRequest({ mode: "set-passphrase", error: error instanceof Error ? error.message : "加密失败，请重试。" });
+        setSecretPromptRequest({ mode: "set-passphrase", error: error instanceof Error ? error.message : t("editorpane.encryptionFailed") });
       }
       return;
     }
@@ -1066,9 +678,10 @@ function EditorPane({
         cacheSecretPassphrase(passphrase);
         await applyEncryptedSelection(currentEditor, pendingAction, passphrase);
         closeSecretPrompt();
-      } catch {
+      } catch (error) {
+        console.warn("Secret encryption verification failed:", error);
         clearSecretPassphrase();
-        setSecretPromptRequest({ mode: "unlock-passphrase", intent: "encrypt", error: "口令不正确，无法验证这篇文档已有的加密内容。" });
+        setSecretPromptRequest({ mode: "unlock-passphrase", intent: "encrypt", error: t("editorpane.passphraseIncorrectVerify") });
       }
       return;
     }
@@ -1077,9 +690,10 @@ function EditorPane({
       cacheSecretPassphrase(passphrase);
       await applyDecryptedSecret(currentEditor, pendingAction.request, passphrase);
       closeSecretPrompt();
-    } catch {
+    } catch (error) {
+      console.warn("Secret decryption failed:", error);
       clearSecretPassphrase();
-      setSecretPromptRequest({ mode: "unlock-passphrase", intent: "decrypt", error: "口令不正确，或当前加密片段已损坏。" });
+      setSecretPromptRequest({ mode: "unlock-passphrase", intent: "decrypt", error: t("editorpane.passphraseIncorrectDecrypt") });
     }
   };
   const updateWikiSuggestion = (currentEditor: Editor) => {
@@ -1216,9 +830,9 @@ function EditorPane({
       CalloutBlock,
       FootnoteBlock,
       Markdown.configure({ indentation: { style: "space", size: settings.markdown.tabSize } }),
-      Placeholder.configure({ placeholder: "开始写。需要 AI 时选中一段，或直接问右侧 Agent。" })
+      Placeholder.configure({ placeholder: t("editorpane.placeholder") })
     ],
-    [document, documentLookupIndex, onCreateInternalLink, onOpenInternalLink, paneId, settings.markdown.tabSize]
+    [document, documentLookupIndex, onCreateInternalLink, onOpenInternalLink, paneId, settings.markdown.tabSize, t]
   );
   const editor = useEditor(
     {
@@ -1337,7 +951,8 @@ function EditorPane({
                   break;
                 }
               }
-            } catch {
+            } catch (error) {
+              console.warn("Failed to resolve image position from DOM:", error);
               imagePos = null;
             }
             if (imagePos === null) return false;
@@ -1536,13 +1151,13 @@ function EditorPane({
 
   const runFindNext = (query = findQuery, options?: { fromIndex?: number }) => {
     if (!query.trim()) {
-      setFindStatus("先输入要查找的文本。");
+      setFindStatus(t("editorpane.find.inputRequired"));
       return null;
     }
     const match = isSourceMode ? findNextInSource(query, options?.fromIndex) : findNextInRichText(query, options?.fromIndex);
     if (!match) {
       setFindMatch(null);
-      setFindStatus("当前文档里没有找到匹配结果。");
+      setFindStatus(t("editorpane.find.noMatch"));
       return null;
     }
     return match;
@@ -1563,7 +1178,7 @@ function EditorPane({
 
   const replaceCurrentFindMatch = () => {
     if (!findQuery.trim() || !findMatch) {
-      setFindStatus("先找到一个匹配结果，再执行替换。");
+      setFindStatus(t("editorpane.find.matchRequiredForReplace"));
       return;
     }
 
@@ -2275,10 +1890,20 @@ function EditorPane({
         return false;
     }
   };
-  const selectionToolbarFormatItems = selectionToolbarActions.map((action) => ({
+  const selectionLabelMap: Record<string, string> = {
+    bold: "editorpane.bold",
+    italic: "editorpane.italic",
+    underline: "editorpane.underline",
+    strike: "editorpane.strikethrough",
+    subscript: "editorpane.subscript",
+    superscript: "editorpane.superscript",
+    highlight: "editorpane.highlight",
+    link: "editorpane.addLink"
+  };
+  const selectionToolbarFormatItems = getSelectionToolbarActions(t).map((action) => ({
     ...action,
     pressed: isSelectionToolbarActionActive(action.id),
-    label: action.id === "link" && editor?.isActive("link") ? "去链接" : action.label,
+    label: action.id === "link" && editor?.isActive("link") ? t("editorpane.goToLink") : t(selectionLabelMap[action.id]),
     onClick: () => runSelectionToolbarAction(action.id)
   }));
   const selectedText = () => {
@@ -2571,7 +2196,7 @@ function EditorPane({
             <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-2">
               <button
                 type="button"
-                aria-label={showReplace ? "收起替换" : "展开替换"}
+                aria-label={showReplace ? t("editorpane.find.collapseReplace") : t("editorpane.find.expandReplace")}
                 onClick={() => setShowReplace((current) => !current)}
                 className="grid h-8 w-8 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
               >
@@ -2591,12 +2216,12 @@ function EditorPane({
                     setFindOpen(false);
                   }
                 }}
-                placeholder="查找文本"
+                placeholder={t("editorpane.find.findText")}
                 className="h-8 rounded-md border-0 bg-slate-50 px-3 text-[13px] text-[var(--text-main)] outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-emerald-500/45"
               />
               <button
                 type="button"
-                aria-label="查找下一个"
+                aria-label={t("editorpane.find.findNext")}
                 onClick={() => runFindNext()}
                 className="grid h-8 w-8 place-items-center rounded-md bg-slate-950 text-white transition-transform active:scale-95"
               >
@@ -2604,7 +2229,7 @@ function EditorPane({
               </button>
               <button
                 type="button"
-                aria-label="关闭查找"
+                aria-label={t("editorpane.find.closeFind")}
                 onClick={() => setFindOpen(false)}
                 className="grid h-8 w-8 place-items-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
               >
@@ -2627,12 +2252,12 @@ function EditorPane({
                       setFindOpen(false);
                     }
                   }}
-                  placeholder="替换文本"
+                  placeholder={t("editorpane.find.replaceText")}
                   className="h-8 rounded-md border-0 bg-slate-50 px-3 text-[13px] text-[var(--text-main)] outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-emerald-500/45"
                 />
                 <button
                   type="button"
-                  aria-label="替换当前"
+                  aria-label={t("editorpane.find.replaceCurrent")}
                   onClick={replaceCurrentFindMatch}
                   className="grid h-8 w-8 place-items-center rounded-md bg-emerald-50 text-emerald-700 transition-colors hover:bg-emerald-100"
                 >
@@ -2642,7 +2267,7 @@ function EditorPane({
             ) : null}
           </div>
           {findStatus || findMatch ? (
-            <div className="mt-2 min-h-[18px] pl-10 text-[13px] text-[var(--text-muted)]">{findStatus ?? "已定位当前匹配。"}</div>
+            <div className="mt-2 min-h-[18px] pl-10 text-[13px] text-[var(--text-muted)]">{findStatus ?? t("editorpane.find.matchLocated")}</div>
           ) : null}
         </div>
       ) : null}
@@ -2681,13 +2306,13 @@ function EditorPane({
               className="flex w-full flex-col px-3 py-2 text-left text-slate-600 hover:bg-slate-50"
               onMouseDown={(event) => {
                 event.preventDefault();
-                const title = wikiSuggest.query.trim() || "未命名";
+                const title = wikiSuggest.query.trim() || t("editorpane.wiki.unnamed");
                 insertWikiLink(title);
                 onCreateInternalLink(title);
               }}
             >
-              <span className="font-semibold">创建 {wikiSuggest.query || "新笔记"}</span>
-              <span className="text-[11px] text-slate-400">没有匹配的文档</span>
+              <span className="font-semibold">{t("editorpane.wiki.createNote", { name: wikiSuggest.query || t("editorpane.wiki.newNote") })}</span>
+              <span className="text-[11px] text-slate-400">{t("editorpane.wiki.noMatch")}</span>
             </button>
           )}
         </div>

@@ -1,4 +1,5 @@
-import { Component, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Component, Fragment, Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import type {
   CSSProperties,
   ComponentType,
@@ -102,7 +103,6 @@ import type {
   AgentProvider,
   AgentSessionAction,
   AgentSessionStatus,
-  AppInfo,
   AppData,
   AppSettings,
   DocumentConflict,
@@ -322,7 +322,6 @@ import type {
   PropertyValueGroup,
   PropertyGroup,
   AgentSelection,
-  ApiCheckState,
   AgentSessionMessage,
   EditorPaneState,
   EditorViewMode,
@@ -392,12 +391,12 @@ import {
   PdfEditorContext as UnifiedPdfEditorContext,
   PdfViewerSurface as UnifiedPdfViewerSurface
 } from "./pdfSurface";
-import type {
-  PdfEditorContextValue as UnifiedPdfEditorContextValue
-} from "./pdfSurface";
+import type { UnifiedPdfEditorContextValue } from "./types";
 import "katex/dist/katex.min.css";
+import i18n, { settingsLanguageToUiLanguage } from "./i18n";
 
 import { getThemeSwatchStyle, isDarkColor, settingsNav, mergeFontOptions, lastToolbarSelectionText, setLastToolbarSelectionText, syncDocumentAppearanceVariables, buildShellStyle, buildConfiguredFontStack, buildUiFontStack } from "./lib/settings-helpers";
+import { useUiStore, useAppStore, useAgentStore, useDocumentStore } from "./stores";
 
 const resolveTranslationTarget = (text: string): "zh-CN" | "en" => {
   const normalized = text.trim();
@@ -415,14 +414,19 @@ import { PropertiesPanel } from "./components/PropertiesPanel";
 import { AgentPanel } from "./components/AgentPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { SelectionToolbar } from "./components/SelectionToolbar";
-import { SettingsView } from "./components/SettingsView";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { OfflineIndicator } from "./components/OfflineIndicator";
+
+const SettingsView = lazy(() => import("./components/SettingsView").then((m) => ({ default: m.SettingsView })));
 import { DocumentConflictDialog, mergeMarkdownWithBase, buildConflictDiffLines } from "./components/DocumentConflictDialog";
 import { IconButton } from "./components/IconButton";
 import { WindowControls } from "./components/WindowControls";
 import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { PropertiesList } from "./components/PropertiesList";
-import { normalizeEditorPanes, sameAgentSelection, countWords, countCharacters, countLines, getDocumentOutline, buildOutlineTree, formatRelative, clamp, markdownToStatusText, buildEditorTextSearchIndex, findNextTextMatch } from "./components/EditorPane";
-import { buildFileTree, filterFileTree, documentStructureKey, documentLookupKey, DOCUMENT_DRAG_MIME, TREE_ITEM_DRAG_MIME, FOLDER_DRAG_MIME, serializeTreeDragPayload, parseTreeDragPayload, isInternalDocumentDrag, isInternalTreeDrag, isExternalFileDrag, filePathForFile, dataTransferFilePaths } from "./components/FileList";
+import { markdownToStatusText, countWords, countCharacters, countLines } from "./lib/text-stats";
+import { getDocumentOutline, buildOutlineTree } from "./lib/outline";
+import { normalizeEditorPanes, sameAgentSelection, formatRelative, clamp, buildEditorTextSearchIndex, findNextTextMatch } from "./lib/editor-utils";
+import { buildFileTree, filterFileTree, documentStructureKey, documentLookupKey, DOCUMENT_DRAG_MIME, TREE_ITEM_DRAG_MIME, FOLDER_DRAG_MIME, serializeTreeDragPayload, parseTreeDragPayload, isInternalDocumentDrag, isInternalTreeDrag, isExternalFileDrag, filePathForFile, dataTransferFilePaths } from "./lib/file-tree";
 
 
 const toolbarTranslateAnchorFromSelection = (selection: AgentSelection): UnifiedToolbarTranslateState["anchor"] => {
@@ -445,13 +449,13 @@ class EditorSurfaceErrorBoundary extends Component<
     if (this.state.hasError) {
       return (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-          <p className="text-[13px] font-semibold text-slate-600">编辑器加载失败</p>
+          <p className="text-[13px] font-semibold text-slate-600">{i18n.t("app.editorLoadFailed")}</p>
           <button
             type="button"
             className="rounded-md bg-emerald-600 px-3 py-1.5 text-[12px] font-bold text-white"
             onClick={() => { this.setState({ hasError: false }); this.props.onResetSelection(); }}
           >
-            重新加载
+            {i18n.t("app.reload")}
           </button>
         </div>
       );
@@ -461,43 +465,36 @@ class EditorSurfaceErrorBoundary extends Component<
 }
 
 export function App() {
-  const [data, setData] = useState<AppData | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [connections, setConnections] = useState<AgentConnection[]>([]);
-  const [agentMessages, setAgentMessages] = useState<AgentSessionMessage[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [pendingNewConversation, setPendingNewConversation] = useState(false);
-  const [agentSelection, setAgentSelection] = useState<AgentSelection | null>(null);
-  const [outlineJumpRequest, setOutlineJumpRequest] = useState<OutlineJumpRequest | null>(null);
-  const [agentBusy, setAgentBusy] = useState(false);
-  const [checkingAgents, setCheckingAgents] = useState(false);
-  const [checkingApiModels, setCheckingApiModels] = useState(false);
-  const [apiCheckState, setApiCheckState] = useState<ApiCheckState>({ status: "idle" });
-  const [appInfo, setAppInfo] = useState<AppInfo>({
-    name: "Informio",
-    version: "",
-    platform: navigator.platform.toLowerCase().includes("win") ? "win32" : "darwin",
-    githubUrl: "",
-    iconDataUrl: undefined
-  });
-  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
-  const [openDocumentIds, setOpenDocumentIds] = useState<string[]>([]);
-  const [editorPanes, setEditorPanes] = useState<EditorPaneState[]>([]);
-  const [activePaneId, setActivePaneId] = useState<EditorPaneState["id"]>("main");
-  const [editorViewModes, setEditorViewModes] = useState<Record<EditorPaneState["id"], EditorViewMode>>({
-    main: "rich-text",
-    secondary: "rich-text"
-  });
-  const [documentRefreshTokens, setDocumentRefreshTokens] = useState<Record<string, number>>({});
-  const [splitDirection, setSplitDirection] = useState<SplitDirection>("horizontal");
-  const [paneRatio, setPaneRatio] = useState(0.5);
-  const [dropZone, setDropZone] = useState<EditorDropZone | null>(null);
-  const [dirtyDocumentIds, setDirtyDocumentIds] = useState<Set<string>>(() => new Set());
-  const [documentConflicts, setDocumentConflicts] = useState<Map<string, DocumentConflict>>(() => new Map());
-  const [activeConflictDocumentId, setActiveConflictDocumentId] = useState<string | null>(null);
-  const [fileListCreationSignal, setFileListCreationSignal] = useState(0);
-  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const [toolbarTranslate, setToolbarTranslate] = useState<UnifiedToolbarTranslateState>({ status: "idle", response: "" });
+  const { t, i18n: reactI18n } = useTranslation();
+  const { data, setData, loadError, setLoadError, updateSettings, updateActiveAgentModel } = useAppStore();
+  const {
+    connections, setConnections,
+    agentMessages, setAgentMessages,
+    activeConversationId, setActiveConversationId,
+    pendingNewConversation, setPendingNewConversation,
+    agentSelection, setAgentSelection,
+    agentBusy, setAgentBusy,
+    checkingAgents, setCheckingAgents,
+    toolbarTranslate, setToolbarTranslate
+  } = useAgentStore();
+  const { checkingApiModels, setCheckingApiModels, apiCheckState, setApiCheckState } = useUiStore();
+  const { appInfo, setAppInfo } = useAppStore();
+  const { sidebarMode, setSidebarMode, commandPaletteOpen, setCommandPaletteOpen } = useUiStore();
+  const {
+    openDocumentIds, setOpenDocumentIds,
+    editorPanes, setEditorPanes,
+    activePaneId, setActivePaneId,
+    editorViewModes, setEditorViewModes,
+    documentRefreshTokens, setDocumentRefreshTokens,
+    splitDirection, setSplitDirection,
+    paneRatio, setPaneRatio,
+    dropZone, setDropZone,
+    dirtyDocumentIds, setDirtyDocumentIds,
+    documentConflicts, setDocumentConflicts,
+    activeConflictDocumentId, setActiveConflictDocumentId,
+    fileListCreationSignal, setFileListCreationSignal,
+    outlineJumpRequest, setOutlineJumpRequest
+  } = useDocumentStore();
   const saveTimer = useRef<number | null>(null);
   const saveQueueRef = useRef(Promise.resolve<AppData | null>(null));
   const pendingAutoSaveIdsRef = useRef<Set<string>>(new Set());
@@ -516,6 +513,13 @@ export function App() {
     if (!data) return;
     syncDocumentAppearanceVariables(data.settings.appearance);
   }, [data?.settings.appearance]);
+
+  useEffect(() => {
+    if (!data) return;
+    const nextLanguage = settingsLanguageToUiLanguage(data.settings.language);
+    window.localStorage.setItem("informio-language", nextLanguage);
+    if (!reactI18n.language.startsWith(nextLanguage)) void reactI18n.changeLanguage(nextLanguage);
+  }, [data?.settings.language, reactI18n]);
 
   const applyDataState = (next: AppData) => {
     latestDataRef.current = next;
@@ -712,7 +716,7 @@ export function App() {
           ...disconnectedAgents.map((agent) => ({
             providerId: agent.id,
             status: "connecting" as const,
-            message: `正在启动 ${agent.name}...`,
+            message: t("app.startingAgent", { name: agent.name }),
             tools: []
           }))
         ]);
@@ -726,7 +730,7 @@ export function App() {
               return {
                 providerId: agent.id,
                 status: "error" as const,
-                message: error instanceof Error ? error.message : "Agent 启动失败。",
+                message: error instanceof Error ? error.message : t("app.agentStartFailed"),
                 tools: [],
                 models: agent.models
               };
@@ -739,7 +743,7 @@ export function App() {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : String(error);
         console.error("loadApp failed", error);
-        setLoadError(message || "无法加载应用数据。");
+        setLoadError(message || t("app.loadDataFailed"));
       }
     })();
 
@@ -814,8 +818,8 @@ export function App() {
     [data?.projects, data?.workspacePath]
   );
   const workspaceLabel = useMemo(
-    () => (data ? buildWorkspaceLabel({ projects: data.projects ?? [], workspacePath: data.workspacePath }) : "未命名工作区"),
-    [data?.projects, data?.workspacePath]
+    () => (data ? buildWorkspaceLabel({ projects: data.projects ?? [], workspacePath: data.workspacePath }, t("app.unnamedWorkspace")) : t("app.unnamedWorkspace")),
+    [data?.projects, data?.workspacePath, t]
   );
   const activeConnection = connections.find((connection) => connection.providerId === activeAgent?.id);
   const apiSettings = useMemo(() => normalizeApiSettings(data?.settings.api), [data?.settings.api]);
@@ -960,7 +964,7 @@ export function App() {
     const conflictedId = options.ignoreConflicts ? undefined : targetIds.find((id) => documentConflictsRef.current.has(id));
     if (conflictedId) {
       setActiveConflictDocumentId(conflictedId);
-      throw new Error("文档存在外部更改冲突，请先选择保留本地版本或采用外部版本。");
+      throw new Error(t("app.conflictBeforeSave"));
     }
     if (!cleanIds?.length) pendingAutoSaveIdsRef.current.clear();
     const runSave = async () => {
@@ -1161,7 +1165,7 @@ export function App() {
         await saveDocumentsNow(currentData.documents, currentData.activeDocumentId, [id]);
       }
     } catch (error) {
-      window.alert(error instanceof Error ? `保存失败，已取消关闭标签。\n${error.message}` : "保存失败，已取消关闭标签。");
+      window.alert(error instanceof Error ? t("app.saveFailedCancelCloseWithMessage", { message: error.message }) : t("app.saveFailedCancelClose"));
       return;
     }
     applyClosedDocumentTab(id, latestDataRef.current ?? currentData, openDocumentIds);
@@ -1305,7 +1309,7 @@ export function App() {
   const executeFileSystemAction = async (input: FileSystemOperationInput) => {
     if (!data) return;
     if (input.action === "delete") {
-      const confirmed = window.confirm(input.targetType === "folder" ? "删除这个文件夹及其下的文件？" : "删除这个文件？");
+      const confirmed = window.confirm(input.targetType === "folder" ? t("app.confirmDeleteFolder") : t("app.confirmDeleteFile"));
       if (!confirmed) return;
     }
 
@@ -1363,12 +1367,6 @@ export function App() {
     applyMergedAppData(next);
   };
 
-  const updateSettings = (settings: AppSettings) => {
-    if (!data) return;
-    applyDataState({ ...data, settings });
-    window.informio.saveSettings(settings);
-  };
-
   const saveActiveDocumentAs = async () => {
     if (!data || !activeOpenDoc) return;
     const next = await window.informio.saveActiveDocumentAs(data.documents, data.activeDocumentId);
@@ -1384,25 +1382,16 @@ export function App() {
     await window.informio.exportActiveDocument(data.documents, data.activeDocumentId, format);
   };
 
-  const updateActiveAgentModel = (model: string) => {
-    if (!data || !activeAgent) return;
-    const settings = {
-      ...data.settings,
-      agents: data.settings.agents.map((agent) => (agent.id === activeAgent.id ? { ...agent, model } : agent))
-    };
-    updateSettings(settings);
-  };
-
   const checkApiModels = async () => {
     if (!data) return;
     const api = apiSettings;
     if (!api.baseUrl.trim() || !api.apiKey.trim()) {
-      setApiCheckState({ status: "error", error: "请先填写 base_url 和 api_key。" });
+      setApiCheckState({ status: "error", error: t("app.apiMissingCredentials") });
       return;
     }
 
     setCheckingApiModels(true);
-    setApiCheckState({ status: "loading", message: "正在检测可用模型..." });
+    setApiCheckState({ status: "loading", message: t("app.apiCheckingModels") });
     try {
       const result = await window.informio.detectApiModels({
         provider: api.provider,
@@ -1418,11 +1407,11 @@ export function App() {
           model: nextModel
         }
       });
-      setApiCheckState({ status: "done", message: `检测到 ${result.models.length} 个可用模型。` });
+      setApiCheckState({ status: "done", message: t("app.apiModelsDetected", { count: result.models.length }) });
     } catch (error) {
       setApiCheckState({
         status: "error",
-        error: error instanceof Error ? error.message : "模型检测失败，请检查 API 配置。"
+        error: error instanceof Error ? error.message : t("app.apiModelDetectionFailed")
       });
     } finally {
       setCheckingApiModels(false);
@@ -1611,7 +1600,7 @@ export function App() {
       {
         providerId: id,
         status: "connecting",
-        message: existing?.status === "connected" ? "正在重新建立 Agent 连接..." : "正在启动 Agent...",
+        message: existing?.status === "connected" ? t("app.reconnectingAgent") : t("app.startingAgentGeneric"),
         tools: []
       }
     ]);
@@ -1634,7 +1623,7 @@ export function App() {
         ...targetAgents.map((agent) => ({
           providerId: agent.id,
           status: "connecting" as const,
-          message: `正在检测 ${agent.name}...`,
+          message: t("app.checkingAgent", { name: agent.name }),
           tools: []
         }))
       ]);
@@ -1806,7 +1795,7 @@ export function App() {
 
   const sendAgentSession = async (text: string, permissionMode: AgentPermissionMode, attachments: AgentMessageAttachment[] = []) => {
     if (!data || !activeAgent) return;
-    const messageText = `${text.trim() || "请处理这些附件。"}${attachmentsMarkdown(attachments)}`;
+    const messageText = `${text.trim() || t("agentpanel.processAttachments")}${attachmentsMarkdown(attachments)}`;
     const currentDoc = activeOpenDoc;
     const selection = agentSelection?.documentId === currentDoc?.id ? agentSelection : null;
     const references = resolveReferencedDocumentsFromMessage(messageText);
@@ -1816,7 +1805,7 @@ export function App() {
     const baseConversationMessages = existingConversation?.messages ?? buildConversationMessagesFromSession(agentMessages);
     const baseRuntimeThreadId = existingConversation?.runtimeThreadId;
     const baseCreatedAt = existingConversation?.createdAt ?? nowIso;
-    const baseTitle = existingConversation?.title ?? createConversationTitle(messageText);
+    const baseTitle = existingConversation?.title ?? createConversationTitle(messageText, t("agentpanel.newSession"));
     const baseWorkspaceScopeId = existingConversation?.workspaceScopeId ?? workspaceScopeId;
     const baseWorkspaceLabel = existingConversation?.workspaceLabel ?? workspaceLabel;
     const conversationBase: Omit<AgentConversation, "messages" | "updatedAt" | "runtimeThreadId"> = {
@@ -1836,7 +1825,7 @@ export function App() {
       reasoning: "",
       response: "",
       actions: [],
-      error: data.settings.agentRuntime.enabled ? undefined : "Agent 未启用。请在设置 → Agent 中打开“启用 Agent”。",
+      error: data.settings.agentRuntime.enabled ? undefined : t("app.agentDisabled"),
       hasSelection: Boolean(selection?.text),
       submittedAt: Date.now(),
       completedAt: data.settings.agentRuntime.enabled ? undefined : Date.now()
@@ -2068,7 +2057,7 @@ export function App() {
       setToolbarTranslate({
         status: "error",
         response: "",
-        error: "翻译 API 还没配置完成。请在设置 → API 填写 base_url、api_key，并检测后选择一个模型。",
+        error: t("app.translationApiIncomplete"),
         anchor
       });
       return;
@@ -2099,7 +2088,7 @@ export function App() {
     return (
       <div className="grid h-screen place-items-center bg-slate-50 text-sm font-semibold text-slate-500">
         <div className="px-6 text-center">
-          <div>{loadError ? "Informio 启动失败" : "Loading Informio"}</div>
+          <div>{loadError ? t("app.startFailed") : t("app.loading")}</div>
           {loadError ? <div className="mt-3 max-w-xl whitespace-pre-wrap text-[12px] font-medium leading-6 text-red-600">{loadError}</div> : null}
         </div>
       </div>
@@ -2137,24 +2126,24 @@ export function App() {
     return accelerator ? acceleratorToDisplay(accelerator, shortcutDisplayPlatform) : undefined;
   };
   const commandPaletteItems: CommandPaletteItem[] = [
-    { id: "file:new", scope: "system", title: "新建文档", shortcut: shortcutLabel("file.new"), keywords: "新建 文档 new document", run: () => runAppCommand("file:new") },
-    { id: "file:open", scope: "system", title: "打开文件", shortcut: shortcutLabel("file.open"), keywords: "打开 文件 open files", run: () => runAppCommand("file:open") },
-    { id: "workspace:open", scope: "system", title: "打开项目", shortcut: shortcutLabel("workspace.open"), keywords: "打开 工作区 项目 workspace project", run: () => runAppCommand("workspace:open") },
-    { id: "settings:open", scope: "system", title: "打开设置", shortcut: shortcutLabel("settings.open"), keywords: "设置 settings", run: () => runAppCommand("settings:open") },
+    { id: "file:new", scope: "system", title: t("commands.newDocument"), shortcut: shortcutLabel("file.new"), keywords: t("commands.newDocumentKeywords"), run: () => runAppCommand("file:new") },
+    { id: "file:open", scope: "system", title: t("commands.openFile"), shortcut: shortcutLabel("file.open"), keywords: t("commands.openFileKeywords"), run: () => runAppCommand("file:open") },
+    { id: "workspace:open", scope: "system", title: t("commands.openProject"), shortcut: shortcutLabel("workspace.open"), keywords: t("commands.openProjectKeywords"), run: () => runAppCommand("workspace:open") },
+    { id: "settings:open", scope: "system", title: t("commands.openSettings"), shortcut: shortcutLabel("settings.open"), keywords: t("commands.openSettingsKeywords"), run: () => runAppCommand("settings:open") },
     ...(canExportActiveDocument
       ? [
           {
             id: "file:export-html",
             scope: "system" as const,
-            title: `导出 ${(activeOpenDoc?.title ?? "Untitled").replace(/\.[^.]+$/, "")}.HTML`,
-            keywords: "导出 html export save 当前文档",
+            title: t("commands.exportHtml", { name: (activeOpenDoc?.title ?? t("files.untitled")).replace(/\.[^.]+$/, "") }),
+            keywords: t("commands.exportHtmlKeywords"),
             run: () => runAppCommand("file:export-html")
           },
           {
             id: "file:export-pdf",
             scope: "system" as const,
-            title: `导出 ${(activeOpenDoc?.title ?? "Untitled").replace(/\.[^.]+$/, "")}.PDF`,
-            keywords: "导出 pdf export save 当前文档",
+            title: t("commands.exportPdf", { name: (activeOpenDoc?.title ?? t("files.untitled")).replace(/\.[^.]+$/, "") }),
+            keywords: t("commands.exportPdfKeywords"),
             run: () => runAppCommand("file:export-pdf")
           }
         ]
@@ -2162,8 +2151,8 @@ export function App() {
     {
       id: "view:left",
       scope: "system",
-      title: leftOpen ? "隐藏文件侧栏" : "显示文件侧栏",
-      keywords: "切换 侧栏 文件 toggle file sidebar",
+      title: leftOpen ? t("commands.hideFileSidebar") : t("commands.showFileSidebar"),
+      keywords: t("commands.toggleFileSidebarKeywords"),
       run: () =>
         updateSettings({
           ...data.settings,
@@ -2173,8 +2162,8 @@ export function App() {
     {
       id: "view:right",
       scope: "system",
-      title: rightOpen ? "隐藏 Agent Session" : "显示 Agent Session",
-      keywords: "assistant agent session ai 右栏 助手 任务 切换",
+      title: rightOpen ? t("commands.hideAgentSession") : t("commands.showAgentSession"),
+      keywords: t("commands.toggleAgentSessionKeywords"),
       run: () =>
         updateSettings({
           ...data.settings,
@@ -2184,8 +2173,8 @@ export function App() {
     {
       id: "file:close-workspace",
       scope: "system",
-      title: "收起写作侧栏",
-      keywords: "隐藏 左栏 右栏 close workspace collapse panels",
+      title: t("commands.collapseWritingPanels"),
+      keywords: t("commands.collapseWritingPanelsKeywords"),
       run: () => runAppCommand("file:close-workspace")
     }
   ];
@@ -2215,7 +2204,7 @@ export function App() {
         {visibleEditorPanes.length === 2 && active ? (
           <button
             type="button"
-            aria-label="整屏展示当前 pane"
+            aria-label={t("app.expandPane")}
             className="absolute right-3 top-3 z-30 grid h-6 w-6 place-items-center rounded-md text-slate-400 opacity-80 transition hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
             onMouseDown={(event) => {
               event.preventDefault();
@@ -2238,18 +2227,14 @@ export function App() {
 	                className="mx-auto mt-2 flex w-[min(760px,calc(100%-32px))] shrink-0 items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[12px] font-semibold text-amber-900 shadow-sm"
 	                onClick={() => openDocumentConflict(document.id)}
 	              >
-	                <span className="min-w-0 truncate">需要合并更改，自动保存已暂停。点击查看 Diff 并选择处理方式。</span>
-	                <span className="shrink-0 text-amber-700">查看</span>
+	                <span className="min-w-0 truncate">{t("app.conflictBanner")}</span>
+	                <span className="shrink-0 text-amber-700">{t("app.view")}</span>
 	              </button>
             ) : null}
             <EditorPane
               key={`${pane.id}-${document.id}-${documentRefreshTokens[document.id] ?? 0}`}
               paneId={pane.id}
-              document={document}
-              documents={data.documents}
-              settings={data.settings}
-              viewMode={editorViewModes[pane.id] ?? "rich-text"}
-              outlineJumpRequest={outlineJumpRequest}
+              documentId={document.id}
               onOutlineJumpHandled={handleOutlineJumpHandled}
               onChange={updateDocument}
               onOpenInternalLink={(documentId, sourcePaneId) => {
@@ -2259,7 +2244,6 @@ export function App() {
               onSelection={handleAgentSelection}
               onCompositionChange={handleEditorCompositionChange}
               toolbarEnabled
-              toolbarTranslate={toolbarTranslate}
               onTranslateSelection={runSelectionToolbarTranslate}
               onClearToolbarTranslate={clearToolbarTranslate}
             />
@@ -2278,18 +2262,15 @@ export function App() {
           className={cn("app-shell h-screen overflow-hidden", `theme-${data.settings.appearance.theme}`, showWindowControls && "is-frameless")}
           style={shellStyle}
         >
-          <SettingsView
-            settings={data.settings}
-            connections={connections}
-            onChange={updateSettings}
-            onCheckAgents={checkAgents}
-            checkingAgents={checkingAgents}
-            onCheckApiModels={checkApiModels}
-            checkingApiModels={checkingApiModels}
-            apiCheckState={apiCheckState}
-            appInfo={appInfo}
-            showWindowControls={showWindowControls}
-          />
+          <Suspense fallback={<div className="flex flex-1 items-center justify-center text-[13px] text-[var(--text-muted)]">{t("app.loadingSettings")}</div>}>
+            <SettingsView
+              settings={data.settings}
+              onChange={updateSettings}
+              onCheckAgents={checkAgents}
+              onCheckApiModels={checkApiModels}
+              showWindowControls={showWindowControls}
+            />
+          </Suspense>
         </div>
       </Tooltip.Provider>
     );
@@ -2344,7 +2325,7 @@ export function App() {
 	                        {conflicted ? (
 	                          <span
 	                            className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
-	                            title="需要合并更改"
+	                            title={t("documentconflict.mergeChanges")}
 	                            onClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
@@ -2380,29 +2361,25 @@ export function App() {
 	          <div className="flex min-h-0 flex-1">
 	            {leftOpen ? (
 	              sidebarMode === "files" ? (
-	                <FileList
-	                  folders={data.folders}
-	                  documents={data.documents}
-	                  projects={data.projects ?? []}
-	                  activeDocumentId={activeOpenDoc?.id ?? ""}
-	                  onSelect={selectDocument}
-	                  onCreate={createDocument}
-	                  onCreateFolder={createFolder}
-	                  onFileAction={(input) => { void executeFileSystemAction(input); }}
-	                  onImportExternalFiles={(sourcePaths, destinationFolderPath) => { void importExternalFiles(sourcePaths, destinationFolderPath); }}
-	                  onRenameProject={renameProject}
-	                  onToggleProjectPinned={toggleProjectPinned}
-	                  onRemoveProject={(path) => window.informio.removeProject(path).then(setData)}
-	                  onDocumentDragStart={startDocumentDrag}
-	                  width={leftPanelWidth}
-	                  creationSignal={fileListCreationSignal}
-	                />
+	                <ErrorBoundary name={t("app.fileList")}>
+	                  <FileList
+	                    onSelect={selectDocument}
+	                    onCreate={createDocument}
+	                    onCreateFolder={createFolder}
+	                    onFileAction={(input) => { void executeFileSystemAction(input); }}
+	                    onImportExternalFiles={(sourcePaths, destinationFolderPath) => { void importExternalFiles(sourcePaths, destinationFolderPath); }}
+	                    onRenameProject={renameProject}
+	                    onToggleProjectPinned={toggleProjectPinned}
+	                    onRemoveProject={(path) => window.informio.removeProject(path).then(setData)}
+	                    onDocumentDragStart={startDocumentDrag}
+	                  />
+	                </ErrorBoundary>
 	              ) : sidebarMode === "outline" ? (
 	                activeOpenDoc ? (
 	                  <OutlineList document={activeOpenDoc} width={leftPanelWidth} onJump={(item) => jumpToOutlineItem(activeOpenDoc.id, item)} />
 	                ) : (
 	                  <aside className="side-rail flex h-full shrink-0 items-center justify-center border-r px-4 text-[12px] font-semibold text-[var(--text-muted)]" style={{ width: leftPanelWidth }}>
-	                    无打开文档
+	                    {t("editor.noDocument")}
 	                  </aside>
 	                )
 	              ) : (
@@ -2486,7 +2463,13 @@ export function App() {
 	                    <div className={cn("col-start-1 col-span-3 row-start-1 rounded-md", dropZone === "top" && "bg-emerald-500/20 ring-1 ring-emerald-500/35")} />
 	                    <div className={cn("col-start-1 col-span-3 row-start-3 rounded-md", dropZone === "bottom" && "bg-emerald-500/20 ring-1 ring-emerald-500/35")} />
 	                    <div className="col-start-2 row-start-2 grid place-items-center rounded-md bg-white/70 text-[12px] font-semibold text-emerald-700 shadow-sm">
-	                      {dropZone === "left" ? "左侧分屏" : dropZone === "right" ? "右侧分屏" : dropZone === "top" ? "上方分屏" : "下方分屏"}
+	                      {dropZone === "left"
+                          ? t("app.splitLeft")
+                          : dropZone === "right"
+                            ? t("app.splitRight")
+                            : dropZone === "top"
+                              ? t("app.splitTop")
+                              : t("app.splitBottom")}
 	                    </div>
 	                  </div>
 	                ) : null}
@@ -2494,22 +2477,17 @@ export function App() {
 	              {rightOpen ? (
 	                <>
 	                  <PanelResizeHandle label="Resize right panel" onPointerDown={(event) => startPanelResize("right", event)} />
+	                  <ErrorBoundary name={t("app.agentPanel")}>
 	                  <AgentPanel
 	                    providers={data.settings.agents}
 	                    provider={activeAgent}
 	                    connection={activeConnection}
 	                    conversations={providerAgentConversations}
-	                    activeConversationId={activeConversationId}
-	                    pendingNewConversation={pendingNewConversation}
-	                    messages={agentMessages}
-	                    selectedSelection={agentSelection}
-	                    busy={agentBusy}
-	                    enabled={data.settings.agentRuntime.enabled}
-	                    currentModel={activeModel}
-	                    availableModels={activeModels}
-	                    chatFontSize={data.settings.appearance.chatFontSize}
-	                    connections={connections}
-	                    onConnect={() => connectAgent()}
+						    enabled={data.settings.agentRuntime.enabled}
+						    currentModel={activeModel}
+						    availableModels={activeModels}
+						    chatFontSize={data.settings.appearance.chatFontSize}
+						    onConnect={() => connectAgent()}
 	                    onSend={sendAgentSession}
 	                    onCancel={cancelAgentSession}
 	                    onNewConversation={startNewAgentConversation}
@@ -2527,14 +2505,16 @@ export function App() {
                       }}
 	                    width={rightPanelWidth}
 	                  />
+	                  </ErrorBoundary>
 	                </>
 	              ) : null}
 	            </section>
 	          </div>
 	          <footer className="status-bar flex h-8 shrink-0 items-center justify-between gap-3 px-3 font-mono text-[11px] text-[var(--text-muted)]">
 	            <div className="flex items-center gap-1">
+	              <OfflineIndicator />
 	              <IconButton
-	                label="文件"
+	                label={t("app.files")}
 	                className="h-6 w-6"
 	                pressed={sidebarMode === "files" && leftOpen}
 	                onClick={() => toggleBottomSidebar("files")}
@@ -2542,7 +2522,7 @@ export function App() {
 	                <Folder size={14} />
 	              </IconButton>
 	              <IconButton
-	                label="大纲"
+	                label={t("app.outline")}
 	                className="h-6 w-6"
 	                pressed={sidebarMode === "outline" && leftOpen}
 	                onClick={() => toggleBottomSidebar("outline")}
@@ -2550,7 +2530,7 @@ export function App() {
 	                <LayoutList size={14} />
 	              </IconButton>
 	              <IconButton
-	                label="属性"
+	                label={t("app.properties")}
 	                className="h-6 w-6"
 	                pressed={sidebarMode === "properties" && leftOpen}
 	                onClick={() => toggleBottomSidebar("properties")}
@@ -2558,7 +2538,7 @@ export function App() {
 	                <Bookmark size={14} />
 	              </IconButton>
 	              <IconButton
-	                label="添加项目"
+	                label={t("app.addProject")}
 	                className="h-6 w-6"
 	                onClick={() =>
 	                  window.informio.addProject().then((next) => {
@@ -2568,20 +2548,20 @@ export function App() {
 	              >
 	                <FolderPlus size={14} />
 	              </IconButton>
-	              <IconButton label="设置" className="h-6 w-6" onClick={() => window.informio.openSettings()}>
+	              <IconButton label={t("settings.title")} className="h-6 w-6" onClick={() => window.informio.openSettings()}>
 	                <Settings size={14} />
 	              </IconButton>
 	            </div>
 	            <div className="flex shrink-0 items-center gap-3">
 	              {!data.settings.appearance.autoHideStatusBar ? (
 	                <>
-		                  <span>{activeOpenDoc ? countWords(activeOpenDoc.markdown) : 0} 词</span>
-		                  <span>{activeOpenDoc ? countCharacters(activeOpenDoc.markdown).toLocaleString() : 0} 字符</span>
-	                  <span>{lineCount} 行</span>
+		                  <span>{t("app.wordCount", { count: activeOpenDoc ? countWords(activeOpenDoc.markdown) : 0 })}</span>
+		                  <span>{t("app.characterCount", { count: activeOpenDoc ? countCharacters(activeOpenDoc.markdown) : 0 })}</span>
+	                  <span>{t("app.lineCount", { count: lineCount })}</span>
 	                </>
 	              ) : null}
 	              <IconButton
-	                label={activePaneViewMode === "source" ? "切换到文本内容视图" : "切换到 Markdown 源码视图"}
+	                label={activePaneViewMode === "source" ? t("app.switchToRichText") : t("app.switchToMarkdownSource")}
 	                className="h-6 w-6"
 	                pressed={activePaneViewMode === "source"}
 	                disabled={!canToggleMarkdownSource}
@@ -2590,7 +2570,7 @@ export function App() {
 	                <Code2 size={14} />
 	              </IconButton>
 	              <IconButton
-	                label={rightOpen ? "隐藏 Agent Session" : "显示 Agent Session"}
+	                label={rightOpen ? t("commands.hideAgentSession") : t("commands.showAgentSession")}
 	                className="h-6 w-6"
 	                pressed={rightOpen}
 	                onClick={() =>

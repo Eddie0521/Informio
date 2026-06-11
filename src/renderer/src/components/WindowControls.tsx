@@ -1,6 +1,8 @@
+import { useTranslation } from "react-i18next";
 import { Minus, Square, X } from "lucide-react";
 
 export function WindowControls({ visible }: { visible: boolean }) {
+  const { t } = useTranslation();
   if (!visible) return null;
   const runWindowControl = (action: "minimize" | "toggleMaximize" | "close") => {
     void window.informio.windowControl(action);
@@ -9,8 +11,8 @@ export function WindowControls({ visible }: { visible: boolean }) {
     <div className="window-controls no-drag flex h-full shrink-0 items-stretch">
       <button
         type="button"
-        aria-label="最小化"
-        title="最小化"
+        aria-label={t("windowcontrols.minimize")}
+        title={t("windowcontrols.minimize")}
         className="window-control-button"
         onClick={() => runWindowControl("minimize")}
       >
@@ -18,8 +20,8 @@ export function WindowControls({ visible }: { visible: boolean }) {
       </button>
       <button
         type="button"
-        aria-label="最大化或还原"
-        title="最大化或还原"
+        aria-label={t("windowcontrols.maximizeRestore")}
+        title={t("windowcontrols.maximizeRestore")}
         className="window-control-button"
         onClick={() => runWindowControl("toggleMaximize")}
       >
@@ -27,8 +29,8 @@ export function WindowControls({ visible }: { visible: boolean }) {
       </button>
       <button
         type="button"
-        aria-label="关闭"
-        title="关闭"
+        aria-label={t("windowcontrols.close")}
+        title={t("windowcontrols.close")}
         className="window-control-button is-close"
         onClick={() => runWindowControl("close")}
       >

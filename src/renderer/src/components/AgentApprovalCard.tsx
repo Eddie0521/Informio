@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { AgentSessionAction, AgentApprovalDecision } from "../types";
 
 export function AgentApprovalCard({
@@ -13,6 +14,7 @@ export function AgentApprovalCard({
   onApprovalResponse: (approvalId: string, decision: AgentApprovalDecision) => void;
   onOpenActionPath: (path: string) => void;
 }) {
+  const { t } = useTranslation();
   if (!action.approval) return null;
   return (
     <div
@@ -28,7 +30,7 @@ export function AgentApprovalCard({
             className="rounded px-1.5 py-0.5 font-semibold text-amber-700 hover:bg-amber-100"
             style={{ fontSize: `${fontSize}px`, lineHeight: `${lineHeight}px` }}
           >
-            打开
+            {t("common.open")}
           </button>
         ) : null}
       </div>
@@ -51,7 +53,7 @@ export function AgentApprovalCard({
               className="rounded bg-emerald-600 px-2 py-1 font-semibold text-white hover:bg-emerald-700"
               style={{ fontSize: `${fontSize}px`, lineHeight: `${lineHeight}px` }}
             >
-              批准本次
+              {t("agentapproval.approveOnce")}
             </button>
           ) : null}
           {action.approval.availableDecisions.includes("acceptForSession") ? (
@@ -61,7 +63,7 @@ export function AgentApprovalCard({
               className="rounded bg-emerald-50 px-2 py-1 font-semibold text-emerald-700 hover:bg-emerald-100"
               style={{ fontSize: `${fontSize}px`, lineHeight: `${lineHeight}px` }}
             >
-              本会话批准
+              {t("agentapproval.approveSession")}
             </button>
           ) : null}
           <button
@@ -70,7 +72,7 @@ export function AgentApprovalCard({
             className="rounded bg-white px-2 py-1 font-semibold text-amber-800 hover:bg-amber-100"
             style={{ fontSize: `${fontSize}px`, lineHeight: `${lineHeight}px` }}
           >
-            拒绝
+            {t("common.reject")}
           </button>
         </div>
       ) : null}

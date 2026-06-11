@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { Copy } from "lucide-react";
 
@@ -20,6 +21,7 @@ export function TranslationResultText({
   text: string;
   onSelectionChange?: (text: string) => void;
 }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const onSelectionChangeRef = useRef(onSelectionChange);
@@ -34,8 +36,8 @@ export function TranslationResultText({
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(text);
-    } catch {
-      // Clipboard write can fail in some sandboxed contexts; ignore.
+    } catch (error) {
+      console.warn("Translation clipboard write failed:", error);
     }
     setCopied(true);
   };
@@ -111,11 +113,11 @@ export function TranslationResultText({
         onClick={handleCopy}
         onMouseDown={stopMouseDown}
         className="absolute right-1.5 top-1.5 inline-flex h-6 items-center gap-1 rounded-md border border-slate-200/80 bg-white/90 px-1.5 text-[11px] font-medium text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.06)] backdrop-blur transition-colors hover:bg-white hover:text-slate-900"
-        title="复制翻译结果"
-        aria-label={copied ? "已复制" : "复制翻译结果"}
+        title={t("translationresult.copyResult")}
+        aria-label={copied ? t("translationresult.copied") : t("translationresult.copyResult")}
       >
         <Copy size={12} />
-        <span>{copied ? "已复制" : "复制"}</span>
+        <span>{copied ? t("translationresult.copied") : t("translationresult.copy")}</span>
       </button>
     </div>
   );

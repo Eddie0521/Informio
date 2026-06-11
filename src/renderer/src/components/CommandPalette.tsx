@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Search } from "lucide-react";
 import type { CommandPaletteItem } from "../types";
 import { cn } from "../lib/utils";
@@ -19,6 +20,7 @@ const fuzzyScore = (item: CommandPaletteItem, query: string) => {
 };
 
 export function CommandPalette({ open, commands, onClose }: { open: boolean; commands: CommandPaletteItem[]; onClose: () => void }) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -85,7 +87,7 @@ export function CommandPalette({ open, commands, onClose }: { open: boolean; com
       <div className="command-palette" onMouseDown={(event) => event.stopPropagation()}>
         <div className="command-palette-input">
           <Search size={16} />
-          <input ref={inputRef} value={query} placeholder="搜索系统命令或文档" onChange={(event) => { setQuery(event.target.value); setIndex(0); }} />
+          <input ref={inputRef} value={query} placeholder={t("commandpalette.searchPlaceholder")} onChange={(event) => { setQuery(event.target.value); setIndex(0); }} />
           <kbd>Esc</kbd>
         </div>
         <div ref={listRef} className="command-palette-list">
@@ -110,7 +112,7 @@ export function CommandPalette({ open, commands, onClose }: { open: boolean; com
               {command.shortcut ? <kbd>{command.shortcut}</kbd> : null}
             </button>
           ))}
-          {!matches.length ? <div className="command-palette-empty">没有匹配的命令</div> : null}
+          {!matches.length ? <div className="command-palette-empty">{t("commandpalette.noMatches")}</div> : null}
         </div>
       </div>
     </div>

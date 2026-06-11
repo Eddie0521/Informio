@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
 import type { LocalFontOption } from "../types";
 import { cn } from "../lib/utils";
@@ -14,6 +15,7 @@ export function FontFamilySelect({
   onValueChange: (value: string) => void;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -91,7 +93,7 @@ export function FontFamilySelect({
             <input
               ref={searchInputRef}
               value={query}
-              placeholder="搜索字体名，例如 PingFang、苹方、Mono"
+              placeholder={t("fontfamily.searchPlaceholder")}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
@@ -129,7 +131,7 @@ export function FontFamilySelect({
               </button>
             ))}
             {!filteredOptions.length ? (
-              <div className="px-3 py-3 text-[12px] text-slate-500">没有匹配的字体，换个关键词试试。</div>
+              <div className="px-3 py-3 text-[12px] text-slate-500">{t("fontfamily.noMatches")}</div>
             ) : null}
           </div>
         </div>

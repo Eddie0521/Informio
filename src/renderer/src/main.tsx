@@ -1,8 +1,21 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import log from "electron-log/renderer";
+import { I18nextProvider } from "react-i18next";
+import i18n, { normalizeUiLanguage } from "./i18n";
 import { App } from "./App";
 import { installDemoApi } from "./demoApi";
 import "./styles.css";
+
+// Keep every renderer window in sync when another window changes language.
+window.informio.onLanguageChanged((lang) => {
+  const nextLanguage = normalizeUiLanguage(lang);
+  localStorage.setItem("informio-language", nextLanguage);
+  if (!i18n.language.startsWith(nextLanguage)) void i18n.changeLanguage(nextLanguage);
+});
+
+// Expose electron-log to renderer console
+Object.assign(console, log.functions);
 
 if (import.meta.env.DEV && !window.informio) {
   installDemoApi();
@@ -19,7 +32,9 @@ if (!window.informio) {
 } else {
   root.render(
     <React.StrictMode>
-      <App />
+      <I18nextProvider i18n={i18n}>
+        <App />
+      </I18nextProvider>
     </React.StrictMode>
   );
 }

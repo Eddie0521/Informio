@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import type { ProviderExecutionFlowProps, AgentSessionAction } from "../types";
 import { classifyAgentAction, formatProcessDuration } from "../lib/agent";
@@ -26,6 +27,7 @@ const isVerificationAction = (action: AgentSessionAction) => {
 };
 
 export function CodexExecutionFlow(props: ProviderExecutionFlowProps) {
+  const { t } = useTranslation();
   const { message, transcriptFontSize, transcriptLineHeight, processFontSize, processLineHeight, isExpanded, now, onToggleExpanded, onApprovalResponse, onOpenActionPath } = props;
   const visibleActions = message.actions.filter((action) => classifyAgentAction(action) !== "system");
   const pendingApprovalActions = visibleActions.filter((action) => action.approval && action.status === "pending");
@@ -45,13 +47,13 @@ export function CodexExecutionFlow(props: ProviderExecutionFlowProps) {
   };
   const duration = formatProcessDuration((message.completedAt ?? now) - message.submittedAt);
   const summary = [
-    grouped.inspect.length ? `检查 ${grouped.inspect.length}` : "",
-    grouped.command.length ? `命令 ${grouped.command.length}` : "",
-    grouped.edit.length ? `改动 ${grouped.edit.length}` : "",
-    verificationActions.length ? `验证 ${verificationActions.length}` : ""
+    grouped.inspect.length ? t("executionflow.inspect", { count: grouped.inspect.length }) : "",
+    grouped.command.length ? t("executionflow.command", { count: grouped.command.length }) : "",
+    grouped.edit.length ? t("executionflow.edit", { count: grouped.edit.length }) : "",
+    verificationActions.length ? t("executionflow.verify", { count: verificationActions.length }) : ""
   ].filter(Boolean).join(" · ");
   const statusLabel =
-    pendingApprovalActions.length ? "等待授权" : actionError ? "部分失败" : message.status === "tool-executing" ? "执行中" : message.status === "thinking" ? "处理中" : message.status === "error" ? "失败" : "完成";
+    pendingApprovalActions.length ? t("executionflow.pendingApproval") : actionError ? t("executionflow.partialFailure") : message.status === "tool-executing" ? t("executionflow.executing") : message.status === "thinking" ? t("executionflow.processing") : message.status === "error" ? t("executionflow.failed") : t("executionflow.completed");
   const lastAction = latestVisibleAction(visibleActions);
   return (
     <div className="mb-3 px-0 py-1">
@@ -70,7 +72,7 @@ export function CodexExecutionFlow(props: ProviderExecutionFlowProps) {
                 <Loader2 size={Math.max(10, transcriptFontSize)} className="shrink-0 animate-spin text-slate-400" />
               ) : null}
             </div>
-            <div className="mt-1 text-slate-500">{lastAction ? `最近步骤: ${actionShortLabel(lastAction)}` : "最近步骤: Codex"}</div>
+            <div className="mt-1 text-slate-500">{lastAction ? t("executionflow.recentStep", { step: actionShortLabel(lastAction) }) : t("executionflow.recentStep", { step: "Codex" })}</div>
             {summary ? <div className="mt-1 text-slate-400">{summary}</div> : null}
           </div>
         </div>
@@ -80,13 +82,13 @@ export function CodexExecutionFlow(props: ProviderExecutionFlowProps) {
         <div className="mt-2 space-y-3 pl-4">
           {message.reasoning.trim() ? (
             <div className="text-slate-400" style={{ fontSize: `${processFontSize}px`, lineHeight: `${processLineHeight}px` }}>
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>可见过程</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>{t("executionflow.visibleProcess")}</SectionLabel>
               <div className="whitespace-pre-wrap">{message.reasoning}</div>
             </div>
           ) : null}
           {pendingApprovalActions.length ? (
             <div className="space-y-2">
-              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>Approval</SectionLabel>
+              <SectionLabel fontSize={Math.max(11, processFontSize - 1)}>{t("executionflow.approval")}</SectionLabel>
               {pendingApprovalActions.map((action) => (
                 <AgentApprovalCard
                   key={action.approval?.id ?? action.toolId}
@@ -100,11 +102,11 @@ export function CodexExecutionFlow(props: ProviderExecutionFlowProps) {
             </div>
           ) : null}
           {([
-            ["检查", grouped.inspect],
-            ["命令", grouped.command],
-            ["改动", grouped.edit],
-            ["验证", verificationActions],
-            ["其他", grouped.other]
+            [t("executionflow.inspectLabel"), grouped.inspect],
+            [t("executionflow.commandLabel"), grouped.command],
+            [t("executionflow.editLabel"), grouped.edit],
+            [t("executionflow.verifyLabel"), verificationActions],
+            [t("executionflow.otherLabel"), grouped.other]
           ] as Array<[string, AgentSessionAction[]]>)
             .filter(([, actions]) => actions.length)
             .map(([label, actions]) => (

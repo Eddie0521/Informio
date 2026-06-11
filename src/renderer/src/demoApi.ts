@@ -491,7 +491,15 @@ export function installDemoApi() {
         projects: state.projects.map((project) => (project.path === path ? { ...project, pinned: !project.pinned } : project))
       };
       return state;
-    }
+    },
+    checkForUpdates: async () => ({ available: false }),
+    downloadUpdate: async () => ({ success: false }),
+    installUpdate: () => {},
+    onUpdateAvailable: () => {},
+    onUpdateDownloaded: () => {},
+    onDownloadProgress: () => {},
+    setLanguage: () => {},
+    onLanguageChanged: () => {}
   };
 
   window.informio = api;

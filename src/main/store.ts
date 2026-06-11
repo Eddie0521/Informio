@@ -1,4 +1,5 @@
 import { app } from "electron";
+import log from "electron-log";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { homedir } from "node:os";
@@ -547,7 +548,8 @@ export async function loadAppData(): Promise<AppData> {
   try {
     const raw = await readFile(dataPath(), "utf8");
     return mergeData(JSON.parse(raw) as Partial<AppData>);
-  } catch {
+  } catch (error) {
+    log.warn("Failed to load app data, using defaults:", error);
     await saveAppData(defaultData);
     return defaultData;
   }

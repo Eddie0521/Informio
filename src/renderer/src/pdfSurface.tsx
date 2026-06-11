@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { useTranslation } from "react-i18next";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { NodeViewWrapper } from "@tiptap/react";
 import { PDFViewer } from "@embedpdf/react-pdf-viewer";
@@ -12,6 +13,11 @@ import type {
 } from "@embedpdf/react-pdf-viewer";
 import { MoreHorizontal } from "lucide-react";
 import type { AppSettings, InformioDocument, PdfSelectionRect } from "../../shared/types";
+import type {
+  UnifiedToolbarTranslateState as ToolbarTranslateState,
+  PdfAgentSelection,
+  UnifiedPdfEditorContextValue as PdfEditorContextValue
+} from "./types";
 import { cn } from "./lib/utils";
 
 const normalizePdfPath = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -34,44 +40,10 @@ const localFilePathFromUrl = (value: string) => {
     const pathname = decodeURIComponent(url.pathname);
     if (/^[A-Za-z]:?$/.test(host)) return `${host.replace(/:$/, "")}:${pathname}`;
     return normalizeLocalFilePath(url.host ? `/${host}${pathname}` : pathname);
-  } catch {
+  } catch (error) {
+    console.warn("Failed to parse local file URL:", error);
     return value;
   }
-};
-
-export type PdfAgentSelection = {
-  kind: "markdown" | "pdf";
-  documentId: string;
-  from: number;
-  to: number;
-  text: string;
-  markdown: string;
-  title?: string;
-  filePath?: string;
-  page?: number;
-  rects?: PdfSelectionRect[];
-  overlayLeft?: number;
-  overlayTop?: number;
-};
-
-export type ToolbarTranslateState = {
-  status: "idle" | "loading" | "done" | "error";
-  response: string;
-  error?: string;
-  anchor?: {
-    kind: "markdown" | "pdf";
-    left: number;
-    top: number;
-  };
-};
-
-export type PdfEditorContextValue = {
-  paneId: string;
-  document: InformioDocument;
-  settings: AppSettings;
-  toolbarTranslate: ToolbarTranslateState;
-  onTranslateSelection: (selection: PdfAgentSelection) => void;
-  onClearToolbarTranslate: () => void;
 };
 
 type PdfSurfaceMode = "compact" | "full";
@@ -198,7 +170,7 @@ const firstVisibleRect = (elements: HTMLElement[]) => {
 
 const isTranslateControl = (element: HTMLElement) => {
   const label = `${element.getAttribute("aria-label") ?? ""} ${element.title ?? ""} ${element.textContent ?? ""}`.trim();
-  return label === "翻译" || label.includes("翻译");
+  return label === "翻译" || label === "Translate" || label.includes("翻译") || label.includes("Translate");
 };
 
 const pdfTranslationAnchorFromViewport = (surfaceRoot: HTMLElement | null) => {
@@ -339,6 +311,7 @@ const embedPdfThemeForSettings = (settings: AppSettings): ThemeConfig => ({
 });
 
 function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }: PdfSurfaceProps) {
+  const { t, i18n } = useTranslation();
   const pdfContext = usePdfEditorContext();
   const settings = pdfContext?.settings;
   const surfaceRootRef = useRef<HTMLDivElement | null>(null);
@@ -454,8 +427,8 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
 
       commands?.registerCommand({
         id: EMBEDPDF_TRANSLATE_COMMAND_ID,
-        label: "翻译",
-        description: "翻译选中的 PDF 文本",
+        label: t("common.translate"),
+        description: t("pdf.translateSelection"),
         categories: ["selection", "informio-translate"],
         action: ({ registry: commandRegistry, documentId }) => {
           void triggerPdfTranslation(commandRegistry, documentId);
@@ -492,7 +465,7 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
         }
       });
     },
-    [pdfContext, schedulePdfAnnotationPersist, triggerPdfTranslation]
+    [pdfContext, schedulePdfAnnotationPersist, t, triggerPdfTranslation]
   );
 
   const viewerConfig = useMemo<PDFViewerConfig>(
@@ -515,12 +488,13 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
         settings.appearance.theme,
         settings.appearance.customThemeColor,
         settings.appearance.chineseFontFamily,
-        settings.appearance.englishFontFamily
+        settings.appearance.englishFontFamily,
+        i18n.language
       ].join(":")
     : pdfPath;
 
   if (!pdfPath) {
-    return <div className="informio-pdf-message is-error">当前 PDF 文档缺少文件路径。</div>;
+    return <div className="informio-pdf-message is-error">{t("pdf.missingFilePath")}</div>;
   }
 
   return (
@@ -542,7 +516,7 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
           <button
             type="button"
             className={cn("informio-pdf-toolbar-icon", toolMenuOpen && "is-active")}
-            title="更多"
+            title={t("pdf.more")}
             onClick={() => setToolMenuOpen((current) => !current)}
           >
             <MoreHorizontal size={14} />
@@ -557,7 +531,7 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
                   void window.informio.openPath(pdfPath);
                 }}
               >
-                在系统中打开
+                {t("editor.openInSystem")}
               </button>
               <button
                 type="button"
@@ -567,7 +541,7 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
                   onRemove?.();
                 }}
               >
-                移除 PDF
+                {t("pdf.removePdf")}
               </button>
             </div>
           ) : null}
@@ -600,10 +574,11 @@ export function PdfBlockView({ node, editor, getPos }: ReactNodeViewProps) {
 }
 
 export function PdfViewerSurface() {
+  const { t } = useTranslation();
   const pdfContext = usePdfEditorContext();
   const currentDocument = pdfContext?.document ?? null;
   if (!pdfContext || !currentDocument) {
-    return <div className="informio-pdf-message is-error">PDF 上下文丢失，无法打开文档。</div>;
+    return <div className="informio-pdf-message is-error">{t("pdf.contextMissing")}</div>;
   }
   return (
     <EmbedPdfSurface

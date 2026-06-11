@@ -3,8 +3,8 @@ export const writeClipboardText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
       return;
-    } catch {
-      // Fall back for Electron/browser contexts where the async clipboard is unavailable.
+    } catch (error) {
+      console.warn("Async clipboard write failed, falling back to execCommand:", error);
     }
   }
   const textarea = document.createElement("textarea");

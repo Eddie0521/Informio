@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { ComponentType } from "react";
+import { useTranslation } from "react-i18next";
 import { Copy, ExternalLink, FilePlus, FolderPlus, Pencil, Pin, PinOff, Trash2, X } from "lucide-react";
 import type {
   BlankContextMenuState,
@@ -10,10 +11,8 @@ import type {
 } from "../types";
 import { cn } from "../lib/utils";
 
-const revealInFolderLabel = () =>
-  typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
-    ? "在 Finder 中打开"
-    : "在文件夹中打开";
+const isMacPlatform = () =>
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
 
 export function ProjectContextMenu({
   state,
@@ -34,6 +33,7 @@ export function ProjectContextMenu({
   onReveal: () => void;
   onRemove: () => void;
 }) {
+  const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const close = (event: PointerEvent) => {
@@ -61,7 +61,7 @@ export function ProjectContextMenu({
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onCreateFile(); }}
       >
         <FilePlus size={13} />
-        <span>新建文件</span>
+        <span>{t("files.newFile")}</span>
       </button>
       <button
         type="button"
@@ -69,7 +69,7 @@ export function ProjectContextMenu({
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onCreateFolder(); }}
       >
         <FolderPlus size={13} />
-        <span>新建文件夹</span>
+        <span>{t("files.newFolder")}</span>
       </button>
       <button
         type="button"
@@ -77,7 +77,7 @@ export function ProjectContextMenu({
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRename(); }}
       >
         <Pencil size={13} />
-        <span>重命名项目</span>
+        <span>{t("filecontextmenu.renameProject")}</span>
       </button>
       <button
         type="button"
@@ -85,7 +85,7 @@ export function ProjectContextMenu({
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePinned(); }}
       >
         {state.pinned ? <PinOff size={13} /> : <Pin size={13} />}
-        <span>{state.pinned ? "取消置顶项目" : "置顶项目"}</span>
+        <span>{state.pinned ? t("filecontextmenu.unpinProject") : t("filecontextmenu.pinProject")}</span>
       </button>
       <button
         type="button"
@@ -93,7 +93,7 @@ export function ProjectContextMenu({
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onReveal(); }}
       >
         <ExternalLink size={13} />
-        <span>在 Finder 中打开</span>
+        <span>{t("filecontextmenu.openInFinder")}</span>
       </button>
       <button
         type="button"
@@ -101,7 +101,7 @@ export function ProjectContextMenu({
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRemove(); }}
       >
         <X size={13} />
-        <span>从列表中移除</span>
+        <span>{t("filecontextmenu.removeFromList")}</span>
       </button>
     </div>
   );
@@ -120,6 +120,7 @@ export function FileContextMenu({
   onCreateFolder: (folderPath: string) => void;
   onAction: (action: FileSystemOperationInput["action"], target: FileContextTarget) => void;
 }) {
+  const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const close = (event: PointerEvent) => {
@@ -140,11 +141,12 @@ export function FileContextMenu({
     };
   }, [onClose]);
 
+  const revealLabel = isMacPlatform() ? t("filecontextmenu.openInFinder") : t("filecontextmenu.openInFolder");
   const menuItems: Array<{ action: FileSystemOperationInput["action"]; label: string; icon: ComponentType<{ size?: number }> }> = [
-    { action: "rename", label: "重命名", icon: Pencil },
-    { action: "duplicate", label: "复制", icon: Copy },
-    { action: "delete", label: "删除", icon: Trash2 },
-    { action: "reveal", label: revealInFolderLabel(), icon: ExternalLink }
+    { action: "rename", label: t("common.rename"), icon: Pencil },
+    { action: "duplicate", label: t("filecontextmenu.duplicate"), icon: Copy },
+    { action: "delete", label: t("common.delete"), icon: Trash2 },
+    { action: "reveal", label: revealLabel, icon: ExternalLink }
   ];
 
   return (
@@ -166,7 +168,7 @@ export function FileContextMenu({
             }}
           >
             <FilePlus size={14} />
-            <span>新建文件</span>
+            <span>{t("files.newFile")}</span>
           </button>
           <button
             type="button"
@@ -179,7 +181,7 @@ export function FileContextMenu({
             }}
           >
             <FolderPlus size={14} />
-            <span>新建文件夹</span>
+            <span>{t("files.newFolder")}</span>
           </button>
         </>
       ) : null}
@@ -220,6 +222,7 @@ export function BlankFileContextMenu({
   onCreateFile: () => void;
   onCreateFolder: () => void;
 }) {
+  const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const close = (event: PointerEvent) => {
@@ -241,8 +244,8 @@ export function BlankFileContextMenu({
   }, [onClose]);
 
   const menuItems = [
-    { label: "新建文件", icon: FilePlus, action: onCreateFile },
-    { label: "新建文件夹", icon: FolderPlus, action: onCreateFolder }
+    { label: t("files.newFile"), icon: FilePlus, action: onCreateFile },
+    { label: t("files.newFolder"), icon: FolderPlus, action: onCreateFolder }
   ];
 
   return (

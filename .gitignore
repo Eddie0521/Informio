@@ -12,3 +12,4 @@ output/playwright
 tmp-pdf-comment-test.pdf
 docs/assets/*.mp4
 !docs/assets/demo_informio.mp4
+dev-app-update.yml

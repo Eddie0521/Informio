@@ -1,0 +1,587 @@
+{
+  "common": {
+    "retry": "重试",
+    "cancel": "稍后",
+    "save": "保存",
+    "delete": "删除",
+    "close": "关闭",
+    "loading": "加载中...",
+    "error": "出错了",
+    "offline": "离线",
+    "confirm": "确认",
+    "open": "打开",
+    "copy": "复制",
+    "optional": "可选",
+    "detect": "检测",
+    "select": "选择",
+    "reject": "拒绝",
+    "undo": "撤销",
+    "redo": "重做",
+    "rename": "重命名",
+    "encrypt": "加密",
+    "translate": "翻译"
+  },
+  "settings": {
+    "title": "设置",
+    "nav": {
+      "appearance": "外观",
+      "editor": "编辑器",
+      "agent": "Agent",
+      "api": "API",
+      "shortcuts": "快捷键",
+      "about": "关于"
+    },
+    "appearance": {
+      "title": "外观",
+      "theme": "主题",
+      "language": "界面语言",
+      "languageDescription": "切换软件界面的显示语言，立即生效。",
+      "font": "字体",
+      "fontSize": "字号",
+      "chatFontSize": "对话字号",
+      "contentWidth": "内容宽度",
+      "customColor": "自定义颜色",
+      "chineseLanguage": "中文",
+      "customColorDesc": "保持当前界面对比度，只把整体基调换成你选的颜色。",
+      "selectCustomColor": "选择自定义主题颜色",
+      "chineseFont": "中文字体",
+      "chineseFontDesc": "影响整个软件里的中文显示，包括侧栏、工具栏、设置页和编辑器正文。",
+      "englishFont": "英文字体",
+      "englishFontDesc": "影响整个软件里的英文、数字和拉丁字符显示。",
+      "codeFont": "代码字体",
+      "codeFontDesc": "影响代码块、源码模式，以及路径、命令、日志这类等宽信息。",
+      "loadingFonts": "正在读取本地字体列表……",
+      "window": "窗口",
+      "autoHideStatusBar": "自动隐藏状态栏",
+      "autoHideStatusBarDesc": "不交互时隐藏底部统计"
+    },
+    "editor": {
+      "title": "编辑器",
+      "spellCheck": "拼写检查",
+      "lineNumbers": "行号",
+      "typewriterMode": "打字机模式",
+      "fontSizeLabel": "编辑字号",
+      "fontSizeDesc": "{{size}}px，影响正文阅读密度",
+      "contentWidthLabel": "编辑宽度",
+      "contentWidthDesc": "{{size}}px，控制正文列总宽度",
+      "spellCheckDesc": "控制正文编辑器的系统拼写检查",
+      "autoSave": "自动保存",
+      "autoSaveDesc": "输入后自动保存到本地应用数据",
+      "indentWidth": "缩进宽度",
+      "indentWidthDesc": "用于 Markdown 列表与代码块",
+      "insertFile": "插入文件",
+      "insertFileDesc": "控制通过菜单插入图片、音频、视频和 PDF 时如何写入路径",
+      "copyToAttachments": "复制到 attachments",
+      "keepOriginalPath": "保持原路径",
+      "defaultFolder": "默认文件夹"
+    },
+    "agent": {
+      "title": "Agent",
+      "enabled": "启用 Agent",
+      "connect": "连接 Agent",
+      "reconnect": "重新连接",
+      "description": "Informio 会用选中文本、当前文档、打开 Tab、项目文件结构作为上下文，调用本机已安装的 Agent。",
+      "enabledDesc": "关闭后不会启动本机 Agent，也不会发送文档上下文。",
+      "autoStart": "自动启动",
+      "autoStartDesc": "打开应用后自动预连接全部已启用 Agent，首次切换更快。",
+      "conversationRetentionLimit": "保留会话数量",
+      "conversationRetentionLimitDesc": "每个 Agent 最多保留多少条历史会话。",
+      "conversationRetentionDays": "保留会话时间",
+      "conversationRetentionDaysDesc": "超出这个时间的历史会话会自动清理。",
+      "workAgent": "工作 Agent",
+      "workAgentDesc": "用于右侧工作面板，适合较重的问答、改写和上下文任务。"
+    },
+    "chat": {
+      "title": "对话栏",
+      "fontSize": "对话字号",
+      "fontSizeDesc": "{{size}}px，影响 User、Agent 名称、用户消息、AI 回复和「已处理」这一行；执行流内部会自动小 2px"
+    },
+    "api": {
+      "translationDesc": "Markdown 和 PDF 的划词翻译都会走这里配置的接口，不再依赖 Agent runtime。",
+      "example": "例如 {{url}}",
+      "translationModel": "翻译模型",
+      "detectModelsFirst": "先检测可用模型",
+      "detectModelsDesc": "检测会读取当前接口下可用模型，成功后即可给划词翻译单独指定一个更快的模型。"
+    },
+    "shortcuts": {
+      "title": "可配置快捷键",
+      "description": "这里直接改当前生效的快捷键。点一下键位开始录制，冲突时会当场阻止保存。",
+      "conflictError": "“{{first}}” 与 “{{second}}” 不能使用同一个快捷键。"
+    },
+    "advanced": {
+      "keepMinimal": "保持极简默认值",
+      "keepMinimalDesc": "这一页的高级配置会在后续版本逐步展开",
+      "currentStrategy": "当前策略",
+      "currentStrategyDesc": "先保证写作主路径顺滑，再开放低频细项"
+    },
+    "about": {
+      "title": "关于",
+      "version": "版本",
+      "github": "GitHub",
+      "checkUpdate": "检查更新",
+      "checking": "正在检查...",
+      "upToDate": "已是最新版本",
+      "newVersion": "发现新版本",
+      "downloadInstall": "下载并安装",
+      "downloading": "正在下载...",
+      "readyToInstall": "更新已就绪，重启安装",
+      "later": "稍后"
+    }
+  },
+  "theme": {
+    "white": "白色",
+    "paper": "纸张",
+    "night": "夜间",
+    "custom": "自定义"
+  },
+  "apiProvider": {
+    "openai-compatible": {
+      "description": "用于兼容 OpenAI Chat Completions 的服务。"
+    },
+    "anthropic": {
+      "description": "用于 Anthropic Messages API。"
+    }
+  },
+  "status": {
+    "connection": {
+      "idle": "未检测",
+      "connecting": "检测中",
+      "connected": "可用",
+      "error": "不可用"
+    }
+  },
+  "permission": {
+    "read_only": "只读",
+    "default": "审核权限",
+    "full_access": "默认权限"
+  },
+  "processCategory": {
+    "explore": "探索",
+    "search": "搜索",
+    "read": "读文件",
+    "edit": "编辑",
+    "command": "命令",
+    "approval": "审批",
+    "other": "步骤"
+  },
+  "app": {
+    "loading": "Loading Informio",
+    "startFailed": "Informio 启动失败",
+    "editorLoadFailed": "编辑器加载失败",
+    "reload": "重新加载",
+    "startingAgent": "正在启动 {{name}}...",
+    "startingAgentGeneric": "正在启动 Agent...",
+    "reconnectingAgent": "正在重新建立 Agent 连接...",
+    "checkingAgent": "正在检测 {{name}}...",
+    "agentStartFailed": "Agent 启动失败。",
+    "loadDataFailed": "无法加载应用数据。",
+    "unnamedWorkspace": "未命名工作区",
+    "conflictBeforeSave": "文档存在外部更改冲突，请先选择保留本地版本或采用外部版本。",
+    "saveFailedCancelClose": "保存失败，已取消关闭标签。",
+    "saveFailedCancelCloseWithMessage": "保存失败，已取消关闭标签。\n{{message}}",
+    "confirmDeleteFolder": "删除这个文件夹及其下的文件？",
+    "confirmDeleteFile": "删除这个文件？",
+    "apiMissingCredentials": "请先填写 base_url 和 api_key。",
+    "apiCheckingModels": "正在检测可用模型...",
+    "apiModelsDetected": "检测到 {{count}} 个可用模型。",
+    "apiModelDetectionFailed": "模型检测失败，请检查 API 配置。",
+    "agentDisabled": "Agent 未启用。请在设置 → Agent 中打开“启用 Agent”。",
+    "translationApiIncomplete": "翻译 API 还没配置完成。请在设置 → API 填写 base_url、api_key，并检测后选择一个模型。",
+    "expandPane": "整屏展示当前 pane",
+    "conflictBanner": "需要合并更改，自动保存已暂停。点击查看 Diff 并选择处理方式。",
+    "view": "查看",
+    "loadingSettings": "正在加载设置...",
+    "fileList": "文件列表",
+    "agentPanel": "Agent 面板",
+    "splitLeft": "左侧分屏",
+    "splitRight": "右侧分屏",
+    "splitTop": "上方分屏",
+    "splitBottom": "下方分屏",
+    "files": "文件",
+    "outline": "大纲",
+    "properties": "属性",
+    "addProject": "添加项目",
+    "wordCount": "{{count}} 词",
+    "characterCount": "{{count}} 字符",
+    "lineCount": "{{count}} 行",
+    "switchToRichText": "切换到文本内容视图",
+    "switchToMarkdownSource": "切换到 Markdown 源码视图"
+  },
+  "commands": {
+    "newDocument": "新建文档",
+    "newDocumentKeywords": "新建 文档 new document",
+    "openFile": "打开文件",
+    "openFileKeywords": "打开 文件 open files",
+    "openProject": "打开项目",
+    "openProjectKeywords": "打开 工作区 项目 workspace project",
+    "openSettings": "打开设置",
+    "openSettingsKeywords": "设置 settings",
+    "exportHtml": "导出 {{name}}.HTML",
+    "exportHtmlKeywords": "导出 html export save 当前文档",
+    "exportPdf": "导出 {{name}}.PDF",
+    "exportPdfKeywords": "导出 pdf export save 当前文档",
+    "hideFileSidebar": "隐藏文件侧栏",
+    "showFileSidebar": "显示文件侧栏",
+    "toggleFileSidebarKeywords": "切换 侧栏 文件 toggle file sidebar",
+    "hideAgentSession": "隐藏 Agent Session",
+    "showAgentSession": "显示 Agent Session",
+    "toggleAgentSessionKeywords": "assistant agent session ai 右栏 助手 任务 切换",
+    "collapseWritingPanels": "收起写作侧栏",
+    "collapseWritingPanelsKeywords": "隐藏 左栏 右栏 close workspace collapse panels"
+  },
+  "pdf": {
+    "translateSelection": "翻译选中的 PDF 文本",
+    "missingFilePath": "当前 PDF 文档缺少文件路径。",
+    "contextMissing": "PDF 上下文丢失，无法打开文档。",
+    "more": "更多",
+    "removePdf": "移除 PDF"
+  },
+  "encrypted": {
+    "content": "已加密内容",
+    "damaged": "加密内容损坏",
+    "damagedShort": "损坏",
+    "checkSourceTag": "请检查源码标签",
+    "missingRequiredFields": "标签缺失必要字段，无法安全解密"
+  },
+  "editor": {
+    "loading": "正在加载文件...",
+    "noDocument": "无打开文档",
+    "assetError": "文件路径缺失，无法打开。",
+    "assetLoading": "正在加载文件...",
+    "assetDecodeError": "文件已识别为{{type}}，但当前文件无法被内置预览器解码。",
+    "openInSystem": "在系统中打开",
+    "words": "{{count}} 字",
+    "lines": "{{count}} 行"
+  },
+  "agent": {
+    "user": "User",
+    "sendPlaceholder": "输入消息...",
+    "connectFirst": "请先连接 Agent",
+    "noConversations": "暂无对话",
+    "copy": "复制",
+    "deleteConversation": "删除对话"
+  },
+  "files": {
+    "localDrafts": "Local Drafts",
+    "untitled": "Untitled",
+    "newFile": "新建文档",
+    "newFolder": "新建文件夹"
+  },
+  "errorBoundary": {
+    "loadFailed": "加载失败",
+    "retry": "重试",
+    "componentLoadFailed": "{{name}} 加载失败"
+  },
+  "agentpanel": {
+    "reconnect": "重新连接 {{name}}",
+    "connectAgent": "连接 Agent",
+    "processAttachments": "请处理这些附件。",
+    "switchAgent": "切换 Agent",
+    "history": "历史会话",
+    "agentSettings": "Agent 设置",
+    "agentHistory": "此 Agent 的历史会话",
+    "newSession": "新建会话",
+    "from": "来自：{{workspace}}",
+    "unnamedWorkspace": "未命名工作区",
+    "emptySession": "空会话",
+    "deleteSession": "删除 {{title}}",
+    "noHistoryYet": "还没有历史会话。",
+    "selectionIncluded": "已包含当前选区",
+    "copyUserMessage": "复制用户消息",
+    "copyAiReply": "复制 AI 回复",
+    "dragToResize": "拖拽调整输入区高度",
+    "removeAttachment": "移除 {{name}}",
+    "addImageOrFile": "添加图片或文件",
+    "modelLabel": "模型：{{label}}",
+    "permissionLabel": "权限：{{label}}",
+    "cancelRun": "取消当前运行",
+    "send": "发送",
+    "switchToDefaultPermission": "切换到默认权限",
+    "defaultPermissionDesc": "默认权限下，Agent 将不再请求审批，并且可以访问和修改工作区外的系统文件。",
+    "confirmSwitch": "确认切换"
+  },
+  "agentapproval": {
+    "approveOnce": "批准本次",
+    "approveSession": "本会话批准"
+  },
+  "executionflow": {
+    "pendingApproval": "等待授权",
+    "partialFailure": "部分失败",
+    "executing": "执行中",
+    "processing": "处理中",
+    "cancelled": "已中断",
+    "runFailed": "运行失败",
+    "failed": "失败",
+    "completed": "完成",
+    "done": "已完成",
+    "recentStep": "最近步骤: {{step}}",
+    "visibleProcess": "可见过程",
+    "approval": "授权",
+    "executionFlow": "执行流",
+    "inspect": "检查 {{count}}",
+    "command": "命令 {{count}}",
+    "edit": "改动 {{count}}",
+    "verify": "验证 {{count}}",
+    "inspectLabel": "检查",
+    "commandLabel": "命令",
+    "editLabel": "改动",
+    "verifyLabel": "验证",
+    "otherLabel": "其他",
+    "needsConfirm": "需要确认: {{action}}",
+    "currentAction": "当前操作",
+    "organizingReply": "正在组织回复",
+    "runningTool": "运行工具",
+    "generating": "生成中",
+    "processed": "已处理 {{duration}}",
+    "waitingForProcess": "正在等待 Agent 返回可展示的过程事件。",
+    "noProcessEvents": "这次运行没有返回可展示的过程事件。",
+    "waitingForOpenCode": "正在等待 OpenCode 返回阶段事件。",
+    "noIntermediateProcess": "这次运行没有返回可展示的中间过程。",
+    "hiddenSteps": "已隐藏 {{count}} 个既定上下文步骤"
+  },
+  "assetviewer": {
+    "previewUnsupported": "当前文件类型无法内置预览。",
+    "imageType": "图片",
+    "videoType": "视频",
+    "audioType": "音频"
+  },
+  "codeblock": {
+    "codeLanguage": "代码语言"
+  },
+  "commandpalette": {
+    "searchPlaceholder": "搜索系统命令或文档",
+    "noMatches": "没有匹配的命令"
+  },
+  "documentconflict": {
+    "diffTooLarge": "文档过长，已跳过逐行 Diff 以避免界面卡顿。外部版本 {{removed}} 行，我的版本 {{added}} 行。",
+    "externalPreview": "外部版本预览：{{preview}}",
+    "localPreview": "我的版本预览：{{preview}}",
+    "mergeChanges": "需要合并更改",
+    "currentDocument": "当前文档",
+    "conflictDescription": "{{title}} 的同一段内容同时被你和外部修改。自动保存已暂停，请选择如何处理。",
+    "howToHandle": "处理方式",
+    "colorExplanation": "绿色是你当前编辑器里的内容，红色是外部版本中被替换或删除的内容。",
+    "closeWontResolve": "关闭不会解决冲突，自动保存会继续暂停。",
+    "copyExternal": "复制外部版本",
+    "manualMergeHint": "也可以手动合并后再选择“保留我的版本”保存。",
+    "handleLater": "稍后处理",
+    "useExternal": "采用外部版本",
+    "keepMyVersion": "保留我的版本"
+  },
+  "fontfamily": {
+    "searchPlaceholder": "搜索字体名，例如 PingFang、苹方、Mono",
+    "noMatches": "没有匹配的字体，换个关键词试试。"
+  },
+  "filecontextmenu": {
+    "openInFinder": "在 Finder 中打开",
+    "openInFolder": "在文件夹中打开",
+    "renameProject": "重命名项目",
+    "unpinProject": "取消置顶项目",
+    "pinProject": "置顶项目",
+    "removeFromList": "从列表中移除",
+    "duplicate": "复制"
+  },
+  "inserttoolbar": {
+    "insertImage": "插入图片",
+    "insertVideo": "插入视频",
+    "insertAudio": "插入音频",
+    "insertPdf": "插入 PDF",
+    "insertMermaidChart": "插入 Mermaid 图表",
+    "insertTable": "插入表格",
+    "insertBulletList": "插入项目符号列表",
+    "insertOrderedList": "插入编号列表",
+    "insertTaskList": "插入任务列表",
+    "insertNote": "插入 Note",
+    "insertCallout": "插入 Callout",
+    "insertCodeBlock": "插入代码块",
+    "insertFootnote": "插入脚注",
+    "insertHorizontalRule": "插入水平分隔线",
+    "hideProperties": "隐藏属性",
+    "showProperties": "显示属性"
+  },
+  "editorpane": {
+    "bold": "加粗",
+    "italic": "倾斜",
+    "underline": "下划线",
+    "strikethrough": "删除线",
+    "subscript": "下标",
+    "superscript": "上标",
+    "highlight": "高亮",
+    "addLink": "加链接",
+    "goToLink": "去链接",
+    "encryptedInSelection": "当前选区包含已加密内容，请先解密这些片段，再重新执行加密。",
+    "corruptedEncryption": "这篇文档里已有损坏的加密片段。请先修复或删除损坏片段，再继续新增加密内容。",
+    "passphraseMismatch": "两次输入的口令不一致，请重新确认。",
+    "encryptionFailed": "加密失败，请重试。",
+    "passphraseIncorrectVerify": "口令不正确，无法验证这篇文档已有的加密内容。",
+    "passphraseIncorrectDecrypt": "口令不正确，或当前加密片段已损坏。",
+    "placeholder": "开始写。需要 AI 时选中一段，或直接问右侧 Agent。",
+    "find": {
+      "inputRequired": "先输入要查找的文本。",
+      "noMatch": "当前文档里没有找到匹配结果。",
+      "matchRequiredForReplace": "先找到一个匹配结果，再执行替换。",
+      "matchLocated": "已定位当前匹配。",
+      "collapseReplace": "收起替换",
+      "expandReplace": "展开替换",
+      "findText": "查找文本",
+      "findNext": "查找下一个",
+      "closeFind": "关闭查找",
+      "replaceText": "替换文本",
+      "replaceCurrent": "替换当前"
+    },
+    "wiki": {
+      "unnamed": "未命名",
+      "createNote": "创建 {{name}}",
+      "newNote": "新笔记",
+      "noMatch": "没有匹配的文档"
+    }
+  },
+  "imagedialog": {
+    "title": "图片",
+    "description": "编辑图片地址、替代文字和标题。",
+    "url": "地址",
+    "altText": "替代文字",
+    "caption": "标题"
+  },
+  "linkdialog": {
+    "linkText": "链接文字",
+    "title": "链接",
+    "description": "输入链接文字和地址，确认后插入或更新超链接。",
+    "text": "文字",
+    "url": "地址",
+    "titleLabel": "标题"
+  },
+  "selectiontoolbar": {
+    "translating": "正在翻译",
+    "translationResult": "翻译结果",
+    "closeToolbar": "关闭工具栏"
+  },
+  "secretdialog": {
+    "setPassphrase": "设置文档加密口令",
+    "enterPassphrase": "输入文档加密口令",
+    "setDescription": "首次加密这篇文档时需要先设置口令。后续同文档的所有加密片段都会共用它。",
+    "decryptDescription": "请输入这篇文档的加密口令。每次点击密文解密前都需要再次验证口令。",
+    "encryptDescription": "请输入这篇文档的加密口令。验证通过后才能继续新增加密内容。",
+    "passphrase": "口令",
+    "confirmPassphrase": "确认口令"
+  },
+  "outline": {
+    "empty": "暂无大纲"
+  },
+  "table": {
+    "addColumn": "添加列",
+    "addRow": "添加行",
+    "alignLeft": "水平左对齐",
+    "alignCenter": "水平居中",
+    "alignRight": "水平右对齐",
+    "alignTop": "垂直顶对齐",
+    "alignMiddle": "垂直居中",
+    "alignBottom": "垂直底对齐",
+    "mergeCells": "合并单元格",
+    "splitCells": "拆分单元格",
+    "deleteRow": "删除行",
+    "deleteColumn": "删除列",
+    "deleteTable": "删除表格",
+    "selectAll": "选中整个表格",
+    "selectColumn": "选中第 {{column}} 列",
+    "resizeColumn": "调整第 {{column}} 列宽度",
+    "selectRow": "选中第 {{row}} 行",
+    "resizeRow": "调整第 {{row}} 行高度"
+  },
+  "shortcuts": {
+    "categories": {
+      "windowFile": "窗口与文件",
+      "findEdit": "查找与编辑",
+      "formatting": "文本格式"
+    },
+    "items": {
+      "app_quickCapture": {
+        "label": "快速唤起窗口",
+        "description": "打开一个左右栏全折叠的空白速记窗口"
+      },
+      "file_new": {
+        "label": "新建文档",
+        "description": "立即新建一篇 Markdown 文档"
+      },
+      "window_new": {
+        "label": "新建窗口",
+        "description": "打开新的 Informio 窗口"
+      },
+      "commandPalette_open": {
+        "label": "命令面板",
+        "description": "搜索系统命令和文档"
+      },
+      "file_open": {
+        "label": "快速打开",
+        "description": "打开文件选择器"
+      },
+      "workspace_open": {
+        "label": "打开项目",
+        "description": "切换或载入新的项目目录"
+      },
+      "file_closeTab": {
+        "label": "关闭标签",
+        "description": "关闭当前文档标签"
+      },
+      "window_close": {
+        "label": "关闭窗口",
+        "description": "关闭当前窗口"
+      },
+      "file_save": {
+        "label": "保存",
+        "description": "保存当前文档"
+      },
+      "file_saveAs": {
+        "label": "另存为",
+        "description": "把当前文档保存到新位置"
+      },
+      "settings_open": {
+        "label": "打开设置",
+        "description": "进入设置窗口"
+      },
+      "edit_find": {
+        "label": "查找与替换",
+        "description": "打开当前文档的查找替换浮窗"
+      },
+      "edit_findNext": {
+        "label": "查找下一个",
+        "description": "跳到当前查询词的下一个匹配结果"
+      },
+      "format_bold": {
+        "label": "加粗",
+        "description": "切换当前选区的粗体"
+      },
+      "format_italic": {
+        "label": "倾斜",
+        "description": "切换当前选区的斜体"
+      },
+      "format_underline": {
+        "label": "下划线",
+        "description": "切换当前选区的下划线"
+      },
+      "format_strike": {
+        "label": "删除线",
+        "description": "切换当前选区的删除线"
+      },
+      "format_highlight": {
+        "label": "高亮",
+        "description": "高亮当前选区"
+      }
+    }
+  },
+  "shortcutbinding": {
+    "pressNewKey": "按下新快捷键",
+    "default": "默认",
+    "clear": "清空"
+  },
+  "windowcontrols": {
+    "minimize": "最小化",
+    "maximizeRestore": "最大化或还原",
+    "close": "关闭"
+  },
+  "translationresult": {
+    "copyResult": "复制翻译结果",
+    "copied": "已复制",
+    "copy": "复制"
+  }
+}

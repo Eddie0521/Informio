@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { cn } from "../lib/utils";
 import { acceleratorFromKeyboardEvent, acceleratorToDisplay } from "../../../shared/shortcuts";
 import { shortcutDisplayPlatform } from "../lib/path";
@@ -17,6 +18,7 @@ export function ShortcutBindingControl({
   onClear: () => void;
   onRestoreDefault: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center gap-2">
       <button
@@ -38,14 +40,14 @@ export function ShortcutBindingControl({
           recording && "bg-emerald-50 text-emerald-800 shadow-[inset_0_0_0_1px_rgba(5,150,105,0.28)]"
         )}
       >
-        {recording ? "按下新快捷键" : acceleratorToDisplay(value, shortcutDisplayPlatform)}
+        {recording ? t("shortcutbinding.pressNewKey") : acceleratorToDisplay(value, shortcutDisplayPlatform)}
       </button>
       <button
         type="button"
         onClick={onRestoreDefault}
         className="rounded-md px-2 py-1 text-[12px] font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
       >
-        默认
+        {t("shortcutbinding.default")}
       </button>
       <button
         type="button"
@@ -53,7 +55,7 @@ export function ShortcutBindingControl({
         disabled={!value}
         className="rounded-md px-2 py-1 text-[12px] font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-35"
       >
-        清空
+        {t("shortcutbinding.clear")}
       </button>
     </div>
   );

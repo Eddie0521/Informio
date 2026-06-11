@@ -1,4 +1,6 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, screen, shell } from "electron";
+import log from "electron-log";
+import { setupAutoUpdater } from "./auto-update.js";
 import type { MenuItemConstructorOptions, NativeImage, OpenDialogOptions } from "electron";
 import { execFile } from "node:child_process";
 import { existsSync, watch } from "node:fs";
@@ -45,6 +47,66 @@ import { prepareRuntimeEnvironment } from "./runtimeEnvironment.js";
 import { detectApiModels, translateSelection } from "./translationApi.js";
 import { APP_GITHUB_URL, APP_NAME } from "../shared/appMeta.js";
 import { getShortcutAccelerator, shortcutRegistry } from "../shared/shortcuts.js";
+import {
+  markdownTitle,
+  normalizeLinkTitle,
+  replaceWikiLinkTargets,
+  replaceLocalFileUrls,
+  withUpdatedLocalFileUrls,
+  saveMarkdownFile,
+  uniquePath,
+  markdownPathForFile,
+  markdownLink,
+  markdownImage,
+  parseHtmlAttr,
+  decodeHtmlEntities,
+  stripHtml,
+  escapeHtmlAttr,
+  cleanAttachmentName,
+  ensureAttachmentReference,
+  backupMarkdownFile,
+  cleanMarkdownStorage,
+  localFilePathCandidates,
+  normalizeLocalFileCandidate
+} from "./markdown-utils.js";
+import {
+  documentKindFromPath,
+  isExternalOpenablePath,
+  isWritableTextDocument,
+  normalizeDocumentKind,
+  withDocumentKind,
+  localFileResponse,
+  loadAssetData,
+  savePdfFile,
+  generatedMarkdownForAssetPath,
+  pdfMarkdown,
+  normalizeAssetDocumentMarkdown,
+  escapeHtml,
+  exportFontStack,
+  markdownToBasicHtml,
+  exportHtmlToPdf
+} from "./local-file-utils.js";
+
+// Configure electron-log
+log.transports.file.resolvePathFn = () => join(app.getPath("userData"), "logs", "main.log");
+log.transports.file.maxSize = 5 * 1024 * 1024; // 5MB
+log.transports.console.level = "debug";
+log.transports.file.level = "info";
+Object.assign(console, log.functions);
+
+// Auto-remove quarantine attribute on macOS
+if (process.platform === "darwin" && app.isPackaged) {
+  const appPath = app.getAppPath();
+  if (appPath.includes(".app/")) {
+    const appBundle = appPath.split(".app/")[0] + ".app";
+    import("node:child_process").then(({ execFile }) => {
+      execFile("xattr", ["-cr", appBundle], (error) => {
+        if (error) log.debug("Quarantine removal skipped:", error.message);
+        else log.info("Removed quarantine attribute from app bundle");
+      });
+    });
+  }
+}
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
@@ -61,33 +123,34 @@ const documentReadCache = new Map<string, { size: number; mtimeMs: number; docum
 
 const agentRuntime = new AgentRuntimeManager();
 
+// Crash recovery — save data and notify user before quitting
+const emergencySave = () => {
+  if (!appDataLoaded || !appData) return;
+  try {
+    const { join: joinPath } = require("node:path");
+    const backupPath = joinPath(app.getPath("userData"), "emergency-backup.json");
+    require("node:fs").writeFileSync(backupPath, JSON.stringify(appData, null, 2), "utf8");
+    log.error("Emergency save completed:", backupPath);
+  } catch (saveError) {
+    log.error("Emergency save failed:", saveError);
+  }
+};
+
+process.on("uncaughtException", (error) => {
+  log.error("Uncaught exception:", error);
+  emergencySave();
+  dialog.showErrorBox("应用异常", `发生了未预期的错误，已自动保存数据。\n\n${error.message}\n\n请重启应用。`);
+  app.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  log.error("Unhandled rejection:", reason);
+  // Don't exit for unhandled rejections, just log
+});
+
 const MAIN_WINDOW_SIZE = { width: 1180, height: 840 };
 const QUICK_CAPTURE_WINDOW_SIZE = { width: 980, height: 700 };
 const TRAFFIC_LIGHT_POSITION = { x: 14, y: 15 };
-const OPENABLE_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4", ".mov", ".webm", ".mp3", ".wav", ".m4a", ".ogg", ".pdf"]);
-const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
-const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm"]);
-const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
-const PDF_EXTENSIONS = new Set([".pdf"]);
-const LOCAL_FILE_CONTENT_TYPES = new Map([
-  [".png", "image/png"],
-  [".jpg", "image/jpeg"],
-  [".jpeg", "image/jpeg"],
-  [".gif", "image/gif"],
-  [".webp", "image/webp"],
-  [".svg", "image/svg+xml"],
-  [".mp4", "video/mp4"],
-  [".mov", "video/quicktime"],
-  [".webm", "video/webm"],
-  [".mp3", "audio/mpeg"],
-  [".wav", "audio/wav"],
-  [".m4a", "audio/mp4"],
-  [".ogg", "audio/ogg"],
-  [".pdf", "application/pdf"],
-  [".md", "text/markdown; charset=utf-8"],
-  [".markdown", "text/markdown; charset=utf-8"],
-  [".txt", "text/plain; charset=utf-8"]
-]);
 const DEFAULT_WORKSPACE_PATH = join(homedir(), "Documents", "Informio Quick Notes");
 const ATTACHMENTS_DIR = "attachments";
 const execFileAsync = promisify(execFile);
@@ -340,31 +403,6 @@ const normalizeForCompare = (path: string) => {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   return isWindows ? normalized.toLowerCase() : normalized;
 };
-const isExternalOpenablePath = (path: string) => OPENABLE_EXTENSIONS.has(extname(path).toLowerCase());
-
-const documentKindFromPath = (path?: string): InformioDocumentKind => {
-  if (!path) return "markdown";
-  const extension = extname(path).toLowerCase();
-  if (extension === ".md" || extension === ".markdown") return "markdown";
-  if (extension === ".txt") return "text";
-  if (IMAGE_EXTENSIONS.has(extension)) return "image";
-  if (VIDEO_EXTENSIONS.has(extension)) return "video";
-  if (AUDIO_EXTENSIONS.has(extension)) return "audio";
-  if (PDF_EXTENSIONS.has(extension)) return "pdf";
-  return "unknown";
-};
-
-const normalizeDocumentKind = (document: InformioDocument): InformioDocumentKind =>
-  document.kind ?? documentKindFromPath(document.filePath ?? document.title);
-
-const withDocumentKind = <T extends InformioDocument>(document: T): T => ({
-  ...document,
-  kind: normalizeDocumentKind(document)
-});
-
-const isTextDocumentKind = (kind: InformioDocumentKind) => kind === "markdown" || kind === "text";
-
-const localFileContentType = (path: string) => LOCAL_FILE_CONTENT_TYPES.get(extname(path).toLowerCase()) ?? "application/octet-stream";
 
 const enqueueExternalOpenFiles = (paths: string[]) => {
   paths.forEach((path) => {
@@ -399,10 +437,6 @@ const flushPendingExternalOpenFiles = async () => {
   const paths = Array.from(pendingExternalOpenFiles.values());
   pendingExternalOpenFiles.clear();
   await openExternalMarkdownFiles(paths);
-};
-
-const isWritableTextDocument = (document: InformioDocument) => {
-  return isTextDocumentKind(normalizeDocumentKind(document));
 };
 
 const cachedDocumentMatches = (cached: { size: number; mtimeMs: number } | undefined, fileStats: { size: number; mtimeMs: number }) =>
@@ -491,175 +525,6 @@ const saveAgentConversations = async (input: SaveAgentConversationsInput): Promi
   return appData.agentConversations;
 };
 
-const markdownTitle = (title: string) => title.replace(/\.(md|markdown|txt)$/i, "");
-
-const normalizeLinkTitle = (value: string) =>
-  decodeURIComponent(value)
-    .replace(/\\/g, "/")
-    .split("#")[0]
-    .split("/")
-    .filter(Boolean)
-    .at(-1)
-    ?.replace(/\.(md|markdown|txt)$/i, "")
-    .trim()
-    .toLowerCase() ?? "";
-
-const replaceWikiLinkTargets = (markdown: string, oldTitle: string, newTitle: string) =>
-  markdown.replace(/\[\[([^\]\n]+)\]\]/g, (match, body: string) => {
-    const [rawTarget, ...aliasParts] = body.split("|");
-    const target = rawTarget.trim();
-    const alias = aliasParts.join("|").trim();
-    return normalizeLinkTitle(target) === normalizeLinkTitle(oldTitle) ? `[[${newTitle}${alias ? `|${alias}` : ""}]]` : match;
-  });
-
-const replaceLocalFileUrls = (markdown: string, documentFolder: string | undefined, resolveNextPath: (path: string) => string | null) =>
-  markdown.replace(/local-file:\/\/[^\s)"'>]+/g, (value) => {
-    for (const candidate of localFilePathCandidates(value)) {
-      const nextPath = resolveNextPath(candidate);
-      if (!nextPath || normalizeForCompare(nextPath) === normalizeForCompare(candidate)) continue;
-      return documentFolder ? markdownPathForFile(documentFolder, nextPath) : encodeURI(basename(nextPath));
-    }
-    return value;
-  });
-
-const saveMarkdownFile = async (path: string, markdown: string) => {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, markdown, "utf8");
-};
-
-const uniquePath = async (folder: string, baseName: string, extension = ".md") => {
-  const cleanName = baseName.replace(/[\\/:*?"<>|]/g, "-").trim() || "Untitled";
-  for (let index = 0; index < 999; index += 1) {
-    const name = index === 0 ? `${cleanName}${extension}` : `${cleanName} ${index + 1}${extension}`;
-    const path = join(folder, name);
-    try {
-      await stat(path);
-    } catch {
-      return path;
-    }
-  }
-  return join(folder, `${cleanName}-${Date.now()}${extension}`);
-};
-
-const markdownPathForFile = (documentFolder: string, filePath: string) => {
-  const relativePath = relative(documentFolder, filePath).replace(/\\/g, "/");
-  return encodeURI(relativePath.startsWith(".") ? relativePath : relativePath || basename(filePath));
-};
-
-const markdownLink = (label: string, href: string) => `[${label.replace(/[\[\]\n]/g, " ").trim() || basename(href)}](${href})`;
-
-const markdownImage = (alt: string, href: string) => `![${alt.replace(/[\[\]\n]/g, " ").trim()}](${href})`;
-
-const parseHtmlAttr = (attributes: string, name: string) => {
-  const pattern = new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
-  const match = attributes.match(pattern);
-  return (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim();
-};
-
-const decodeHtmlEntities = (value: string) =>
-  value
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number.parseInt(dec, 10)));
-
-const stripHtml = (value: string) => decodeHtmlEntities(value.replace(/<[^>]+>/g, "")).trim();
-
-const escapeHtmlAttr = (value: string) =>
-  value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-
-const cleanAttachmentName = (filePath: string) => {
-  const extension = extname(filePath);
-  const baseName =
-    basename(filePath, extension)
-      .replace(/[\\/:*?"<>|]/g, "-")
-      .replace(/\s+/g, "_")
-      .replace(/_+/g, "_")
-      .trim()
-      .replace(/^_+|_+$/g, "")
-    || `attachment-${Date.now()}`;
-  return { baseName, extension: extension || ".bin" };
-};
-
-const ensureAttachmentReference = async (documentFolder: string | undefined, source: string, fallbackName = "Attachment") => {
-  if (!source.trim()) return encodeURI(fallbackName);
-  if (!source.startsWith("local-file://")) return source;
-  if (!documentFolder) return encodeURI(basename(localFilePathCandidates(source)[0] ?? fallbackName));
-
-  const existingPath = localFilePathCandidates(source).find((candidate) => existsSync(candidate));
-  if (!existingPath) return encodeURI(basename(localFilePathCandidates(source)[0] ?? fallbackName));
-
-  const attachmentFolder = join(documentFolder, ATTACHMENTS_DIR);
-  await mkdir(attachmentFolder, { recursive: true });
-  const { baseName, extension } = cleanAttachmentName(existingPath);
-  const targetPath = await uniquePath(attachmentFolder, baseName, extension);
-  if (normalizeForCompare(existingPath) !== normalizeForCompare(targetPath)) await cp(existingPath, targetPath);
-  return markdownPathForFile(documentFolder, targetPath);
-};
-
-const backupMarkdownFile = async (path: string) => {
-  const backupPath = await uniquePath(dirname(path), `${basename(path)}.informio-clean-backup`, "");
-  await cp(path, backupPath);
-};
-
-const cleanMarkdownStorage = async (markdown: string, documentFolder?: string) => {
-  let cleaned = markdown;
-  cleaned = cleaned.replace(/<span\b(?=[^>]*\bdata-text-color=)[^>]*>([\s\S]*?)<\/span>/gi, (_, content: string) => decodeHtmlEntities(content));
-  cleaned = cleaned.replace(/<span\b(?=[^>]*\bstyle=["'][^"']*\bcolor\s*:)[^>]*>([\s\S]*?)<\/span>/gi, (_, content: string) => decodeHtmlEntities(content));
-
-  const replaceAsync = async (input: string, pattern: RegExp, replacer: (...args: string[]) => Promise<string>) => {
-    const matches = Array.from(input.matchAll(pattern));
-    if (!matches.length) return input;
-    let output = "";
-    let cursor = 0;
-    for (const match of matches) {
-      output += input.slice(cursor, match.index);
-      output += await replacer(...(match as unknown as string[]));
-      cursor = (match.index ?? 0) + match[0].length;
-    }
-    return output + input.slice(cursor);
-  };
-
-  cleaned = await replaceAsync(cleaned, /<iframe\b([^>]*)><\/iframe>/gi, async (raw, attrs) => {
-    if (parseHtmlAttr(attrs, "data-type") !== "pdf") return raw;
-    const src = await ensureAttachmentReference(documentFolder, parseHtmlAttr(attrs, "src"), parseHtmlAttr(attrs, "title") || "PDF");
-    return markdownLink(stripHtml(parseHtmlAttr(attrs, "title") || "PDF"), src);
-  });
-
-  cleaned = await replaceAsync(cleaned, /<(video|audio)\b([^>]*)><\/\1>/gi, async (raw, kind, attrs) => {
-    const src = await ensureAttachmentReference(documentFolder, parseHtmlAttr(attrs, "src"), parseHtmlAttr(attrs, "title") || kind);
-    const title = stripHtml(parseHtmlAttr(attrs, "title") || parseHtmlAttr(attrs, "aria-label") || kind);
-    return `<${kind.toLowerCase()} controls src="${escapeHtmlAttr(src)}" title="${escapeHtmlAttr(title)}"></${kind.toLowerCase()}>`;
-  });
-
-  cleaned = await replaceAsync(cleaned, /<img\b([^>]*?)\/?>/gi, async (raw, attrs) => {
-    const src = await ensureAttachmentReference(documentFolder, parseHtmlAttr(attrs, "src"), parseHtmlAttr(attrs, "alt") || "image");
-    return markdownImage(stripHtml(parseHtmlAttr(attrs, "alt") || parseHtmlAttr(attrs, "title") || ""), src);
-  });
-
-  cleaned = await replaceAsync(cleaned, /local-file:\/\/[^\s)"'>]+/g, async (raw) => ensureAttachmentReference(documentFolder, raw));
-  cleaned = cleaned.replace(/<aside\b(?=[^>]*data-type=["']callout-block["'])[^>]*>\s*<strong[^>]*>([\s\S]*?)<\/strong>\s*<p[^>]*>([\s\S]*?)<\/p>\s*<\/aside>/gi, (_, title: string, body: string) => {
-    const lines = stripHtml(body).split("\n").map((line) => `> ${line}`.trimEnd()).join("\n");
-    return `> [!${stripHtml(title).toUpperCase() || "NOTE"}]\n${lines}`;
-  });
-  cleaned = cleaned.replace(/<section\b(?=[^>]*data-type=["']footnote-block["'])[^>]*>\s*<sup[^>]*>([\s\S]*?)<\/sup>\s*<span[^>]*>([\s\S]*?)<\/span>\s*<\/section>/gi, (_, index: string, body: string) => {
-    return `[^${stripHtml(index) || "1"}]: ${stripHtml(body)}`;
-  });
-  cleaned = cleaned.replace(/^<details(?:\s[^>]*)?>\s*<summary>([\s\S]*?)<\/summary>\s*([\s\S]*?)\s*<\/details>\s*$/gim, (_, summary: string, body: string) => {
-    const lines = stripHtml(body).split("\n").map((line) => `> ${line}`.trimEnd()).join("\n");
-    return `> [!note]- ${stripHtml(summary) || "Summary"}\n${lines}`;
-  });
-
-  return cleaned;
-};
-
 const cleanDocumentMarkdown = async (document: InformioDocument, options: { writeFile?: boolean } = {}) => {
   if (!isWritableTextDocument(document)) return document;
   const documentFolder = document.filePath ? dirname(document.filePath) : appData?.workspacePath || appData?.settings?.shortcuts.quickFolder;
@@ -739,231 +604,6 @@ const scanWorkspaceEntries = async (
 
 const scanWorkspaceFiles = async (folder: string): Promise<string[]> => (await scanWorkspaceEntries(folder)).filePaths;
 
-const escapeHtml = (value: string) =>
-  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-const quoteCssFontFamily = (family: string) => `"${family.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-
-const exportFontStack = () => {
-  const appearance = appData.settings.appearance;
-  return [
-    appearance.englishFontFamily,
-    appearance.chineseFontFamily,
-    "PingFang SC",
-    "Hiragino Sans GB",
-    "Microsoft YaHei",
-    "Noto Sans CJK SC",
-    "Helvetica Neue",
-    "Arial"
-  ]
-    .map((family) => family.trim())
-    .filter(Boolean)
-    .map((family) => quoteCssFontFamily(family))
-    .concat(["-apple-system", "BlinkMacSystemFont", "\"Segoe UI\"", "sans-serif"])
-    .filter((family, index, items) => items.indexOf(family) === index)
-    .join(", ");
-};
-
-const markdownToBasicHtml = (markdown: string, title = "Informio Export") => {
-  const blocks = markdown.split(/\n{2,}/);
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)}</title>
-<style>
-  :root {
-    color-scheme: light;
-    font-family: ${exportFontStack()};
-    line-height: 1.7;
-    color: #0f172a;
-    background: #ffffff;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0 auto;
-    max-width: 780px;
-    padding: 56px 40px 72px;
-    font-size: 15px;
-    background: #ffffff;
-  }
-  h1, h2, h3, h4, h5, h6 {
-    line-height: 1.28;
-    margin: 1.8em 0 0.72em;
-  }
-  h1:first-child, h2:first-child, h3:first-child, h4:first-child, h5:first-child, h6:first-child, p:first-child {
-    margin-top: 0;
-  }
-  p {
-    margin: 0 0 1em;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-  @page {
-    margin: 18mm 16mm 20mm;
-  }
-</style>
-</head>
-<body>
-${blocks
-  .map((block) => {
-    const heading = /^(#{1,6})\s+(.+)$/.exec(block.trim());
-    if (heading) return `<h${heading[1].length}>${escapeHtml(heading[2])}</h${heading[1].length}>`;
-    return `<p>${escapeHtml(block).replace(/\n/g, "<br>")}</p>`;
-  })
-  .join("\n")}
-</body>
-</html>`;
-};
-
-const exportHtmlToPdf = async (outputPath: string, html: string) => {
-  const exportWindow = new BrowserWindow({
-    show: false,
-    width: 900,
-    height: 1200,
-    backgroundColor: "#ffffff",
-    webPreferences: {
-      sandbox: false
-    }
-  });
-
-  try {
-    await exportWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-    await exportWindow.webContents.executeJavaScript(
-      "document.fonts?.ready ? document.fonts.ready.then(() => true) : Promise.resolve(true)",
-      true
-    );
-    const pdf = await exportWindow.webContents.printToPDF({
-      printBackground: true,
-      preferCSSPageSize: true
-    });
-    await writeFile(outputPath, pdf);
-  } finally {
-    if (!exportWindow.isDestroyed()) exportWindow.destroy();
-  }
-};
-
-const normalizeLocalFileCandidate = (path: string) => {
-  const normalizedHomePath = path.startsWith("/users/") ? `/Users/${path.slice("/users/".length)}` : path;
-  if (isWindows && /^\/[A-Za-z]:\//.test(normalizedHomePath)) return normalizedHomePath.slice(1);
-  return normalizedHomePath;
-};
-
-const localFilePathCandidates = (url: string) => {
-  try {
-    const parsed = new URL(url);
-    const host = decodeURIComponent(parsed.host);
-    const pathname = decodeURIComponent(parsed.pathname);
-    const candidates = [];
-    if (isWindows && /^[A-Za-z]:?$/.test(host)) {
-      candidates.push(`${host.replace(/:$/, "")}:${pathname}`);
-    }
-    candidates.push(parsed.host ? `/${host}${pathname}` : pathname);
-    return Array.from(new Set(candidates.map(normalizeLocalFileCandidate)));
-  } catch {
-    const pathname = decodeURIComponent(url.slice("local-file://".length));
-    return [normalizeLocalFileCandidate(pathname.startsWith("/") ? pathname : `/${pathname}`)];
-  }
-};
-
-const parseRangeHeader = (rangeHeader: string | null, fileSize: number) => {
-  if (!rangeHeader) return null;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
-  if (!match) return "invalid" as const;
-  const [, rawStart, rawEnd] = match;
-  if (!rawStart && !rawEnd) return "invalid" as const;
-  if (!rawStart) {
-    const suffixLength = Number(rawEnd);
-    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return "invalid" as const;
-    return { start: Math.max(fileSize - suffixLength, 0), end: fileSize - 1 };
-  }
-  const start = Number(rawStart);
-  const end = rawEnd ? Number(rawEnd) : fileSize - 1;
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= fileSize) {
-    return "invalid" as const;
-  }
-  return { start, end: Math.min(end, fileSize - 1) };
-};
-
-const localFileResponse = async (path: string, request: Request) => {
-  const fileStats = await stat(path);
-  if (!fileStats.isFile()) return null;
-  const baseHeaders = new Headers({
-    "Accept-Ranges": "bytes",
-    "Cache-Control": "no-store",
-    "Content-Type": localFileContentType(path)
-  });
-  const range = parseRangeHeader(request.headers.get("Range"), fileStats.size);
-  if (range === "invalid") {
-    baseHeaders.set("Content-Range", `bytes */${fileStats.size}`);
-    return new Response(null, { status: 416, headers: baseHeaders });
-  }
-  const file = await readFile(path);
-  if (range) {
-    const chunk = file.subarray(range.start, range.end + 1);
-    baseHeaders.set("Content-Length", String(chunk.byteLength));
-    baseHeaders.set("Content-Range", `bytes ${range.start}-${range.end}/${fileStats.size}`);
-    return new Response(request.method === "HEAD" ? null : chunk, { status: 206, headers: baseHeaders });
-  }
-  baseHeaders.set("Content-Length", String(file.byteLength));
-  return new Response(request.method === "HEAD" ? null : file, { status: 200, headers: baseHeaders });
-};
-
-const loadAssetData = async (path: string): Promise<AssetDataResult> => {
-  const kind = documentKindFromPath(path);
-  if (kind !== "image" && kind !== "video" && kind !== "audio") {
-    throw new Error("Unsupported asset type");
-  }
-  const fileStats = await stat(path);
-  if (!fileStats.isFile()) throw new Error("Asset file not found");
-  const file = await readFile(path);
-  const data = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength);
-  return {
-    data,
-    mimeType: localFileContentType(path)
-  };
-};
-
-const savePdfFile = async (path: string, data: ArrayBuffer): Promise<void> => {
-  if (documentKindFromPath(path) !== "pdf") throw new Error("Only PDF files can be saved this way");
-  await writeFile(path, Buffer.from(data));
-};
-
-const documentFolderForPath = (path: string) => dirname(path);
-
-const markdownPathFromDocumentPath = (documentPath: string, assetPath: string) =>
-  markdownPathForFile(documentFolderForPath(documentPath), assetPath);
-
-const pdfMarkdown = (path: string, documentPath = path) =>
-  markdownLink(basename(path), markdownPathFromDocumentPath(documentPath, path));
-
-const generatedMarkdownForAssetPath = (path: string, documentPath = path) => {
-  const ext = extname(path).toLowerCase();
-  const href = markdownPathFromDocumentPath(documentPath, path);
-  if (IMAGE_EXTENSIONS.has(ext)) return markdownImage(basename(path), href);
-  if (VIDEO_EXTENSIONS.has(ext)) return `<video controls src="${escapeHtmlAttr(href)}" title="${escapeHtmlAttr(basename(path))}"></video>`;
-  if (AUDIO_EXTENSIONS.has(ext)) return `<audio controls src="${escapeHtmlAttr(href)}" title="${escapeHtmlAttr(basename(path))}"></audio>`;
-  if (PDF_EXTENSIONS.has(ext)) return markdownLink(basename(path), href);
-  return null;
-};
-
-const normalizeAssetDocumentMarkdown = (document: InformioDocument) => {
-  if (!document.filePath) return document;
-  const kind = normalizeDocumentKind(document);
-  if (kind !== "image" && kind !== "video" && kind !== "audio" && kind !== "pdf") return withDocumentKind(document);
-  const markdown = kind === "pdf" ? pdfMarkdown(document.filePath) : generatedMarkdownForAssetPath(document.filePath);
-  if (!markdown || markdown === document.markdown) return withDocumentKind(document);
-  return { ...document, kind, markdown };
-};
-
-const withUpdatedLocalFileUrls = (document: InformioDocument, resolveNextPath: (path: string) => string | null) => {
-  const markdown = replaceLocalFileUrls(document.markdown, document.filePath ? dirname(document.filePath) : undefined, resolveNextPath);
-  return markdown === document.markdown
-    ? document
-    : { ...document, markdown, updatedAt: new Date().toISOString() };
-};
-
 const readDocumentsFromPaths = async (paths: string[]) => {
   const existingByPath = new Map(
     appData.documents
@@ -1016,7 +656,8 @@ const readDocumentsFromPaths = async (paths: string[]) => {
           };
           documentReadCache.set(path, { size: fileStats.size, mtimeMs: fileStats.mtimeMs, document });
           return document;
-        } catch {
+        } catch (error) {
+          log.warn("Failed to read document:", path, error);
           documentReadCache.delete(path);
           return null;
         }
@@ -1094,7 +735,8 @@ const refreshWorkspaceFromDisk = async (options: { emit?: boolean } = {}) => {
     try {
       const info = await stat(projectPath);
       if (!info.isDirectory()) continue;
-    } catch {
+    } catch (error) {
+      log.warn("Could not stat project path:", projectPath, error);
       allFolderPaths.push(projectPath);
       continue;
     }
@@ -1627,7 +1269,8 @@ const duplicatePath = async (sourcePath: string, targetType: "file" | "folder") 
     const path = join(folder, `${base}${suffix}${extension}`);
     try {
       await stat(path);
-    } catch {
+    } catch (error) {
+      log.warn("Failed to check duplicate candidate path:", path, error);
       return path;
     }
   }
@@ -1927,7 +1570,8 @@ const exportActiveDocument = async (
   const doc = mergedDocuments.find((item) => item.id === normalizeActiveDocumentId(mergedDocuments, activeDocumentId));
   if (!window || !doc || !isWritableTextDocument(doc)) return;
   const extension = format === "pdf" ? "pdf" : format === "html" ? "html" : "md";
-  const html = markdownToBasicHtml(doc.markdown, markdownTitle(doc.title));
+  const fontStack = exportFontStack(appData.settings.appearance);
+  const html = markdownToBasicHtml(doc.markdown, fontStack, markdownTitle(doc.title));
   const result = await dialog.showSaveDialog(window, {
     defaultPath: `${doc.title.replace(/\.[^.]+$/, "")}.${extension}`,
     filters: [
@@ -2230,8 +1874,8 @@ app.whenReady().then(async () => {
       try {
         const response = await localFileResponse(pathname, request);
         if (response) return response;
-      } catch {
-        // Try the next normalized form before returning 404.
+      } catch (error) {
+        log.warn("Failed to serve local file:", pathname, error);
       }
     }
     return new Response(null, { status: 404 });
@@ -2262,6 +1906,7 @@ app.whenReady().then(async () => {
   }
   updateApplicationMenu();
   createWindow();
+  setupAutoUpdater(() => mainWindow);
   registerGlobalShortcuts();
   await flushPendingExternalOpenFiles();
 });
@@ -2331,33 +1976,109 @@ ipcMain.handle("app:open-workspace", async () => openWorkspaceDialog());
 
 ipcMain.handle("app:add-project", async () => addProjectDialog());
 
-ipcMain.handle("app:remove-project", async (_event, path: string) => removeProject(path));
+ipcMain.handle("app:remove-project", async (_event, path: string) => {
+  if (typeof path !== "string" || path.includes("..")) {
+    log.warn("Invalid path in app:remove-project");
+    return appData;
+  }
+  return removeProject(path);
+});
 
-ipcMain.handle("app:rename-project", async (_event, path: string, title: string) => renameProject(path, title));
+ipcMain.handle("app:rename-project", async (_event, path: string, title: string) => {
+  if (typeof path !== "string" || typeof title !== "string" || path.includes("..")) {
+    log.warn("Invalid args in app:rename-project");
+    return appData;
+  }
+  return renameProject(path, title);
+});
 
-ipcMain.handle("app:toggle-project-pinned", async (_event, path: string) => toggleProjectPinned(path));
+ipcMain.handle("app:toggle-project-pinned", async (_event, path: string) => {
+  if (typeof path !== "string" || path.includes("..")) {
+    log.warn("Invalid path in app:toggle-project-pinned");
+    return appData;
+  }
+  return toggleProjectPinned(path);
+});
 
-ipcMain.handle("app:create-document", async (_event, folderPath?: string) => createFilesystemDocument(folderPath));
+ipcMain.handle("app:create-document", async (_event, folderPath?: string) => {
+  if (folderPath !== undefined && (typeof folderPath !== "string" || folderPath.includes(".."))) {
+    log.warn("Invalid folderPath in app:create-document");
+    return appData;
+  }
+  return createFilesystemDocument(folderPath);
+});
 
 ipcMain.handle("app:create-default-markdown-document", async () => createDefaultMarkdownDocument());
 
 ipcMain.handle("app:create-linked-document", async (_event, title: string) => createLinkedDocument(title));
 
-ipcMain.handle("app:create-folder", async (_event, folderPath?: string) => createFilesystemFolder(folderPath));
+ipcMain.handle("app:create-folder", async (_event, folderPath?: string) => {
+  if (folderPath !== undefined && (typeof folderPath !== "string" || folderPath.includes(".."))) {
+    log.warn("Invalid folderPath in app:create-folder");
+    return appData;
+  }
+  return createFilesystemFolder(folderPath);
+});
 
 ipcMain.handle("app:insert-asset", async (_event, kind: "image" | "video" | "audio" | "pdf") => insertAsset(kind));
 
-ipcMain.handle("app:filesystem-action", async (_event, input: FileSystemOperationInput) => runFileSystemAction(input));
+ipcMain.handle("app:filesystem-action", async (_event, input: FileSystemOperationInput) => {
+  if (!input || typeof input !== "object" || typeof input.path !== "string" || typeof input.action !== "string") {
+    log.warn("Invalid args in app:filesystem-action");
+    return appData;
+  }
+  if (input.path.includes("..") || (input.destinationFolderPath && typeof input.destinationFolderPath === "string" && input.destinationFolderPath.includes(".."))) {
+    log.warn("Path traversal detected in app:filesystem-action:", input.path);
+    return appData;
+  }
+  return runFileSystemAction(input);
+});
 
-ipcMain.handle("app:import-external-files", async (_event, input: ImportExternalFilesInput) => importExternalFiles(input));
+ipcMain.handle("app:import-external-files", async (_event, input: ImportExternalFilesInput) => {
+  if (!input || typeof input !== "object" || !Array.isArray(input.sourcePaths) || typeof input.destinationFolderPath !== "string") {
+    log.warn("Invalid args in app:import-external-files");
+    return appData;
+  }
+  if (input.destinationFolderPath.includes("..") || input.sourcePaths.some((p: string) => typeof p !== "string" || p.includes(".."))) {
+    log.warn("Path traversal detected in app:import-external-files");
+    return appData;
+  }
+  return importExternalFiles(input);
+});
 
-ipcMain.handle("app:save-attachment", async (_event, input: SaveAttachmentInput) => saveAttachment(input));
+ipcMain.handle("app:save-attachment", async (_event, input: SaveAttachmentInput) => {
+  if (!input || typeof input !== "object" || typeof input.documentId !== "string" || typeof input.fileName !== "string") {
+    log.warn("Invalid args in app:save-attachment");
+    return { path: "", fileName: "", markdownPath: "" };
+  }
+  return saveAttachment(input);
+});
 
-ipcMain.handle("app:load-asset", async (_event, path: string): Promise<AssetDataResult> => loadAssetData(path));
+ipcMain.handle("app:load-asset", async (_event, path: string): Promise<AssetDataResult> => {
+  if (typeof path !== "string" || path.includes("..")) {
+    log.warn("Invalid path in app:load-asset:", path);
+    return { data: new ArrayBuffer(0), mimeType: "application/octet-stream" };
+  }
+  return loadAssetData(path);
+});
 
-ipcMain.handle("app:save-pdf-file", async (_event, path: string, data: ArrayBuffer): Promise<void> => savePdfFile(path, data));
+ipcMain.handle("app:save-pdf-file", async (_event, path: string, data: ArrayBuffer): Promise<void> => {
+  if (typeof path !== "string" || path.includes("..")) {
+    log.warn("Invalid path in app:save-pdf-file:", path);
+    return;
+  }
+  if (!data || !(data instanceof ArrayBuffer)) {
+    log.warn("Invalid data in app:save-pdf-file");
+    return;
+  }
+  return savePdfFile(path, data);
+});
 
 ipcMain.handle("app:save-settings", async (_event, settings: AppSettings) => {
+  if (!settings || typeof settings !== "object") {
+    log.warn("Invalid settings in app:save-settings");
+    return appData.settings;
+  }
   const agentConversations = normalizeAgentConversations(
     appData.agentConversations,
     appData.workspacePath,
@@ -2378,6 +2099,10 @@ ipcMain.handle("app:save-settings", async (_event, settings: AppSettings) => {
 ipcMain.handle("app:get-info", async () => getAppInfo());
 
 ipcMain.handle("app:save-documents", async (_event, _documents: InformioDocument[], activeDocumentId: string) => {
+  if (!Array.isArray(_documents) || typeof activeDocumentId !== "string") {
+    log.warn("Invalid IPC args for app:save-documents");
+    return appData;
+  }
   const knownActiveDocumentId = normalizeActiveDocumentId(appData.documents, activeDocumentId);
   appData = await saveAppData({
     ...appData,
@@ -2387,6 +2112,10 @@ ipcMain.handle("app:save-documents", async (_event, _documents: InformioDocument
 });
 
 ipcMain.handle("app:save-now", async (_event, documents: InformioDocument[], activeDocumentId: string): Promise<SaveResult> => {
+  if (!Array.isArray(documents) || typeof activeDocumentId !== "string") {
+    log.warn("Invalid IPC args for app:save-now");
+    return { data: appData, savedAt: new Date().toISOString() };
+  }
   const mergedDocuments = await cleanDocumentsMarkdown(mergeRendererDocuments(documents));
   appData = await saveAppDataAndFiles({
     ...appData,
@@ -2396,9 +2125,13 @@ ipcMain.handle("app:save-now", async (_event, documents: InformioDocument[], act
   return { data: appData, savedAt: new Date().toISOString() };
 });
 
-ipcMain.handle("app:save-active-document-as", async (_event, documents: InformioDocument[], activeDocumentId: string) =>
-  saveActiveDocumentAs(documents, activeDocumentId)
-);
+ipcMain.handle("app:save-active-document-as", async (_event, documents: InformioDocument[], activeDocumentId: string) => {
+  if (!Array.isArray(documents) || typeof activeDocumentId !== "string") {
+    log.warn("Invalid IPC args for app:save-active-document-as");
+    return;
+  }
+  return saveActiveDocumentAs(documents, activeDocumentId);
+});
 
 ipcMain.handle(
   "app:export-active-document",
@@ -2437,12 +2170,20 @@ ipcMain.handle("api:detect-models", async (_event, input: ApiModelDetectionInput
 ipcMain.handle("api:translate-selection", async (_event, input: TranslateSelectionInput) => translateSelection(input));
 
 ipcMain.handle("agent-runtime:send", async (_event, input: SendAgentMessageInput) => {
+  if (!input || typeof input !== "object" || typeof input.providerId !== "string") {
+    log.warn("Invalid args in agent-runtime:send");
+    return { error: "Invalid input" };
+  }
   const provider = appData.settings.agents.find((agent) => agent.id === input.providerId);
   if (!provider) throw new Error("Agent provider was not found.");
   return agentRuntime.send(input, provider);
 });
 
 ipcMain.handle("agent-runtime:send-stream", async (event, requestId: string, input: SendAgentMessageInput) => {
+  if (typeof requestId !== "string" || !input || typeof input !== "object" || typeof input.providerId !== "string") {
+    log.warn("Invalid args in agent-runtime:send-stream");
+    return { error: "Invalid input" };
+  }
   const provider = appData.settings.agents.find((agent) => agent.id === input.providerId);
   if (!provider) throw new Error("Agent provider was not found.");
   return agentRuntime.sendStream(input, provider, (chunk) => {
@@ -2451,6 +2192,10 @@ ipcMain.handle("agent-runtime:send-stream", async (event, requestId: string, inp
 });
 
 ipcMain.handle("agent:session-stream", async (event, requestId: string, input: AgentSessionInput) => {
+  if (typeof requestId !== "string" || !input || typeof input !== "object" || typeof input.providerId !== "string") {
+    log.warn("Invalid args in agent:session-stream");
+    throw new Error("Invalid input");
+  }
   const provider = appData.settings.agents.find((agent) => agent.id === input.providerId);
   if (!provider) throw new Error("Agent provider was not found.");
   try {
@@ -2465,21 +2210,45 @@ ipcMain.handle("agent:session-stream", async (event, requestId: string, input: A
 });
 
 ipcMain.handle("agent:approval-response", async (_event, input: AgentApprovalResponseInput) => {
+  if (!input || typeof input !== "object") {
+    log.warn("Invalid args in agent:approval-response");
+    return { ok: false };
+  }
   const handled = agentRuntime.respondApproval(input, appData.settings.agents);
   if (!handled) throw new Error("Approval request is no longer active.");
   return { ok: true };
 });
 
 ipcMain.handle("agent:cancel-run", async (_event, providerId: string) => {
+  if (typeof providerId !== "string") {
+    log.warn("Invalid providerId in agent:cancel-run");
+    return { ok: false };
+  }
   const cancelled = agentRuntime.cancelRun(providerId, appData.settings.agents);
   return { ok: cancelled };
 });
 
 ipcMain.handle("app:open-external", async (_event, url: string) => {
+  if (typeof url !== "string" || (!url.startsWith("https://") && !url.startsWith("http://"))) {
+    log.warn("Blocked non-HTTP URL:", url);
+    return;
+  }
   await shell.openExternal(url);
 });
 
 ipcMain.handle("app:open-path", async (_event, path: string) => {
+  if (typeof path !== "string") {
+    log.warn("Invalid path in app:open-path");
+    return;
+  }
   const error = await shell.openPath(path);
   if (error) throw new Error(error);
+});
+
+ipcMain.handle("app:set-language", (_event, lang: string) => {
+  if (typeof lang !== "string") return;
+  mainWindows.forEach((window) => window.webContents.send("app:language-changed", lang));
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.webContents.send("app:language-changed", lang);
+  }
 });

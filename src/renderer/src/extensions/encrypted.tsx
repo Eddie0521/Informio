@@ -3,6 +3,7 @@ import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
 import React from "react";
+import { useTranslation } from "react-i18next";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { EncryptedTextOptions, EncryptedSecretAttrs, SecretDecryptRequest, NodeViewPositionGetter } from "../types";
 import { INFORMIO_SECRET_TAG, SECRET_ITERATIONS, SECRET_ALGORITHM, SECRET_KDF } from "../constants";
@@ -17,6 +18,7 @@ const selectEncryptedNode = (editor: any, getPos: NodeViewPositionGetter) => {
 };
 
 function EncryptedInlineView({ editor, getPos, node, selected, extension }: ReactNodeViewProps) {
+  const { t } = useTranslation();
   const attrs = node.attrs as Partial<EncryptedSecretAttrs>;
   const valid = secretAttrsAreValid(attrs);
   const options = extension.options as EncryptedTextOptions;
@@ -26,7 +28,7 @@ function EncryptedInlineView({ editor, getPos, node, selected, extension }: Reac
       as="span"
       className={cn("informio-secret-inline", selected && "is-selected", !valid && "is-invalid")}
       contentEditable={false}
-      aria-label={valid ? "已加密内容" : "加密内容损坏"}
+      aria-label={valid ? t("encrypted.content") : t("encrypted.damaged")}
       onMouseDown={(event: ReactMouseEvent) => {
         event.preventDefault();
         selectEncryptedNode(editor, getPos);
@@ -39,13 +41,14 @@ function EncryptedInlineView({ editor, getPos, node, selected, extension }: Reac
       }}
     >
       <span className="informio-secret-mask" aria-hidden="true" />
-      {!valid ? <span className="informio-secret-label">损坏</span> : null}
-      {!valid ? <span className="informio-secret-status">请检查源码标签</span> : null}
+      {!valid ? <span className="informio-secret-label">{t("encrypted.damagedShort")}</span> : null}
+      {!valid ? <span className="informio-secret-status">{t("encrypted.checkSourceTag")}</span> : null}
     </NodeViewWrapper>
   );
 }
 
 function EncryptedBlockView({ editor, getPos, node, selected, extension }: ReactNodeViewProps) {
+  const { t } = useTranslation();
   const attrs = node.attrs as Partial<EncryptedSecretAttrs>;
   const valid = secretAttrsAreValid(attrs);
   const options = extension.options as EncryptedTextOptions;
@@ -54,7 +57,7 @@ function EncryptedBlockView({ editor, getPos, node, selected, extension }: React
     <NodeViewWrapper
       className={cn("informio-secret-block", selected && "is-selected", !valid && "is-invalid")}
       contentEditable={false}
-      aria-label={valid ? "已加密内容" : "加密内容损坏"}
+      aria-label={valid ? t("encrypted.content") : t("encrypted.damaged")}
       onMouseDown={(event: ReactMouseEvent) => {
         event.preventDefault();
         selectEncryptedNode(editor, getPos);
@@ -69,7 +72,7 @@ function EncryptedBlockView({ editor, getPos, node, selected, extension }: React
       <div className="informio-secret-block-body" aria-hidden="true">
         <div className="informio-secret-mask is-wide" />
       </div>
-      {!valid ? <div className="informio-secret-status">标签缺失必要字段，无法安全解密</div> : null}
+      {!valid ? <div className="informio-secret-status">{t("encrypted.missingRequiredFields")}</div> : null}
     </NodeViewWrapper>
   );
 }
