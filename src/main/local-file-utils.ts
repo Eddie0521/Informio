@@ -129,7 +129,7 @@ export const localFileResponse = async (path: string, request: Request) => {
 
 export const loadAssetData = async (path: string): Promise<AssetDataResult> => {
   const kind = documentKindFromPath(path);
-  if (kind !== "image" && kind !== "video" && kind !== "audio") {
+  if (kind !== "image" && kind !== "video" && kind !== "audio" && kind !== "pdf") {
     throw new Error("Unsupported asset type");
   }
   const fileStats = await stat(path);

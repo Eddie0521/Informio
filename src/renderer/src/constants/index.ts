@@ -93,7 +93,7 @@ export const selectionToolbarSafeAreaSelector = "[data-selection-toolbar-safe-ar
 
 export const LEFT_PANEL_MIN_WIDTH = 161;
 export const LEFT_PANEL_MAX_WIDTH = 380;
-export const RIGHT_PANEL_MIN_WIDTH = 225;
+export const RIGHT_PANEL_MIN_WIDTH = 240;
 export const RIGHT_PANEL_MAX_WIDTH = 520;
 export const EDITOR_CONTENT_MIN_WIDTH = 410;
 export const EDITOR_CONTENT_MAX_WIDTH = 1100;

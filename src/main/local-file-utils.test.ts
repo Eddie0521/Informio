@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   documentKindFromPath,
   isExternalOpenablePath,
@@ -15,7 +18,8 @@ import {
   withDocumentKind,
   localFileContentType,
   markdownPathFromDocumentPath,
-  documentFolderForPath
+  documentFolderForPath,
+  loadAssetData
 } from "./local-file-utils";
 
 describe("documentKindFromPath", () => {
@@ -272,6 +276,28 @@ describe("localFileContentType", () => {
   });
   it("returns default for unknown", () => {
     expect(localFileContentType("file.xyz")).toBe("application/octet-stream");
+  });
+});
+
+describe("loadAssetData", () => {
+  it("loads PDF data for the embedded PDF viewer", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "informio-pdf-asset-"));
+    const filePath = join(folder, "sample.pdf");
+    const bytes = Buffer.from("%PDF-1.7\n%%EOF\n");
+    await writeFile(filePath, bytes);
+
+    const result = await loadAssetData(filePath);
+
+    expect(result.mimeType).toBe("application/pdf");
+    expect(Buffer.from(result.data)).toEqual(bytes);
+  });
+
+  it("rejects unsupported asset types", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "informio-unsupported-asset-"));
+    const filePath = join(folder, "data.json");
+    await writeFile(filePath, "{}");
+
+    await expect(loadAssetData(filePath)).rejects.toThrow("Unsupported asset type");
   });
 });
 

@@ -27,12 +27,12 @@
     "test:e2e": "electron-vite build && playwright test",
     "typecheck": "tsc --noEmit",
     "preview": "electron-vite preview",
-    "dist:mac": "node scripts/run-electron-builder.cjs --mac dmg zip --config electron-builder.config.ts",
-    "dist:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/run-electron-builder.cjs --mac dmg zip -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --config electron-builder.config.ts",
+    "dist:mac": "tsc --noEmit && electron-vite build && node scripts/run-electron-builder.cjs --mac dmg zip --config electron-builder.config.ts",
+    "dist:mac:unsigned": "tsc --noEmit && electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/run-electron-builder.cjs --mac dmg zip -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --config electron-builder.config.ts",
     "release:mac:unsigned": "tsc --noEmit && electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/run-electron-builder.cjs --mac dmg zip -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --config electron-builder.config.ts",
-    "dist:win": "node scripts/run-electron-builder.cjs --win nsis --config electron-builder.config.ts",
+    "dist:win": "tsc --noEmit && electron-vite build && node scripts/run-electron-builder.cjs --win nsis --config electron-builder.config.ts",
     "release:win": "tsc --noEmit && electron-vite build && node scripts/run-electron-builder.cjs --win nsis --config electron-builder.config.ts",
-    "dist:desktop": "node scripts/run-electron-builder.cjs --mac dmg zip --win nsis --config electron-builder.config.ts",
+    "dist:desktop": "tsc --noEmit && electron-vite build && node scripts/run-electron-builder.cjs --mac dmg zip --win nsis --config electron-builder.config.ts",
     "release": "node scripts/run-electron-builder.cjs --mac dmg zip --win nsis --publish always --config electron-builder.config.ts"
   },
   "dependencies": {

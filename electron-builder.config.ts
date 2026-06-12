@@ -14,6 +14,7 @@ const config: Configuration = {
   },
   files: ["out/**/*", "package.json"],
   asar: true,
+  asarUnpack: ["**/embedpdf/*.wasm", "**/pdfjs/wasm/*.wasm"],
   artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
   fileAssociations: [
     {

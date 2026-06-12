@@ -2062,6 +2062,33 @@ ipcMain.handle("app:load-asset", async (_event, path: string): Promise<AssetData
   return loadAssetData(path);
 });
 
+ipcMain.handle("app:load-embedpdf-wasm", async (): Promise<AssetDataResult> => {
+  const { existsSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const appPath = app.getAppPath();
+  const resourcesPath = process.resourcesPath ?? "";
+  const candidates = [
+    join(appPath, "out", "renderer", "embedpdf", "pdfium.wasm"),
+    join(resourcesPath, "app.asar.unpacked", "out", "renderer", "embedpdf", "pdfium.wasm")
+  ];
+  log.info("loadEmbedPdfWasm: appPath=", appPath, "resourcesPath=", resourcesPath);
+  for (const wasmPath of candidates) {
+    const exists = existsSync(wasmPath);
+    log.info("loadEmbedPdfWasm: checking", wasmPath, "exists:", exists);
+    if (wasmPath && exists) {
+      try {
+        const buffer = readFileSync(wasmPath);
+        log.info("loadEmbedPdfWasm: SUCCESS, size=", buffer.byteLength);
+        return { data: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength), mimeType: "application/wasm" };
+      } catch (error) {
+        log.warn("Failed to read embedpdf wasm at", wasmPath, error);
+      }
+    }
+  }
+  log.warn("embedpdf wasm not found in any candidate path");
+  return { data: new ArrayBuffer(0), mimeType: "application/wasm" };
+});
+
 ipcMain.handle("app:save-pdf-file", async (_event, path: string, data: ArrayBuffer): Promise<void> => {
   if (typeof path !== "string" || path.includes("..")) {
     log.warn("Invalid path in app:save-pdf-file:", path);

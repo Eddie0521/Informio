@@ -47,7 +47,11 @@ export const resolveMarkdownAssetPath = (src: string, basePath?: string) => {
   return baseFolder ? joinAssetPath(baseFolder, decodedPath) : "";
 };
 
-export const loadLocalAssetObjectUrl = async (path: string) => {
-  const asset = await window.informio.loadAsset(path);
+export const loadLocalAssetObjectUrl = async (path: string, timeoutMs = 10000) => {
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(`Asset load timeout after ${timeoutMs}ms`)), timeoutMs);
+  });
+  const loadPromise = window.informio.loadAsset(path);
+  const asset = await Promise.race([loadPromise, timeoutPromise]);
   return URL.createObjectURL(new Blob([asset.data], { type: asset.mimeType }));
 };

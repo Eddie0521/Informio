@@ -19,13 +19,7 @@ import type {
   UnifiedPdfEditorContextValue as PdfEditorContextValue
 } from "./types";
 import { cn } from "./lib/utils";
-
-const normalizePdfPath = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
-
-const fileUrl = (path: string) => {
-  const encoded = encodeURI(normalizePdfPath(path));
-  return `local-file://${encoded.startsWith("/") ? encoded : `/${encoded}`}`;
-};
+import { loadLocalAssetObjectUrl } from "./lib/asset-url";
 
 const normalizeLocalFilePath = (path: string) => {
   const normalizedHomePath = path.startsWith("/users/") ? `/Users/${path.slice("/users/".length)}` : path;
@@ -112,6 +106,7 @@ type EmbedPdfDocumentManagerCapability = {
   getActiveDocumentId: () => string | null;
   getDocumentState: (documentId: string) => { status: string } | null;
   onDocumentOpened: (listener: (document: { id: string }) => void) => () => void;
+  onDocumentError: (listener: (event: { documentId: string; message: string; code?: number; reason?: unknown }) => void) => () => void;
 };
 
 type EmbedPdfExportCapability = {
@@ -319,6 +314,11 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
   const annotationSaveTimerRef = useRef<number | null>(null);
   const annotationEventUnsubscribeRef = useRef<(() => void) | null>(null);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
+  const [viewerSrc, setViewerSrc] = useState("");
+  const [pdfiumWasmUrl, setPdfiumWasmUrl] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadErrorDetail, setLoadErrorDetail] = useState("");
 
   useEffect(() => {
     return () => {
@@ -327,6 +327,72 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
       annotationEventUnsubscribeRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let wasmUrl = "";
+    window.informio
+      .loadEmbedPdfWasm()
+      .then((result) => {
+        if (disposed) return;
+        if (!result?.data?.byteLength) {
+          setLoadFailed(true);
+          setLoadErrorDetail("WASM load failed (empty response)");
+          return;
+        }
+        wasmUrl = URL.createObjectURL(new Blob([result.data], { type: result.mimeType }));
+        setPdfiumWasmUrl(wasmUrl);
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setLoadFailed(true);
+          setLoadErrorDetail(`WASM load failed: ${error.message}`);
+        }
+      });
+    return () => {
+      disposed = true;
+      if (wasmUrl) URL.revokeObjectURL(wasmUrl);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pdfPath) {
+      setViewerSrc("");
+      setLoadFailed(false);
+      setLoadErrorDetail("");
+      setIsLoading(false);
+      return;
+    }
+    let disposed = false;
+    let objectUrl = "";
+    setIsLoading(true);
+    setLoadFailed(false);
+    setLoadErrorDetail("");
+    loadLocalAssetObjectUrl(pdfPath)
+      .then((url) => {
+        if (disposed) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        objectUrl = url;
+        setViewerSrc(url);
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setViewerSrc("");
+          setLoadFailed(true);
+          setLoadErrorDetail(`PDF load failed: ${error.message}`);
+        }
+      })
+      .finally(() => {
+        if (!disposed) setIsLoading(false);
+      });
+    return () => {
+      disposed = true;
+      setViewerSrc("");
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [pdfPath]);
 
   const triggerPdfTranslation = useCallback(
     async (registry: PluginRegistry, embedPdfDocumentId: string) => {
@@ -416,6 +482,13 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
         });
       };
 
+      if (documentManager) {
+        documentManager.onDocumentError((event) => {
+          setLoadFailed(true);
+          setLoadErrorDetail(`${event.message} (${event.code ?? "unknown"})`);
+        });
+      }
+
       const activeEmbedPdfDocumentId = documentManager?.getActiveDocumentId();
       if (activeEmbedPdfDocumentId && documentManager?.getDocumentState(activeEmbedPdfDocumentId)?.status === "loaded") {
         setupAnnotationPersistence(activeEmbedPdfDocumentId);
@@ -470,8 +543,11 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
 
   const viewerConfig = useMemo<PDFViewerConfig>(
     () => ({
-      src: fileUrl(pdfPath),
+      src: viewerSrc,
       tabBar: "never",
+      worker: false,
+      log: false,
+      wasmUrl: pdfiumWasmUrl || undefined,
       theme: settings ? embedPdfThemeForSettings(settings) : { preference: "light" },
       fonts: {
         ui: {
@@ -480,21 +556,30 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
         }
       }
     }),
-    [pdfPath, settings]
+    [settings, viewerSrc, pdfiumWasmUrl]
   );
   const viewerKey = settings
     ? [
-        pdfPath,
+        viewerSrc || pdfPath,
+        pdfiumWasmUrl,
         settings.appearance.theme,
         settings.appearance.customThemeColor,
         settings.appearance.chineseFontFamily,
         settings.appearance.englishFontFamily,
         i18n.language
       ].join(":")
-    : pdfPath;
+    : `${viewerSrc || pdfPath}:${pdfiumWasmUrl}`;
 
   if (!pdfPath) {
     return <div className="informio-pdf-message is-error">{t("pdf.missingFilePath")}</div>;
+  }
+
+  if (isLoading || (!viewerSrc && !loadFailed) || (!pdfiumWasmUrl && !loadFailed)) {
+    return <div className="informio-pdf-message">{t("editor.assetLoading")}</div>;
+  }
+
+  if (loadFailed || !viewerSrc || !pdfiumWasmUrl) {
+    return <div className="informio-pdf-message is-error">{t("editor.assetDecodeError", { type: "PDF" })}{loadErrorDetail ? ` (${loadErrorDetail})` : ""}</div>;
   }
 
   return (
