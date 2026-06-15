@@ -33,13 +33,43 @@
 
 ## Quick Start
 
-1. 从 [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest) 下载最新版本。
-2. 打开 Informio，添加你正在使用的项目文件夹。Markdown 文件会留在原来的位置，不需要搬进固定目录。
-3. 直接在中间编辑区开始写作。只有需要文件、媒体或 Agent 上下文时，再展开两侧面板。
-4. 如果要使用 Agent，请先确认本地已经安装并登录对应的 Agent CLI，然后在 Informio 设置里选择它。
-5. 有任何需求，都可以让 Agent 基于当前工作区上下文处理。
+1. 从 [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest) 下载最新版本，或[从源码自行打包](#从源码自行打包)以跳过 macOS 的 Gatekeeper 提示。
+2. 在 macOS 上，由于未签名，系统可能提示应用「已损坏」。打开前先在终端运行：
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Informio.app
+   ```
+3. 打开 Informio，添加你正在使用的项目文件夹。Markdown 文件会留在原来的位置，不需要搬进固定目录。
+4. 直接在中间编辑区开始写作。只有需要文件、媒体或 Agent 上下文时，再展开两侧面板。
+5. 如果要使用 Agent，请先确认本地已经安装并登录对应的 Agent CLI，然后在 Informio 设置里选择它。
+6. 有任何需求，都可以让 Agent 基于当前工作区上下文处理。
 
-## Development
+## 从源码自行打包
+
+想自己打包？克隆仓库并在本地构建，可以避开未签名 Release 在 macOS 上的 Gatekeeper 提示——在本机打包出来的应用，打开时不会报警。
+
+```bash
+git clone https://github.com/Eddie0521/Informio.git
+cd Informio
+corepack pnpm install
+
+# macOS（未签名 DMG + ZIP，无需 Apple ID）
+corepack pnpm run dist:mac:unsigned
+
+# Windows（NSIS 安装包）
+corepack pnpm run dist:win
+```
+
+产物会输出到 `release/` 目录。macOS 构建会自动移除隔离属性，因此在本机打包出来的应用可以直接打开，不会出现 Gatekeeper 警告。
+
+## 安装
+
+Informio 当前提供 macOS 和 Windows 构建。前往 [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest) 下载，或参考上方的[从源码自行打包](#从源码自行打包)。
+
+### Windows
+
+Informio 已加入 Windows 打包修复，但 macOS 仍然是目前测试最充分的平台。Windows 如有任何问题，请提 issue 和 PR。
+
+## 开发
 
 Informio 使用 `package.json` 中声明的 `pnpm` 版本。macOS 和 Windows 都在仓库根目录运行下面的命令：
 
@@ -49,37 +79,6 @@ corepack pnpm run dev
 ```
 
 Windows 请使用 PowerShell。
-
-## Installation
-
-前往 [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest) 下载最新桌面版本。Informio 当前提供 macOS 和 Windows 构建。
-
-### macOS
-
-因为还没有申请到开发者账号，所以 macOS 会提示应用已损坏，需要先在终端里输入：
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Informio.app
-```
-
-### Windows
-
-Informio 已加入 Windows 打包修复，但 macOS 仍然是目前测试最充分的平台。Windows 如有任何问题，请提 issue 和 PR。
-
-## v0.1.13 更新
-
-- 改进长 KaTeX 显示公式，避免公式编号和公式主体重叠。
-- 窄窗口下超宽公式会在公式块内部横向滚动，避免内容被窗口截断。
-- 增强 Agent 论文翻译公式归一化，支持显示公式块、公式编号和多字符下标。
-- 增加 Prompt 约束和回归测试，让 Agent 回复优先使用标准 Markdown 数学公式分隔符。
-
-## v0.1.12 更新
-
-- 清理从 ChatGPT、GitHub 和浏览器粘贴进来的网页内容，避免剪贴板片段和站点样式污染笔记。
-- Agent 会话支持数学公式渲染，能处理论文翻译里常见的裸 LaTeX 片段。
-- 兼容新版 OpenCode SDK 的 session 返回结构，减少误判启动失败。
-- 开发版可以和已安装的 Informio 同时运行，并使用独立的开发数据目录。
-- 新增粘贴归一化、Agent 数学渲染和 OpenCode session 解析的回归测试。
 
 ## 技术栈
 

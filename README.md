@@ -33,11 +33,41 @@
 
 ## Quick Start
 
-1. Download the latest build from [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest).
-2. Open Informio and add the folder you are working in. Your Markdown files stay where they already are.
-3. Start writing in the center editor. Use the side panels only when you need files, media, or Agent context.
-4. To use Agent assistance, make sure your preferred local Agent CLI is already installed and signed in, then choose it from Informio settings.
-5. When you need anything, ask the Agent to work from the current workspace context.
+1. Download the latest build from [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest), or [build from source](#build-from-source) to skip Gatekeeper prompts on macOS.
+2. On macOS, because the build is unsigned, the system may say the app is "damaged." Run this in Terminal before opening it:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Informio.app
+   ```
+3. Open Informio and add the folder you are working in. Your Markdown files stay where they already are.
+4. Start writing in the center editor. Use the side panels only when you need files, media, or Agent context.
+5. To use Agent assistance, make sure your preferred local Agent CLI is already installed and signed in, then choose it from Informio settings.
+6. When you need anything, ask the Agent to work from the current workspace context.
+
+## Build from source
+
+Prefer to build Informio yourself? Cloning and packaging locally avoids macOS Gatekeeper prompts on unsigned release downloads — the machine that builds the app opens it without warnings.
+
+```bash
+git clone https://github.com/Eddie0521/Informio.git
+cd Informio
+corepack pnpm install
+
+# macOS (unsigned DMG + ZIP, no Apple ID needed)
+corepack pnpm run dist:mac:unsigned
+
+# Windows (NSIS installer)
+corepack pnpm run dist:win
+```
+
+Artifacts are written to the `release/` folder. The macOS build automatically removes the quarantine attribute, so the app opens without Gatekeeper warnings on the machine that built it.
+
+## Installation
+
+Informio currently ships macOS and Windows builds. Download from [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest), or see [Build from source](#build-from-source) above.
+
+### Windows
+
+Informio includes Windows packaging fixes, but macOS remains the most carefully tested platform. If you find any Windows problem, please open an issue or PR.
 
 ## Development
 
@@ -49,37 +79,6 @@ corepack pnpm run dev
 ```
 
 On Windows, use PowerShell.
-
-## Installation
-
-Download the latest desktop build from [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest). Informio currently ships macOS and Windows builds.
-
-### macOS
-
-Because the developer account has not been approved yet, macOS may report that the app is damaged. Run this command in Terminal before opening the app:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Informio.app
-```
-
-### Windows
-
-Informio now includes Windows packaging fixes, but macOS remains the most carefully tested platform. If you find any Windows problem, please open an issue or PR.
-
-## v0.1.13 Updates
-
-- Improves long KaTeX display formulas so equation numbers no longer overlap the formula body.
-- Keeps oversized display formulas readable in narrow windows with an internal horizontal scroll area.
-- Strengthens Agent math normalization for pasted paper translations, including display blocks, tags, and multi-letter subscripts.
-- Adds prompt guidance and regression tests so Agent responses prefer standard Markdown math delimiters.
-
-## v0.1.12 Updates
-
-- Cleans pasted web content from ChatGPT, GitHub, and browsers so clipboard fragments and site styling do not leak into notes.
-- Adds math rendering in Agent conversations, including common bare LaTeX snippets from paper translations.
-- Improves OpenCode session compatibility with newer SDK response shapes.
-- Lets the development app run alongside the installed Informio app with separate dev data.
-- Adds focused regression tests for paste normalization, Agent math rendering, and OpenCode session parsing.
 
 ## Tech Stack
 
