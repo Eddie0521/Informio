@@ -179,8 +179,8 @@
     "conflictBeforeSave": "文档存在外部更改冲突，请先选择保留本地版本或采用外部版本。",
     "saveFailedCancelClose": "保存失败，已取消关闭标签。",
     "saveFailedCancelCloseWithMessage": "保存失败，已取消关闭标签。\n{{message}}",
-    "confirmDeleteFolder": "删除这个文件夹及其下的文件？",
-    "confirmDeleteFile": "删除这个文件？",
+    "confirmDeleteFolder": "将这个文件夹及其下的文件移到回收站？",
+    "confirmDeleteFile": "将这个文件移到回收站？",
     "apiMissingCredentials": "请先填写 base_url 和 api_key。",
     "apiCheckingModels": "正在检测可用模型...",
     "apiModelsDetected": "检测到 {{count}} 个可用模型。",
@@ -379,7 +379,8 @@
     "unpinProject": "取消置顶项目",
     "pinProject": "置顶项目",
     "removeFromList": "从列表中移除",
-    "duplicate": "复制"
+    "duplicate": "复制",
+    "moveToTrash": "移到回收站"
   },
   "inserttoolbar": {
     "insertImage": "插入图片",

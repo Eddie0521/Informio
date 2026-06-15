@@ -13,3 +13,15 @@ tmp-pdf-comment-test.pdf
 docs/assets/*.mp4
 !docs/assets/demo_informio.mp4
 dev-app-update.yml
+
+# test/coverage artifacts
+coverage
+test-results
+
+# stray local assets not referenced by the app (the real wasm lives at
+# src/renderer/public/embedpdf/pdfium.wasm and must stay tracked)
+/pdfium.wasm
+/test-demo.pdf
+
+# local agent working dirs
+.mimocode

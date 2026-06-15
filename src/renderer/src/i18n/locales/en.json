@@ -179,8 +179,8 @@
     "conflictBeforeSave": "This document has an external change conflict. Choose whether to keep the local version or use the external version first.",
     "saveFailedCancelClose": "Save failed, so the tab was kept open.",
     "saveFailedCancelCloseWithMessage": "Save failed, so the tab was kept open.\n{{message}}",
-    "confirmDeleteFolder": "Delete this folder and all files inside it?",
-    "confirmDeleteFile": "Delete this file?",
+    "confirmDeleteFolder": "Move this folder and all files inside it to Trash?",
+    "confirmDeleteFile": "Move this file to Trash?",
     "apiMissingCredentials": "Fill in base_url and api_key first.",
     "apiCheckingModels": "Checking available models...",
     "apiModelsDetected": "{{count}} available models detected.",
@@ -379,7 +379,8 @@
     "unpinProject": "Unpin project",
     "pinProject": "Pin project",
     "removeFromList": "Remove from list",
-    "duplicate": "Duplicate"
+    "duplicate": "Duplicate",
+    "moveToTrash": "Move to Trash"
   },
   "inserttoolbar": {
     "insertImage": "Insert image",

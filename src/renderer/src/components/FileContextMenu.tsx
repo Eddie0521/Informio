@@ -145,7 +145,7 @@ export function FileContextMenu({
   const menuItems: Array<{ action: FileSystemOperationInput["action"]; label: string; icon: ComponentType<{ size?: number }> }> = [
     { action: "rename", label: t("common.rename"), icon: Pencil },
     { action: "duplicate", label: t("filecontextmenu.duplicate"), icon: Copy },
-    { action: "delete", label: t("common.delete"), icon: Trash2 },
+    { action: "delete", label: t("filecontextmenu.moveToTrash"), icon: Trash2 },
     { action: "reveal", label: revealLabel, icon: ExternalLink }
   ];
 

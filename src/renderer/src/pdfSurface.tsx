@@ -8,8 +8,13 @@ import type {
   AnnotationCapability,
   PDFViewerConfig,
   PluginRegistry,
+  ScrollCapability,
+  ScrollMetrics,
   ThemeColors,
-  ThemeConfig
+  ThemeConfig,
+  ViewportCapability,
+  ZoomCapability,
+  ZoomLevel
 } from "@embedpdf/react-pdf-viewer";
 import { MoreHorizontal } from "lucide-react";
 import type { AppSettings, InformioDocument, PdfSelectionRect } from "../../shared/types";
@@ -20,6 +25,12 @@ import type {
 } from "./types";
 import { cn } from "./lib/utils";
 import { loadLocalAssetObjectUrl } from "./lib/asset-url";
+import {
+  cachePdfViewState,
+  getCachedPdfViewState,
+  pdfViewStateKey,
+  type PdfSurfaceMode
+} from "./lib/pdf-view-state";
 
 const normalizeLocalFilePath = (path: string) => {
   const normalizedHomePath = path.startsWith("/users/") ? `/Users/${path.slice("/users/".length)}` : path;
@@ -39,8 +50,6 @@ const localFilePathFromUrl = (value: string) => {
     return value;
   }
 };
-
-type PdfSurfaceMode = "compact" | "full";
 
 type PdfSurfaceProps = {
   mode: PdfSurfaceMode;
@@ -113,6 +122,13 @@ type EmbedPdfExportCapability = {
   forDocument: (documentId: string) => {
     saveAsCopy: () => { toPromise: () => Promise<ArrayBuffer> };
   };
+};
+
+type EmbedPdfLayoutReadyEvent = {
+  documentId: string;
+  isInitial: boolean;
+  pageNumber: number;
+  totalPages: number;
 };
 
 const EMBEDPDF_TRANSLATE_COMMAND_ID = "informio:translate-selection";
@@ -305,7 +321,7 @@ const embedPdfThemeForSettings = (settings: AppSettings): ThemeConfig => ({
   dark: embedPdfInformioColors
 });
 
-function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }: PdfSurfaceProps) {
+function EmbedPdfSurface({ mode, pdfPath, title, fingerprintFallback, allowRemove = false, onRemove }: PdfSurfaceProps) {
   const { t, i18n } = useTranslation();
   const pdfContext = usePdfEditorContext();
   const settings = pdfContext?.settings;
@@ -313,20 +329,49 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
   const lastTranslateAnchorRef = useRef<{ left: number; top: number } | null>(null);
   const annotationSaveTimerRef = useRef<number | null>(null);
   const annotationEventUnsubscribeRef = useRef<(() => void) | null>(null);
+  const viewStateUnsubscribeRef = useRef<Array<() => void>>([]);
+  const viewStateRestoreTimerRef = useRef<number | null>(null);
+  const viewStateCaptureEnabledRef = useRef(true);
+  const viewStateRestoredRef = useRef(false);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const [viewerSrc, setViewerSrc] = useState("");
   const [pdfiumWasmUrl, setPdfiumWasmUrl] = useState("");
   const [loadFailed, setLoadFailed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loadErrorDetail, setLoadErrorDetail] = useState("");
+  const pdfViewCacheKey = useMemo(
+    () =>
+      pdfViewStateKey({
+        mode,
+        paneId: pdfContext?.paneId,
+        fingerprintFallback,
+        pdfPath
+      }),
+    [fingerprintFallback, mode, pdfContext?.paneId, pdfPath]
+  );
+
+  const clearPdfViewStateListeners = useCallback(() => {
+    viewStateUnsubscribeRef.current.forEach((unsubscribe) => unsubscribe());
+    viewStateUnsubscribeRef.current = [];
+    if (viewStateRestoreTimerRef.current !== null) {
+      window.clearTimeout(viewStateRestoreTimerRef.current);
+      viewStateRestoreTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
       if (annotationSaveTimerRef.current !== null) window.clearTimeout(annotationSaveTimerRef.current);
       annotationEventUnsubscribeRef.current?.();
       annotationEventUnsubscribeRef.current = null;
+      clearPdfViewStateListeners();
     };
-  }, []);
+  }, [clearPdfViewStateListeners]);
+
+  useEffect(() => {
+    viewStateRestoredRef.current = false;
+    viewStateCaptureEnabledRef.current = !getCachedPdfViewState(pdfViewCacheKey);
+  }, [pdfViewCacheKey, viewerSrc]);
 
   useEffect(() => {
     let disposed = false;
@@ -459,6 +504,127 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
     }
   };
 
+  const cachePdfViewMetrics = useCallback(
+    (metrics: ScrollMetrics, zoomLevel?: ZoomLevel) => {
+      if (!viewStateCaptureEnabledRef.current) return;
+      cachePdfViewState(pdfViewCacheKey, {
+        pageNumber: metrics.currentPage || metrics.visiblePages[0] || 1,
+        scrollOffset: {
+          x: metrics.scrollOffset.x,
+          y: metrics.scrollOffset.y
+        },
+        zoomLevel: typeof zoomLevel === "number" || typeof zoomLevel === "string" ? zoomLevel : undefined,
+        updatedAt: Date.now()
+      });
+    },
+    [pdfViewCacheKey]
+  );
+
+  const restorePdfViewState = useCallback(
+    (embedPdfDocumentId: string, scroll: ScrollCapability | null, viewport: ViewportCapability | null, zoom: ZoomCapability | null) => {
+      if (viewStateRestoredRef.current) return;
+      const cachedState = getCachedPdfViewState(pdfViewCacheKey);
+      if (!cachedState) {
+        viewStateCaptureEnabledRef.current = true;
+        viewStateRestoredRef.current = true;
+        return;
+      }
+
+      let scrollScope: ReturnType<ScrollCapability["forDocument"]> | null = null;
+      let viewportScope: ReturnType<ViewportCapability["forDocument"]> | null = null;
+      let zoomScope: ReturnType<ZoomCapability["forDocument"]> | null = null;
+      try {
+        scrollScope = scroll?.forDocument(embedPdfDocumentId) ?? null;
+        viewportScope = viewport?.forDocument(embedPdfDocumentId) ?? null;
+        zoomScope = zoom?.forDocument(embedPdfDocumentId) ?? null;
+      } catch (error) {
+        console.warn("Failed to resolve PDF view state capabilities:", error);
+      }
+
+      try {
+        if (zoomScope && cachedState.zoomLevel !== undefined) {
+          zoomScope.requestZoom(cachedState.zoomLevel as ZoomLevel);
+        }
+      } catch (error) {
+        console.warn("Failed to restore PDF zoom state:", error);
+      }
+
+      if (viewStateRestoreTimerRef.current !== null) window.clearTimeout(viewStateRestoreTimerRef.current);
+      viewStateRestoreTimerRef.current = window.setTimeout(() => {
+        viewStateRestoreTimerRef.current = null;
+        const latestState = getCachedPdfViewState(pdfViewCacheKey) ?? cachedState;
+        viewStateCaptureEnabledRef.current = true;
+        viewStateRestoredRef.current = true;
+        try {
+          if (viewportScope) {
+            viewportScope.scrollTo({
+              x: latestState.scrollOffset.x,
+              y: latestState.scrollOffset.y,
+              behavior: "instant"
+            });
+            return;
+          }
+          scrollScope?.scrollToPage({
+            pageNumber: latestState.pageNumber,
+            behavior: "instant"
+          });
+        } catch (error) {
+          console.warn("Failed to restore PDF scroll state:", error);
+        }
+      }, 0);
+    },
+    [pdfViewCacheKey]
+  );
+
+  const setupPdfViewStatePersistence = useCallback(
+    (embedPdfDocumentId: string, scroll: ScrollCapability | null, zoom: ZoomCapability | null) => {
+      clearPdfViewStateListeners();
+      if (!pdfViewCacheKey || !scroll) {
+        viewStateCaptureEnabledRef.current = true;
+        return;
+      }
+
+      const cachedState = getCachedPdfViewState(pdfViewCacheKey);
+      viewStateCaptureEnabledRef.current = !cachedState;
+      let scrollScope: ReturnType<ScrollCapability["forDocument"]> | null = null;
+      let zoomScope: ReturnType<ZoomCapability["forDocument"]> | null = null;
+
+      try {
+        scrollScope = scroll.forDocument(embedPdfDocumentId);
+        zoomScope = zoom?.forDocument(embedPdfDocumentId) ?? null;
+      } catch (error) {
+        console.warn("Failed to initialize PDF view state persistence:", error);
+        viewStateCaptureEnabledRef.current = true;
+        return;
+      }
+
+      const cacheCurrentMetrics = (metrics: ScrollMetrics) => {
+        let zoomLevel: ZoomLevel | undefined;
+        try {
+          zoomLevel = zoomScope?.getState().zoomLevel;
+        } catch (error) {
+          console.warn("Failed to read PDF zoom state:", error);
+        }
+        cachePdfViewMetrics(metrics, zoomLevel);
+      };
+
+      viewStateUnsubscribeRef.current.push(scrollScope.onScroll(cacheCurrentMetrics));
+      if (zoomScope) {
+        viewStateUnsubscribeRef.current.push(
+          zoomScope.onStateChange(() => {
+            if (!viewStateCaptureEnabledRef.current) return;
+            try {
+              cacheCurrentMetrics(scrollScope.getMetrics());
+            } catch (error) {
+              console.warn("Failed to read PDF scroll metrics after zoom:", error);
+            }
+          })
+        );
+      }
+    },
+    [cachePdfViewMetrics, clearPdfViewStateListeners, pdfViewCacheKey]
+  );
+
   const handleEmbedPdfReady = useCallback(
     (registry: PluginRegistry) => {
       const commands = getCapability<EmbedPdfCommandsCapability>(registry, "commands");
@@ -467,9 +633,13 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
       const annotation = getCapability<AnnotationCapability>(registry, "annotation");
       const documentManager = getCapability<EmbedPdfDocumentManagerCapability>(registry, "document-manager");
       const pdfExport = getCapability<EmbedPdfExportCapability>(registry, "export");
+      const scroll = getCapability<ScrollCapability>(registry, "scroll");
+      const viewport = getCapability<ViewportCapability>(registry, "viewport");
+      const zoom = getCapability<ZoomCapability>(registry, "zoom");
 
       annotationEventUnsubscribeRef.current?.();
       annotationEventUnsubscribeRef.current = null;
+      clearPdfViewStateListeners();
 
       const setupAnnotationPersistence = (embedPdfDocumentId: string) => {
         if (!annotation || !pdfExport || !pdfContext) return;
@@ -482,6 +652,31 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
         });
       };
 
+      const setupViewStatePersistence = (embedPdfDocumentId: string) => {
+        setupPdfViewStatePersistence(embedPdfDocumentId, scroll, zoom);
+
+        if (!getCachedPdfViewState(pdfViewCacheKey)) {
+          viewStateCaptureEnabledRef.current = true;
+          viewStateRestoredRef.current = true;
+          return;
+        }
+
+        if (scroll) {
+          viewStateUnsubscribeRef.current.push(
+            scroll.onLayoutReady((event: EmbedPdfLayoutReadyEvent) => {
+              if (event.documentId !== embedPdfDocumentId) return;
+              restorePdfViewState(embedPdfDocumentId, scroll, viewport, zoom);
+            })
+          );
+        }
+
+        if (viewStateRestoreTimerRef.current !== null) window.clearTimeout(viewStateRestoreTimerRef.current);
+        viewStateRestoreTimerRef.current = window.setTimeout(() => {
+          viewStateRestoreTimerRef.current = null;
+          restorePdfViewState(embedPdfDocumentId, scroll, viewport, zoom);
+        }, 600);
+      };
+
       if (documentManager) {
         documentManager.onDocumentError((event) => {
           setLoadFailed(true);
@@ -492,10 +687,18 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
       const activeEmbedPdfDocumentId = documentManager?.getActiveDocumentId();
       if (activeEmbedPdfDocumentId && documentManager?.getDocumentState(activeEmbedPdfDocumentId)?.status === "loaded") {
         setupAnnotationPersistence(activeEmbedPdfDocumentId);
-      } else if (documentManager && annotation && pdfExport && pdfContext) {
-        annotationEventUnsubscribeRef.current = documentManager.onDocumentOpened((document) => {
-          setupAnnotationPersistence(document.id);
-        });
+        setupViewStatePersistence(activeEmbedPdfDocumentId);
+      } else if (documentManager) {
+        if (annotation && pdfExport && pdfContext) {
+          annotationEventUnsubscribeRef.current = documentManager.onDocumentOpened((document) => {
+            setupAnnotationPersistence(document.id);
+          });
+        }
+        viewStateUnsubscribeRef.current.push(
+          documentManager.onDocumentOpened((document) => {
+            setupViewStatePersistence(document.id);
+          })
+        );
       }
 
       commands?.registerCommand({
@@ -538,7 +741,16 @@ function EmbedPdfSurface({ mode, pdfPath, title, allowRemove = false, onRemove }
         }
       });
     },
-    [pdfContext, schedulePdfAnnotationPersist, t, triggerPdfTranslation]
+    [
+      clearPdfViewStateListeners,
+      pdfContext,
+      pdfViewCacheKey,
+      restorePdfViewState,
+      schedulePdfAnnotationPersist,
+      setupPdfViewStatePersistence,
+      t,
+      triggerPdfTranslation
+    ]
   );
 
   const viewerConfig = useMemo<PDFViewerConfig>(

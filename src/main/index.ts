@@ -5,7 +5,7 @@ import type { MenuItemConstructorOptions, NativeImage, OpenDialogOptions } from 
 import { execFile } from "node:child_process";
 import { existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
-import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
 import { promisify } from "node:util";
@@ -47,6 +47,7 @@ import { prepareRuntimeEnvironment } from "./runtimeEnvironment.js";
 import { detectApiModels, translateSelection } from "./translationApi.js";
 import { APP_GITHUB_URL, APP_NAME } from "../shared/appMeta.js";
 import { getShortcutAccelerator, shortcutRegistry } from "../shared/shortcuts.js";
+import { normalizeExternalWebsiteUrl } from "./external-links.js";
 import {
   markdownTitle,
   normalizeLinkTitle,
@@ -277,6 +278,30 @@ const getFocusedMainWindow = () => {
   return mainWindow && !mainWindow.isDestroyed() ? mainWindow : Array.from(mainWindows)[0];
 };
 
+const openExternalWebsiteUrl = async (url: string) => {
+  const normalizedUrl = normalizeExternalWebsiteUrl(url);
+  if (!normalizedUrl) {
+    log.warn("Blocked non-website URL:", url);
+    return false;
+  }
+  await shell.openExternal(normalizedUrl);
+  return true;
+};
+
+const registerExternalWebsiteLinkHandling = (window: BrowserWindow) => {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalWebsiteUrl(url);
+    return { action: "deny" };
+  });
+
+  window.webContents.on("will-navigate", (event, url) => {
+    const normalizedUrl = normalizeExternalWebsiteUrl(url);
+    if (!normalizedUrl) return;
+    event.preventDefault();
+    void openExternalWebsiteUrl(normalizedUrl);
+  });
+};
+
 const sendMenuCommand = (command: string, payload?: unknown) => {
   getFocusedMainWindow()?.webContents.send("menu:command", command, payload);
 };
@@ -331,6 +356,7 @@ const createWindow = () => {
 
   mainWindows.add(window);
   mainWindow = window;
+  registerExternalWebsiteLinkHandling(window);
   window.on("closed", () => {
     mainWindows.delete(window);
     if (mainWindow === window) mainWindow = Array.from(mainWindows)[0] ?? null;
@@ -380,6 +406,7 @@ const openSettingsWindow = () => {
   });
 
   settingsWindow = window;
+  registerExternalWebsiteLinkHandling(window);
 
   window.once("ready-to-show", () => {
     settingsWindowOpening = false;
@@ -1483,7 +1510,7 @@ const runFileSystemAction = async (input: FileSystemOperationInput): Promise<App
   }
 
   if (input.action === "delete") {
-    await rm(input.path, { recursive: input.targetType === "folder", force: false });
+    await shell.trashItem(input.path);
     const documents =
       input.targetType === "file"
         ? appData.documents.filter((doc) => doc.filePath !== input.path && doc.id !== input.documentId)
@@ -2256,11 +2283,11 @@ ipcMain.handle("agent:cancel-run", async (_event, providerId: string) => {
 });
 
 ipcMain.handle("app:open-external", async (_event, url: string) => {
-  if (typeof url !== "string" || (!url.startsWith("https://") && !url.startsWith("http://"))) {
-    log.warn("Blocked non-HTTP URL:", url);
+  if (typeof url !== "string") {
+    log.warn("Invalid URL in app:open-external");
     return;
   }
-  await shell.openExternal(url);
+  await openExternalWebsiteUrl(url);
 });
 
 ipcMain.handle("app:open-path", async (_event, path: string) => {
