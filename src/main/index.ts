@@ -79,8 +79,10 @@ import {
   localFileResponse,
   loadAssetData,
   savePdfFile,
+  saveSpreadsheetFile,
   generatedMarkdownForAssetPath,
   pdfMarkdown,
+  spreadsheetMarkdown,
   normalizeAssetDocumentMarkdown,
   escapeHtml,
   exportFontStack,
@@ -663,6 +665,8 @@ const readDocumentsFromPaths = async (paths: string[]) => {
             markdown = generatedMarkdownForAssetPath(path) ?? "";
           } else if (kind === "pdf") {
             markdown = pdfMarkdown(path);
+          } else if (kind === "spreadsheet") {
+            markdown = spreadsheetMarkdown(path);
           } else {
             markdown = await readFile(path, "utf8");
             sourceMarkdown = markdown;
@@ -2126,6 +2130,18 @@ ipcMain.handle("app:save-pdf-file", async (_event, path: string, data: ArrayBuff
     return;
   }
   return savePdfFile(path, data);
+});
+
+ipcMain.handle("app:save-spreadsheet-file", async (_event, path: string, data: ArrayBuffer): Promise<void> => {
+  if (typeof path !== "string" || path.includes("..")) {
+    log.warn("Invalid path in app:save-spreadsheet-file:", path);
+    return;
+  }
+  if (!data || !(data instanceof ArrayBuffer)) {
+    log.warn("Invalid data in app:save-spreadsheet-file");
+    return;
+  }
+  return saveSpreadsheetFile(path, data);
 });
 
 ipcMain.handle("app:save-settings", async (_event, settings: AppSettings) => {

@@ -71,8 +71,14 @@ describe("documentKindFromPath", () => {
     expect(documentKindFromPath("report.pdf")).toBe("pdf");
   });
 
+  it("returns 'spreadsheet' for spreadsheet extensions", () => {
+    expect(documentKindFromPath("budget.xlsx")).toBe("spreadsheet");
+    expect(documentKindFromPath("legacy.xls")).toBe("spreadsheet");
+    expect(documentKindFromPath("data.csv")).toBe("spreadsheet");
+  });
+
   it("returns 'unknown' for unrecognized extension", () => {
-    expect(documentKindFromPath("data.csv")).toBe("unknown");
+    expect(documentKindFromPath("file.xyz")).toBe("unknown");
   });
 
   it("returns 'unknown' for file with no extension", () => {
@@ -100,6 +106,7 @@ describe("documentKindFromPath", () => {
     expect(documentKindFromPath("PHOTO.PNG")).toBe("image");
     expect(documentKindFromPath("Video.MP4")).toBe("video");
     expect(documentKindFromPath("Doc.PDF")).toBe("pdf");
+    expect(documentKindFromPath("Sheet.XLSX")).toBe("spreadsheet");
   });
 });
 
@@ -540,6 +547,12 @@ describe("mimeTypeFromName", () => {
     expect(mimeTypeFromName("report.pdf")).toBe("application/pdf");
   });
 
+  it("returns spreadsheet mime types", () => {
+    expect(mimeTypeFromName("budget.xlsx")).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    expect(mimeTypeFromName("legacy.xls")).toBe("application/vnd.ms-excel");
+    expect(mimeTypeFromName("data.csv")).toBe("text/csv");
+  });
+
   it("returns 'text/markdown' for .md", () => {
     expect(mimeTypeFromName("notes.md")).toBe("text/markdown");
   });
@@ -553,7 +566,6 @@ describe("mimeTypeFromName", () => {
   });
 
   it("returns undefined for unrecognized extensions", () => {
-    expect(mimeTypeFromName("data.csv")).toBeUndefined();
     expect(mimeTypeFromName("archive.zip")).toBeUndefined();
     expect(mimeTypeFromName("video.mp4")).toBeUndefined();
   });

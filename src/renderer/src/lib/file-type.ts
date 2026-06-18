@@ -1,5 +1,5 @@
 import type { InformioDocument, InformioDocumentKind, AgentMessageAttachment } from "../types";
-import { imageExtensions, pdfExtensions, videoExtensions, audioExtensions } from "../constants";
+import { imageExtensions, pdfExtensions, spreadsheetExtensions, videoExtensions, audioExtensions } from "../constants";
 import { assetExtensionFromSrc } from "./asset-url";
 
 export const documentKindFromPath = (path?: string): InformioDocumentKind => {
@@ -11,6 +11,7 @@ export const documentKindFromPath = (path?: string): InformioDocumentKind => {
   if (videoExtensions.has(extension)) return "video";
   if (audioExtensions.has(extension)) return "audio";
   if (pdfExtensions.has(extension)) return "pdf";
+  if (spreadsheetExtensions.has(extension)) return "spreadsheet";
   return "unknown";
 };
 
@@ -68,6 +69,9 @@ export const mimeTypeFromName = (name: string) => {
   if (extension === ".webp") return "image/webp";
   if (extension === ".svg") return "image/svg+xml";
   if (extension === ".pdf") return "application/pdf";
+  if (extension === ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (extension === ".xls") return "application/vnd.ms-excel";
+  if (extension === ".csv") return "text/csv";
   if (extension === ".md" || extension === ".markdown") return "text/markdown";
   if (extension === ".txt") return "text/plain";
   return undefined;

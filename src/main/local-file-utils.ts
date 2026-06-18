@@ -19,7 +19,8 @@ const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".sv
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
 const PDF_EXTENSIONS = new Set([".pdf"]);
-const OPENABLE_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4", ".mov", ".webm", ".mp3", ".wav", ".m4a", ".ogg", ".pdf"]);
+const SPREADSHEET_EXTENSIONS = new Set([".xlsx", ".xls", ".csv"]);
+const OPENABLE_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4", ".mov", ".webm", ".mp3", ".wav", ".m4a", ".ogg", ".pdf", ".xlsx", ".xls", ".csv"]);
 
 const LOCAL_FILE_CONTENT_TYPES = new Map([
   [".png", "image/png"],
@@ -36,6 +37,9 @@ const LOCAL_FILE_CONTENT_TYPES = new Map([
   [".m4a", "audio/mp4"],
   [".ogg", "audio/ogg"],
   [".pdf", "application/pdf"],
+  [".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  [".xls", "application/vnd.ms-excel"],
+  [".csv", "text/csv"],
   [".md", "text/markdown; charset=utf-8"],
   [".markdown", "text/markdown; charset=utf-8"],
   [".txt", "text/plain; charset=utf-8"]
@@ -45,7 +49,7 @@ const LOCAL_FILE_CONTENT_TYPES = new Map([
 // Document kind helpers
 // ---------------------------------------------------------------------------
 
-export type InformioDocumentKind = "markdown" | "text" | "image" | "video" | "audio" | "pdf" | "unknown";
+export type InformioDocumentKind = "markdown" | "text" | "image" | "video" | "audio" | "pdf" | "spreadsheet" | "unknown";
 
 export const documentKindFromPath = (path?: string): InformioDocumentKind => {
   if (!path) return "markdown";
@@ -56,6 +60,7 @@ export const documentKindFromPath = (path?: string): InformioDocumentKind => {
   if (VIDEO_EXTENSIONS.has(ext)) return "video";
   if (AUDIO_EXTENSIONS.has(ext)) return "audio";
   if (PDF_EXTENSIONS.has(ext)) return "pdf";
+  if (SPREADSHEET_EXTENSIONS.has(ext)) return "spreadsheet";
   return "unknown";
 };
 
@@ -129,7 +134,7 @@ export const localFileResponse = async (path: string, request: Request) => {
 
 export const loadAssetData = async (path: string): Promise<AssetDataResult> => {
   const kind = documentKindFromPath(path);
-  if (kind !== "image" && kind !== "video" && kind !== "audio" && kind !== "pdf") {
+  if (kind !== "image" && kind !== "video" && kind !== "audio" && kind !== "pdf" && kind !== "spreadsheet") {
     throw new Error("Unsupported asset type");
   }
   const fileStats = await stat(path);
@@ -147,12 +152,20 @@ export const savePdfFile = async (path: string, data: ArrayBuffer): Promise<void
   await writeFile(path, Buffer.from(data));
 };
 
+export const saveSpreadsheetFile = async (path: string, data: ArrayBuffer): Promise<void> => {
+  if (documentKindFromPath(path) !== "spreadsheet") throw new Error("Only spreadsheet files can be saved this way");
+  await writeFile(path, Buffer.from(data));
+};
+
 export const documentFolderForPath = (path: string) => dirname(path);
 
 export const markdownPathFromDocumentPath = (documentPath: string, assetPath: string) =>
   markdownPathForFile(documentFolderForPath(documentPath), assetPath);
 
 export const pdfMarkdown = (path: string, documentPath = path) =>
+  markdownLink(basename(path), markdownPathFromDocumentPath(documentPath, path));
+
+export const spreadsheetMarkdown = (path: string, documentPath = path) =>
   markdownLink(basename(path), markdownPathFromDocumentPath(documentPath, path));
 
 export const generatedMarkdownForAssetPath = (path: string, documentPath = path) => {

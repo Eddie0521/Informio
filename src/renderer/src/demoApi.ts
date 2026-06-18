@@ -453,6 +453,7 @@ export function installDemoApi() {
     loadAsset: async () => ({ data: new ArrayBuffer(0), mimeType: "application/octet-stream" }),
     loadEmbedPdfWasm: async () => ({ data: new ArrayBuffer(0), mimeType: "application/wasm" }),
     savePdfFile: async () => undefined,
+    saveSpreadsheetFile: async () => undefined,
     openExternal: async (url: string) => {
       window.open(url, "_blank");
     },

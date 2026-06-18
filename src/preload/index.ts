@@ -59,6 +59,8 @@ const api = {
   loadAsset: (path: string) => ipcRenderer.invoke("app:load-asset", path) as Promise<AssetDataResult>,
   loadEmbedPdfWasm: () => ipcRenderer.invoke("app:load-embedpdf-wasm") as Promise<AssetDataResult>,
   savePdfFile: (path: string, data: ArrayBuffer) => ipcRenderer.invoke("app:save-pdf-file", path, data) as Promise<void>,
+  saveSpreadsheetFile: (path: string, data: ArrayBuffer) =>
+    ipcRenderer.invoke("app:save-spreadsheet-file", path, data) as Promise<void>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("app:save-settings", settings) as Promise<AppSettings>,
   getAppInfo: () => ipcRenderer.invoke("app:get-info") as Promise<AppInfo>,
   saveDocuments: (documents: InformioDocument[], activeDocumentId: string) =>

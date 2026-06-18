@@ -38,6 +38,7 @@ const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg
 const videoExtensions = new Set([".mp4", ".mov", ".webm"]);
 const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
 const pdfExtensions = new Set([".pdf"]);
+const spreadsheetExtensions = new Set([".xlsx", ".xls", ".csv"]);
 
 const documentKindFromPath = (path?: string): InformioDocumentKind => {
   if (!path) return "markdown";
@@ -48,6 +49,7 @@ const documentKindFromPath = (path?: string): InformioDocumentKind => {
   if (videoExtensions.has(extension)) return "video";
   if (audioExtensions.has(extension)) return "audio";
   if (pdfExtensions.has(extension)) return "pdf";
+  if (spreadsheetExtensions.has(extension)) return "spreadsheet";
   return "unknown";
 };
 

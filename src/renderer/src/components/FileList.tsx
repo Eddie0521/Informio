@@ -40,7 +40,7 @@ import {
   dataTransferFilePaths
 } from "../lib/file-tree";
 import { BlankFileContextMenu, FileContextMenu, ProjectContextMenu } from "./FileContextMenu";
-import { FileText, Film, Folder, FolderRoot, ImageIcon, Music, Pin } from "lucide-react";
+import { FileText, Film, Folder, FolderRoot, ImageIcon, Music, Pin, Table } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // FileList component
@@ -391,6 +391,8 @@ export default function FileList({
                       <Music size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
                     ) : documentKind(doc) === "image" ? (
                       <ImageIcon size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
+                    ) : documentKind(doc) === "spreadsheet" ? (
+                      <Table size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
                     ) : (
                       <FileText size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
                     )}

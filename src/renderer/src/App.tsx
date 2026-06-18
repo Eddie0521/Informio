@@ -1,4 +1,4 @@
-import { Component, Fragment, Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { Component, Fragment, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   CSSProperties,
@@ -202,6 +202,7 @@ import {
   resolveMarkdownAssetPath,
   loadLocalAssetObjectUrl,
 } from "./lib/asset-url";
+import { saveSpreadsheetDocumentNow } from "./lib/spreadsheet-save-bridge";
 import {
   documentKindFromPath,
   documentKind,
@@ -558,6 +559,15 @@ export function App() {
     });
   };
 
+  const setDocumentDirtyState = useCallback((documentId: string, dirty: boolean) => {
+    if (dirty) {
+      const doc = latestDataRef.current?.documents.find((item) => item.id === documentId);
+      if (doc) markDocumentDirty(doc);
+      return;
+    }
+    forgetDocumentDirtyState(documentId);
+  }, []);
+
   const applyMergedAppData = (updated: AppData, options: { allowNewConflicts?: boolean } = {}) => {
     const merged = mergeDiskDataWithLocalDrafts(
       updated,
@@ -608,6 +618,9 @@ export function App() {
 
       if (local.markdown === doc.markdown) {
         dirtyBaseMarkdownRef.current.delete(doc.id);
+        if (documentKind(local) === "spreadsheet") {
+          nextDirtyIds.add(doc.id);
+        }
         return doc;
       }
 
@@ -1162,7 +1175,13 @@ export function App() {
     if (!currentData) return;
     try {
       if (dirtyDocumentIdsRef.current.has(id)) {
-        await saveDocumentsNow(currentData.documents, currentData.activeDocumentId, [id]);
+        const closingDoc = currentData.documents.find((doc) => doc.id === id);
+        if (closingDoc && documentKind(closingDoc) === "spreadsheet") {
+          await saveSpreadsheetDocumentNow(id);
+          forgetDocumentDirtyState(id);
+        } else {
+          await saveDocumentsNow(currentData.documents, currentData.activeDocumentId, [id]);
+        }
       }
     } catch (error) {
       window.alert(error instanceof Error ? t("app.saveFailedCancelCloseWithMessage", { message: error.message }) : t("app.saveFailedCancelClose"));
@@ -1431,6 +1450,12 @@ export function App() {
         setCommandPaletteOpen(true);
         return true;
       case "file:save":
+        if (activeOpenDoc && documentKind(activeOpenDoc) === "spreadsheet") {
+          void saveSpreadsheetDocumentNow(activeOpenDoc.id).then((saved) => {
+            if (saved) forgetDocumentDirtyState(activeOpenDoc.id);
+          });
+          return true;
+        }
         if (activeOpenDoc) void saveDocumentsNow(data.documents, data.activeDocumentId);
         return true;
       case "file:save-as":
@@ -2243,6 +2268,7 @@ export function App() {
               onCreateInternalLink={createLinkedDocument}
               onSelection={handleAgentSelection}
               onCompositionChange={handleEditorCompositionChange}
+              onDirtyChange={setDocumentDirtyState}
               toolbarEnabled
               onTranslateSelection={runSelectionToolbarTranslate}
               onClearToolbarTranslate={clearToolbarTranslate}

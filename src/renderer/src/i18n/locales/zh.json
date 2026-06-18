@@ -236,6 +236,10 @@
     "more": "更多",
     "removePdf": "移除 PDF"
   },
+  "spreadsheet": {
+    "missingFilePath": "当前表格文档缺少文件路径。",
+    "fileType": "表格"
+  },
   "encrypted": {
     "content": "已加密内容",
     "damaged": "加密内容损坏",

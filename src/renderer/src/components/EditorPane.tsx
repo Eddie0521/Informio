@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore, useDocumentStore, useAgentStore } from "../stores";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
@@ -141,6 +141,10 @@ import { SecretPassphraseDialog } from "./SecretPassphraseDialog";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { PdfEditorContext as UnifiedPdfEditorContext, PdfViewerSurface as UnifiedPdfViewerSurface } from "../pdfSurface";
 import type { UnifiedPdfEditorContextValue } from "../types";
+
+const SpreadsheetViewerSurface = lazy(() =>
+  import("../spreadsheetSurface").then((module) => ({ default: module.SpreadsheetViewerSurface }))
+);
 
 const mathTextFromSource = (source: string) => {
   const trimmed = source.trim();
@@ -496,6 +500,7 @@ function EditorPane({
   onCreateInternalLink,
   onSelection,
   onCompositionChange,
+  onDirtyChange,
   toolbarEnabled,
   onTranslateSelection,
   onClearToolbarTranslate
@@ -508,6 +513,7 @@ function EditorPane({
   onCreateInternalLink: (title: string) => void;
   onSelection: (selection: AgentSelection | null) => void;
   onCompositionChange: (documentId: string, composing: boolean) => void;
+  onDirtyChange: (documentId: string, dirty: boolean) => void;
   toolbarEnabled: boolean;
   onTranslateSelection: (selection: AgentSelection) => void;
   onClearToolbarTranslate: () => void;
@@ -551,6 +557,7 @@ function EditorPane({
   const editorMarkdown = frontmatter.body;
   const activeDocumentKind = documentKind(document);
   const isPdfDocument = activeDocumentKind === "pdf";
+  const isSpreadsheetDocument = activeDocumentKind === "spreadsheet";
   const isAssetDocument = isEmbeddableAssetDocument(document);
   const isReadOnlyDocument = !isWritableTextDocument(document);
   const isSourceMode = !isReadOnlyDocument && viewMode === "source";
@@ -2130,9 +2137,16 @@ function EditorPane({
       <main
         ref={shellRef}
         className={cn(
-          "informio-editor-shell relative flex min-w-0 flex-1 justify-center",
+          "informio-editor-shell relative flex min-w-0 flex-1",
+          !isSpreadsheetDocument && "justify-center",
           editorScrolling && "is-scrolling",
-          isPdfDocument ? "is-pdf-document overflow-y-auto overflow-x-hidden" : isReadOnlyDocument ? "is-asset-document overflow-hidden" : "overflow-y-auto"
+          isSpreadsheetDocument
+            ? "is-spreadsheet-document flex min-h-0 flex-1 flex-col overflow-hidden"
+            : isPdfDocument
+              ? "is-pdf-document overflow-y-auto overflow-x-hidden"
+              : isReadOnlyDocument
+                ? "is-asset-document overflow-hidden"
+                : "overflow-y-auto"
         )}
         onScroll={handleEditorScroll}
         onMouseUp={(event) => {
@@ -2149,12 +2163,19 @@ function EditorPane({
           } as React.CSSProperties
         }
       >
-        <div className="w-full" style={editorContentMaxWidth ? { maxWidth: editorContentMaxWidth } : undefined}>
+        <div
+          className={cn("w-full", isSpreadsheetDocument && "flex min-h-0 flex-1 flex-col")}
+          style={editorContentMaxWidth ? { maxWidth: editorContentMaxWidth } : undefined}
+        >
         <div
           ref={contentColumnRef}
           className={cn(
             "w-full",
-            isReadOnlyDocument ? "h-full" : "px-12 pb-24 max-[780px]:px-5",
+            isSpreadsheetDocument
+              ? "flex min-h-0 flex-1 flex-col"
+              : isReadOnlyDocument
+                ? "h-full"
+                : "px-12 pb-24 max-[780px]:px-5",
             showPinnedInsertToolbar ? "informio-content-under-toolbar" : undefined,
             isSourceMode ? "pt-2 max-[780px]:pt-2" : undefined
           )}
@@ -2180,6 +2201,14 @@ function EditorPane({
               }}
               className="informio-editor informio-editor-source w-full resize-none border-0 bg-transparent p-0"
             />
+          ) : isSpreadsheetDocument ? (
+            <Suspense fallback={<div className="informio-spreadsheet-message">{t("editor.assetLoading")}</div>}>
+              <SpreadsheetViewerSurface
+                document={document}
+                autoSave={settings.markdown.autoSave}
+                onDirtyChange={onDirtyChange}
+              />
+            </Suspense>
           ) : isPdfDocument ? (
             <UnifiedPdfViewerSurface />
           ) : isReadOnlyDocument ? (

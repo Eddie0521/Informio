@@ -28,28 +28,15 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null) {
   // IPC handlers
   ipcMain.handle("updater:check", async () => {
     try {
-      // Wait for the update-available event or a short timeout (no update)
-      const updateInfo = await new Promise<{ version: string; releaseNotes: string } | null>((resolve) => {
-        const onAvailable = (info: { version: string; releaseNotes?: unknown }) => {
-          cleanup();
-          resolve({ version: info.version, releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "" });
-        };
-        const onError = () => {
-          cleanup();
-          resolve(null);
-        };
-        const cleanup = () => {
-          autoUpdater.removeListener("update-available", onAvailable);
-          autoUpdater.removeListener("error", onError);
-        };
-        autoUpdater.once("update-available", onAvailable as (info: unknown) => void);
-        autoUpdater.once("error", onError as (error: Error) => void);
-        autoUpdater.checkForUpdates().catch(() => resolve(null));
-        // If no event fires within 15s, treat as no update
-        setTimeout(() => { cleanup(); resolve(null); }, 15_000);
-      });
+      const result = await autoUpdater.checkForUpdates();
+      const updateInfo = result?.updateInfo;
       if (!updateInfo) return { available: false };
-      return { available: true, version: updateInfo.version, releaseNotes: updateInfo.releaseNotes };
+      const releaseNotes = updateInfo.releaseNotes;
+      return {
+        available: true,
+        version: updateInfo.version,
+        releaseNotes: typeof releaseNotes === "string" ? releaseNotes : ""
+      };
     } catch (error) {
       log.debug("Manual update check failed:", error);
       return { available: false, error: (error as Error).message };

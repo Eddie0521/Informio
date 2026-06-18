@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -12,6 +12,8 @@ import {
   markdownToBasicHtml,
   generatedMarkdownForAssetPath,
   pdfMarkdown,
+  spreadsheetMarkdown,
+  saveSpreadsheetFile,
   normalizeAssetDocumentMarkdown,
   isWritableTextDocument,
   normalizeDocumentKind,
@@ -49,6 +51,12 @@ describe("documentKindFromPath", () => {
     expect(documentKindFromPath("doc.pdf")).toBe("pdf");
   });
 
+  it("returns spreadsheet for spreadsheet extensions", () => {
+    expect(documentKindFromPath("budget.xlsx")).toBe("spreadsheet");
+    expect(documentKindFromPath("legacy.xls")).toBe("spreadsheet");
+    expect(documentKindFromPath("data.csv")).toBe("spreadsheet");
+  });
+
   it("returns unknown for unrecognized", () => {
     expect(documentKindFromPath("file.xyz")).toBe("unknown");
   });
@@ -63,6 +71,8 @@ describe("isExternalOpenablePath", () => {
     expect(isExternalOpenablePath("file.md")).toBe(true);
     expect(isExternalOpenablePath("image.png")).toBe(true);
     expect(isExternalOpenablePath("doc.pdf")).toBe(true);
+    expect(isExternalOpenablePath("budget.xlsx")).toBe(true);
+    expect(isExternalOpenablePath("data.csv")).toBe(true);
   });
 
   it("returns false for non-openable extensions", () => {
@@ -180,6 +190,30 @@ describe("pdfMarkdown", () => {
   it("generates PDF link markdown", () => {
     const md = pdfMarkdown("/project/report.pdf", "/project/doc.md");
     expect(md).toContain("[report.pdf]");
+  });
+});
+
+describe("spreadsheetMarkdown", () => {
+  it("generates spreadsheet link markdown", () => {
+    const md = spreadsheetMarkdown("/project/budget.xlsx", "/project/doc.md");
+    expect(md).toContain("[budget.xlsx]");
+  });
+});
+
+describe("saveSpreadsheetFile", () => {
+  it("writes spreadsheet bytes to disk", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "informio-spreadsheet-"));
+    const path = join(dir, "budget.xlsx");
+    const payload = new Uint8Array([1, 2, 3, 4]);
+    await saveSpreadsheetFile(path, payload.buffer);
+    const written = await readFile(path);
+    expect(Array.from(written)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("rejects non-spreadsheet paths", async () => {
+    await expect(saveSpreadsheetFile("/tmp/readme.txt", new ArrayBuffer(0))).rejects.toThrow(
+      "Only spreadsheet files can be saved this way"
+    );
   });
 });
 

@@ -236,6 +236,10 @@
     "more": "More",
     "removePdf": "Remove PDF"
   },
+  "spreadsheet": {
+    "missingFilePath": "This spreadsheet document has no file path.",
+    "fileType": "Spreadsheet"
+  },
   "encrypted": {
     "content": "Encrypted content",
     "damaged": "Encrypted content damaged",

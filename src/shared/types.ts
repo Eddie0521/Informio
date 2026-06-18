@@ -10,7 +10,7 @@ export type AgentTransport = "codex-app-server" | "claude-agent-sdk" | "opencode
 
 export type ApiProviderKind = "openai-compatible" | "anthropic";
 
-export type InformioDocumentKind = "markdown" | "text" | "image" | "video" | "audio" | "pdf" | "unknown";
+export type InformioDocumentKind = "markdown" | "text" | "image" | "video" | "audio" | "pdf" | "spreadsheet" | "unknown";
 
 export type InformioDocument = {
   id: string;
