@@ -1,0 +1,6 @@
+#!/bin/sh
+# Remove Cursor agent attribution trailers so they are not counted as GitHub contributors.
+case "$(uname -s)" in
+  Darwin) sed -i '' -e '/cursoragent@cursor\.com/d' -e '/^Made-with: Cursor$/d' "$1" ;;
+  *) sed -i -e '/cursoragent@cursor\.com/d' -e '/^Made-with: Cursor$/d' "$1" ;;
+esac
