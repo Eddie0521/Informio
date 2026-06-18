@@ -46,6 +46,7 @@ import {
   formatProcessDuration,
   formatConversationUpdatedAt,
 } from "../lib/agent";
+import { isAgentTranscriptAtBottom, shouldAutoScrollAgentTranscript } from "../lib/agent-transcript-scroll";
 import { normalizePath, pathBaseName } from "../lib/path";
 import { writeClipboardText, selectionIsInsideElement } from "../lib/clipboard";
 import { fileKindFromName, mimeTypeFromName } from "../lib/file-type";
@@ -161,7 +162,6 @@ export function AgentPanel({
   const fullControlsMeasureRef = useRef<HTMLDivElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
-  const previousMessageCountRef = useRef(messages.length);
   const { t } = useTranslation();
 
   // Virtual scrolling for messages
@@ -301,14 +301,9 @@ export function AgentPanel({
   }, [agentMenuOpen, historyOpen]);
 
   useEffect(() => {
-    if (messages.length > previousMessageCountRef.current) shouldStickToBottomRef.current = true;
-    previousMessageCountRef.current = messages.length;
-
-    if (!shouldStickToBottomRef.current) return;
+    if (!shouldAutoScrollAgentTranscript({ messageCount: messages.length, isPinnedToBottom: shouldStickToBottomRef.current })) return;
     const frame = window.requestAnimationFrame(() => {
-      if (messages.length > 0) {
-        virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
-      }
+      virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [messages, virtualizer]);
@@ -537,8 +532,7 @@ export function AgentPanel({
         }}
         onScroll={(event) => {
           const container = event.currentTarget;
-          const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-          shouldStickToBottomRef.current = distanceFromBottom <= 48;
+          shouldStickToBottomRef.current = isAgentTranscriptAtBottom(container);
           setTranscriptContextMenu(null);
         }}
       >
