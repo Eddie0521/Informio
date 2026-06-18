@@ -43,6 +43,28 @@
 5. To use Agent assistance, make sure your preferred local Agent CLI is already installed and signed in, then choose it from Informio settings.
 6. When you need anything, ask the Agent to work from the current workspace context.
 
+## Prerequisites
+
+Building from source or running the dev server requires the tools below. End users who download a Release build do not need them.
+
+1. **Node.js 20 LTS or newer** (includes Corepack)
+   - Install from [nodejs.org](https://nodejs.org/)
+   - On macOS you can also use Homebrew: `brew install node`
+   - On Windows, use the LTS installer and keep the option to add Node to PATH enabled
+2. **Enable pnpm** (the repo pins the version via Corepack; no separate pnpm install needed)
+   ```bash
+   corepack enable
+   ```
+3. **Git** (to clone the repository): [git-scm.com](https://git-scm.com/)
+
+Verify the setup:
+
+```bash
+node -v    # v20 or newer
+git --version
+corepack pnpm -v
+```
+
 ## Build from source
 
 Prefer to build Informio yourself? Cloning and packaging locally avoids macOS Gatekeeper prompts on unsigned release downloads — the machine that builds the app opens it without warnings.
@@ -71,7 +93,7 @@ Informio includes Windows packaging fixes, but macOS remains the most carefully 
 
 ## Development
 
-Informio uses the `pnpm` version declared in `package.json`. On macOS or Windows, run these commands from the repository root:
+Complete the [prerequisites](#prerequisites) first. Informio uses the `pnpm` version declared in `package.json`. On macOS or Windows, run these commands from the repository root:
 
 ```bash
 corepack pnpm install
