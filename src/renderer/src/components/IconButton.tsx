@@ -7,7 +7,9 @@ export function IconButton({
   className,
   disabled,
   onClick,
-  pressed
+  pressed,
+  draggable,
+  onDragStart
 }: {
   label: string;
   children: React.ReactNode;
@@ -15,6 +17,8 @@ export function IconButton({
   disabled?: boolean;
   onClick?: () => void;
   pressed?: boolean;
+  draggable?: boolean;
+  onDragStart?: (event: React.DragEvent<HTMLButtonElement>) => void;
 }) {
   return (
     <Tooltip.Root>
@@ -24,6 +28,8 @@ export function IconButton({
           aria-label={label}
           aria-pressed={pressed}
           disabled={disabled}
+          draggable={draggable}
+          onDragStart={onDragStart}
           onClick={onClick}
           className={cn(
             "grid h-8 w-8 place-items-center rounded-md text-slate-600 transition-[background-color,transform,color] duration-150 active:scale-95",

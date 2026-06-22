@@ -130,7 +130,7 @@ export type PropertyGroup = {
 };
 
 export type EditorPaneState = {
-  id: "main" | "secondary";
+  id: string;
   documentId: string;
 };
 
@@ -139,6 +139,58 @@ export type EditorViewMode = "rich-text" | "source";
 export type SplitDirection = "horizontal" | "vertical";
 
 export type EditorDropZone = "left" | "right" | "top" | "bottom";
+
+export type WorkspacePaneId = string;
+
+export type BrowserTab = {
+  id: string;
+  url?: string;
+  title?: string;
+};
+
+export type WorkspacePaneContent =
+  | { type: "document"; documentId: string }
+  | { type: "browser"; tabs: BrowserTab[]; activeTabId: string }
+  | { type: "agent" };
+
+export type WorkspaceLeafNode = {
+  type: "leaf";
+  id: WorkspacePaneId;
+  content: WorkspacePaneContent;
+};
+
+export type WorkspaceSplitNode =
+  | WorkspaceLeafNode
+  | {
+      type: "split";
+      direction: SplitDirection;
+      ratio: number;
+      first: WorkspaceSplitNode;
+      second: WorkspaceSplitNode;
+    };
+
+export type WorkspaceDropTarget = {
+  paneId: WorkspacePaneId;
+  zone: EditorDropZone;
+} | null;
+
+export type RightPanelMode = "agent" | "browser";
+
+export type BrowserPaneBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type BrowserPaneState = {
+  url: string;
+  title: string;
+  isLoading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  error?: string;
+};
 
 export type EditorTextSearchIndex = {
   text: string;

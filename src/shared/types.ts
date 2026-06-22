@@ -179,6 +179,22 @@ export type AppData = {
   workspacePath?: string;
 };
 
+export type BrowserPaneBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type BrowserPaneState = {
+  url: string;
+  title: string;
+  isLoading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  error?: string;
+};
+
 export type ToolSummary = {
   name: string;
   description?: string;

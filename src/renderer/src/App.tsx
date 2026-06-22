@@ -46,6 +46,7 @@ import {
   Github,
   FolderPlus,
   FolderRoot,
+  Globe,
   Highlighter,
   History,
   ImageIcon,
@@ -328,6 +329,11 @@ import type {
   EditorViewMode,
   SplitDirection,
   EditorDropZone,
+  RightPanelMode,
+  WorkspaceDropTarget,
+  WorkspaceLeafNode,
+  WorkspacePaneContent,
+  WorkspaceSplitNode,
   HorizontalCellAlign,
   VerticalCellAlign,
   TreeDragPayload,
@@ -359,6 +365,7 @@ import type {
   FileContextMenuState,
   ProjectContextMenuState,
   BlankContextMenuState,
+  BrowserTab,
   InlineRenameState,
   PendingCreationState,
   TreeDropTarget,
@@ -399,6 +406,8 @@ import i18n, { settingsLanguageToUiLanguage } from "./i18n";
 import { getThemeSwatchStyle, isDarkColor, settingsNav, mergeFontOptions, lastToolbarSelectionText, setLastToolbarSelectionText, syncDocumentAppearanceVariables, buildShellStyle, buildConfiguredFontStack, buildUiFontStack } from "./lib/settings-helpers";
 import { useUiStore, useAppStore, useAgentStore, useDocumentStore } from "./stores";
 
+const RIGHT_RAIL_BROWSER_PANE_ID = "informio-right-pane";
+
 const resolveTranslationTarget = (text: string): "zh-CN" | "en" => {
   const normalized = text.trim();
   const hasEnglishLetter = /[A-Za-z]/.test(normalized);
@@ -413,6 +422,8 @@ import FileList from "./components/FileList";
 import { OutlineList } from "./components/OutlineList";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { AgentPanel } from "./components/AgentPanel";
+import { BrowserPanel, BROWSER_BOUNDS_SYNC_EVENT } from "./components/BrowserPanel";
+import { WorkspaceSplitView } from "./components/WorkspaceSplitView";
 import { CommandPalette } from "./components/CommandPalette";
 import { SelectionToolbar } from "./components/SelectionToolbar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -426,7 +437,32 @@ import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { PropertiesList } from "./components/PropertiesList";
 import { markdownToStatusText, countWords, countCharacters, countLines } from "./lib/text-stats";
 import { getDocumentOutline, buildOutlineTree } from "./lib/outline";
-import { normalizeEditorPanes, sameAgentSelection, formatRelative, clamp, buildEditorTextSearchIndex, findNextTextMatch } from "./lib/editor-utils";
+import { sameAgentSelection, formatRelative, clamp, buildEditorTextSearchIndex, findNextTextMatch } from "./lib/editor-utils";
+import {
+  AGENT_DRAG_MIME,
+  BROWSER_DRAG_MIME,
+  MAIN_PANE_ID,
+  collectWorkspaceLeaves,
+  countWorkspaceLeaves,
+  createAgentLeaf,
+  createBrowserContent,
+  createBrowserLeaf,
+  createDocumentLeaf,
+  createPaneId,
+  findAgentLeaf,
+  findDocumentLeafById,
+  findWorkspaceLeaf,
+  getActiveDocumentId,
+  getBrowserTabIds,
+  maximizeWorkspaceLeaf,
+  normalizeBrowserContent,
+  normalizeWorkspaceLayout,
+  removeWorkspaceLeaf,
+  replaceWorkspaceLeafContent,
+  updateWorkspaceLeaf,
+  splitWorkspaceLeaf,
+  updateSplitRatioAtPath,
+} from "./lib/workspace-layout-utils";
 import { buildFileTree, filterFileTree, documentStructureKey, documentLookupKey, DOCUMENT_DRAG_MIME, TREE_ITEM_DRAG_MIME, FOLDER_DRAG_MIME, serializeTreeDragPayload, parseTreeDragPayload, isInternalDocumentDrag, isInternalTreeDrag, isExternalFileDrag, filePathForFile, dataTransferFilePaths } from "./lib/file-tree";
 
 
@@ -480,16 +516,14 @@ export function App() {
   } = useAgentStore();
   const { checkingApiModels, setCheckingApiModels, apiCheckState, setApiCheckState } = useUiStore();
   const { appInfo, setAppInfo } = useAppStore();
-  const { sidebarMode, setSidebarMode, commandPaletteOpen, setCommandPaletteOpen } = useUiStore();
+  const { sidebarMode, setSidebarMode, rightPanelMode, setRightPanelMode, commandPaletteOpen, setCommandPaletteOpen, rightBrowserTabs, rightBrowserActiveTabId, setRightBrowserTabs } = useUiStore();
   const {
     openDocumentIds, setOpenDocumentIds,
-    editorPanes, setEditorPanes,
+    workspaceLayout, setWorkspaceLayout,
     activePaneId, setActivePaneId,
     editorViewModes, setEditorViewModes,
     documentRefreshTokens, setDocumentRefreshTokens,
-    splitDirection, setSplitDirection,
-    paneRatio, setPaneRatio,
-    dropZone, setDropZone,
+    dropTarget, setDropTarget,
     dirtyDocumentIds, setDirtyDocumentIds,
     documentConflicts, setDocumentConflicts,
     activeConflictDocumentId, setActiveConflictDocumentId,
@@ -886,10 +920,10 @@ export function App() {
     () => openDocumentIds.map((id) => documentsById.get(id)).filter((doc): doc is InformioDocument => Boolean(doc)),
     [documentsById, openDocumentIds]
   );
-  const activePane = editorPanes.find((pane) => pane.id === activePaneId) ?? editorPanes[0];
+  const activeDocumentId = getActiveDocumentId(workspaceLayout, activePaneId);
   const activeOpenDoc = useMemo(
-    () => (activePane ? documentsById.get(activePane.documentId) : undefined) ?? openDocuments.find((doc) => doc.id === activePane?.documentId) ?? openDocuments[0],
-    [activePane, documentsById, openDocuments]
+    () => (activeDocumentId ? documentsById.get(activeDocumentId) : undefined) ?? openDocuments[0],
+    [activeDocumentId, documentsById, openDocuments]
   );
   const activeConflict = activeConflictDocumentId ? documentConflicts.get(activeConflictDocumentId) ?? null : null;
   const activeConflictDocument = activeConflict ? documentsById.get(activeConflict.documentId) : undefined;
@@ -913,20 +947,28 @@ export function App() {
 
   useEffect(() => {
     if (!data) return;
-    setEditorPanes((panes) => {
-      if (initializedTabsRef.current && openDocumentIds.length === 0) return panes.length ? [] : panes;
-      const normalized = normalizeEditorPanes(panes, (documentId) => data.documents.some((doc) => doc.id === documentId));
-      if (!normalized.length) return data.activeDocumentId ? [{ id: "main", documentId: data.activeDocumentId }] : [];
-      if (normalized.length === 1 && splitDirection !== "horizontal") setSplitDirection("horizontal");
+    setWorkspaceLayout((layout) => {
+      if (initializedTabsRef.current && openDocumentIds.length === 0) {
+        const leaves = collectWorkspaceLeaves(layout);
+        const nonDocumentLeaves = leaves.filter((leaf) => leaf.content.type !== "document");
+        if (!nonDocumentLeaves.length) return null;
+        return layout;
+      }
+      const normalized = normalizeWorkspaceLayout(layout, (documentId) => data.documents.some((doc) => doc.id === documentId));
+      if (!normalized) {
+        return data.activeDocumentId ? createDocumentLeaf(data.activeDocumentId) : null;
+      }
       return normalized;
     });
-  }, [data?.activeDocumentId, data?.documents, openDocumentIds.length, splitDirection]);
+  }, [data?.activeDocumentId, data?.documents, openDocumentIds.length, setWorkspaceLayout]);
 
   useEffect(() => {
-    if (!editorPanes.some((pane) => pane.id === activePaneId)) {
-      setActivePaneId(editorPanes[0]?.id ?? "main");
+    if (!workspaceLayout) return;
+    if (!findWorkspaceLeaf(workspaceLayout, activePaneId)) {
+      const firstLeaf = collectWorkspaceLeaves(workspaceLayout)[0];
+      if (firstLeaf) setActivePaneId(firstLeaf.id);
     }
-  }, [activePaneId, editorPanes]);
+  }, [activePaneId, workspaceLayout, setActivePaneId]);
 
   useEffect(() => {
     if (agentBusy) return;
@@ -1056,43 +1098,154 @@ export function App() {
   };
 
   const openDocumentInLinkedPane = (
-    sourcePaneId: EditorPaneState["id"],
+    sourcePaneId: string,
     documentId: string,
     options?: { forceRichText?: boolean }
-  ): EditorPaneState["id"] | null => {
+  ): string | null => {
     if (!data || !documentsById.has(documentId)) return null;
-    const normalized = normalizeEditorPanes(editorPanes, (paneDocumentId) => documentsById.has(paneDocumentId));
-    const sourcePane =
-      normalized.find((pane) => pane.id === sourcePaneId) ??
-      normalized.find((pane) => pane.id === activePaneId) ??
-      normalized[0] ??
-      (data.activeDocumentId ? { id: "main" as const, documentId: data.activeDocumentId } : null);
-    if (!sourcePane) return null;
-    if (sourcePane.documentId === documentId) {
-      setActivePaneId(sourcePane.id);
-      return sourcePane.id;
+    const layout = normalizeWorkspaceLayout(workspaceLayout, (paneDocumentId) => documentsById.has(paneDocumentId));
+    const sourceLeaf =
+      (layout ? findWorkspaceLeaf(layout, sourcePaneId) : null) ??
+      (layout ? findWorkspaceLeaf(layout, activePaneId) : null) ??
+      (layout ? collectWorkspaceLeaves(layout)[0] : null) ??
+      (data.activeDocumentId ? createDocumentLeaf(data.activeDocumentId) : null);
+    if (!sourceLeaf) return null;
+    if (sourceLeaf.content.type === "document" && sourceLeaf.content.documentId === documentId) {
+      setActivePaneId(sourceLeaf.id);
+      return sourceLeaf.id;
     }
-    const targetPaneId: EditorPaneState["id"] = sourcePane.id === "main" ? "secondary" : "main";
-    const nextPanes =
-      normalized.length <= 1
-        ? normalizeEditorPanes([
-            { id: "main", documentId: sourcePane.documentId },
-            { id: "secondary", documentId }
-          ])
-        : normalizeEditorPanes(
-            normalized.map((pane) => (pane.id === targetPaneId ? { ...pane, documentId } : pane))
+    const existing = findDocumentLeafById(layout, documentId);
+    if (existing) {
+      setActivePaneId(existing.id);
+      return existing.id;
+    }
+    const currentLayout = layout ?? sourceLeaf;
+    const nextLayout =
+      countWorkspaceLeaves(currentLayout) <= 1
+        ? splitWorkspaceLeaf(currentLayout, sourceLeaf.id, "right", { type: "document", documentId })
+        : replaceWorkspaceLeafContent(
+            currentLayout,
+            sourceLeaf.id === collectWorkspaceLeaves(currentLayout)[0]?.id
+              ? collectWorkspaceLeaves(currentLayout)[1]?.id ?? sourceLeaf.id
+              : collectWorkspaceLeaves(currentLayout)[0]?.id ?? sourceLeaf.id,
+            { type: "document", documentId }
           );
-    setSplitDirection("horizontal");
+    const targetLeaf = findDocumentLeafById(nextLayout, documentId);
     setOpenDocumentIds((ids) => (ids.includes(documentId) ? ids : [...ids, documentId]));
-    setEditorPanes(nextPanes);
-    if (options?.forceRichText) {
-      setEditorViewModes((current) => ({ ...current, [targetPaneId]: "rich-text" }));
+    setWorkspaceLayout(nextLayout);
+    if (options?.forceRichText && targetLeaf) {
+      setEditorViewModes((current) => ({ ...current, [targetLeaf.id]: "rich-text" }));
     }
-    setActivePaneId(targetPaneId);
+    if (targetLeaf) setActivePaneId(targetLeaf.id);
     const next = { ...data, activeDocumentId: documentId };
     applyDataState(next);
     window.informio.saveDocuments(next.documents, documentId);
-    return targetPaneId;
+    return targetLeaf?.id ?? null;
+  };
+
+  const activatePane = (paneId: string) => {
+    if (!data) return;
+    setActivePaneId(paneId);
+    const leaf = workspaceLayout ? findWorkspaceLeaf(workspaceLayout, paneId) : null;
+    if (leaf?.content.type !== "document") return;
+    if (data.activeDocumentId === leaf.content.documentId) return;
+    const next = { ...data, activeDocumentId: leaf.content.documentId };
+    applyDataState(next);
+    window.informio.saveDocuments(next.documents, leaf.content.documentId);
+  };
+
+  const expandPaneToSingle = (paneId: string) => {
+    if (!data || !workspaceLayout) return;
+    const maximized = maximizeWorkspaceLeaf(workspaceLayout, paneId);
+    setWorkspaceLayout(maximized);
+    setActivePaneId(paneId);
+    setDropTarget(null);
+    const leaf = findWorkspaceLeaf(maximized, paneId);
+    if (leaf?.content.type !== "document") return;
+    if (data.activeDocumentId === leaf.content.documentId) return;
+    const next = { ...data, activeDocumentId: leaf.content.documentId };
+    applyDataState(next);
+    window.informio.saveDocuments(next.documents, leaf.content.documentId);
+  };
+
+  const closeWorkspacePane = (paneId: string) => {
+    if (!workspaceLayout) return;
+    const leaf = findWorkspaceLeaf(workspaceLayout, paneId);
+    if (!leaf) return;
+    if (leaf.content.type === "browser") {
+      for (const tabId of getBrowserTabIds(normalizeBrowserContent(leaf.content))) {
+        void window.informio.destroyBrowserPane(tabId);
+      }
+    }
+    const nextLayout = removeWorkspaceLeaf(workspaceLayout, paneId);
+    setWorkspaceLayout(nextLayout);
+    setDropTarget(null);
+    const leaves = collectWorkspaceLeaves(nextLayout);
+    const nextActive = leaves[0];
+    if (nextActive) setActivePaneId(nextActive.id);
+  };
+
+  const updateBrowserPaneTabs = (paneId: string, tabs: BrowserTab[], activeTabId: string) => {
+    setWorkspaceLayout((layout) => {
+      if (!layout) return layout;
+      return updateWorkspaceLeaf(layout, paneId, (leaf) => {
+        if (leaf.content.type !== "browser") return leaf;
+        return { ...leaf, content: { type: "browser", tabs, activeTabId } };
+      });
+    });
+  };
+
+  const openToolInWorkspace = (content: WorkspacePaneContent, target: WorkspaceDropTarget) => {
+    if (!data) return;
+    if (content.type === "agent") {
+      const existing = findAgentLeaf(workspaceLayout);
+      if (existing) {
+        setActivePaneId(existing.id);
+        if (target) {
+          const next = splitWorkspaceLeaf(workspaceLayout ?? existing, target.paneId, target.zone, content);
+          if (next && countWorkspaceLeaves(next) > countWorkspaceLeaves(workspaceLayout)) {
+            setWorkspaceLayout(next);
+            setActivePaneId(collectWorkspaceLeaves(next).find((leaf) => leaf.content.type === "agent")?.id ?? existing.id);
+          }
+        }
+        return;
+      }
+    }
+    const baseLayout =
+      workspaceLayout ??
+      (data.activeDocumentId ? createDocumentLeaf(data.activeDocumentId) : createBrowserLeaf("", createPaneId()));
+    if (!target) {
+      if (countWorkspaceLeaves(baseLayout) >= 4) return;
+      const leaf = collectWorkspaceLeaves(baseLayout)[0];
+      const next = splitWorkspaceLeaf(baseLayout, leaf.id, "right", content);
+      setWorkspaceLayout(next);
+      setActivePaneId(collectWorkspaceLeaves(next).at(-1)?.id ?? leaf.id);
+      return;
+    }
+    const existingDocument =
+      content.type === "document" ? findDocumentLeafById(baseLayout, content.documentId) : null;
+    if (existingDocument && existingDocument.id !== target.paneId) {
+      setWorkspaceLayout(maximizeWorkspaceLeaf(baseLayout, existingDocument.id));
+      setActivePaneId(existingDocument.id);
+      return;
+    }
+    const next = splitWorkspaceLeaf(baseLayout, target.paneId, target.zone, content);
+    if (!next) return;
+    setWorkspaceLayout(next);
+    const openedLeaf = collectWorkspaceLeaves(next).find((leaf) => {
+      if (content.type === "document") return leaf.content.type === "document" && leaf.content.documentId === content.documentId;
+      if (content.type === "browser") {
+        return leaf.content.type === "browser" && leaf.content.activeTabId === content.activeTabId;
+      }
+      return leaf.content.type === "agent";
+    });
+    if (openedLeaf) setActivePaneId(openedLeaf.id);
+    if (content.type === "document") {
+      setOpenDocumentIds((ids) => (ids.includes(content.documentId) ? ids : [...ids, content.documentId]));
+      const nextData = { ...data, activeDocumentId: content.documentId };
+      applyDataState(nextData);
+      window.informio.saveDocuments(nextData.documents, content.documentId);
+    }
   };
 
   const handleEditorCompositionChange = (documentId: string, composing: boolean) => {
@@ -1111,37 +1264,17 @@ export function App() {
     }
   };
 
-  const activatePane = (pane: EditorPaneState) => {
-    if (!data) return;
-    setActivePaneId(pane.id);
-    if (data.activeDocumentId === pane.documentId) return;
-    const next = { ...data, activeDocumentId: pane.documentId };
-    applyDataState(next);
-    window.informio.saveDocuments(next.documents, pane.documentId);
-  };
-
-  const expandPaneToSingle = (pane: EditorPaneState) => {
-    if (!data) return;
-    setEditorPanes([{ id: "main", documentId: pane.documentId }]);
-    setActivePaneId("main");
-    setPaneRatio(0.5);
-    setDropZone(null);
-    if (data.activeDocumentId === pane.documentId) return;
-    const next = { ...data, activeDocumentId: pane.documentId };
-    applyDataState(next);
-    window.informio.saveDocuments(next.documents, pane.documentId);
-  };
-
   const selectDocument = (id: string) => {
     if (!data) return;
     setOpenDocumentIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
-    setEditorPanes((panes) => {
-      if (!panes.length) return [{ id: "main", documentId: id }];
-      const targetPaneId = panes.some((pane) => pane.id === activePaneId) ? activePaneId : panes[0].id;
-      const nextPanes = normalizeEditorPanes(panes.map((pane) => (pane.id === targetPaneId ? { ...pane, documentId: id } : pane)));
-      setActivePaneId(nextPanes.length === 1 ? "main" : targetPaneId);
-      return nextPanes;
+    setWorkspaceLayout((layout) => {
+      const base =
+        layout ??
+        (data.activeDocumentId ? createDocumentLeaf(data.activeDocumentId) : createDocumentLeaf(id));
+      const targetPaneId = findWorkspaceLeaf(base, activePaneId) ? activePaneId : collectWorkspaceLeaves(base)[0]?.id ?? MAIN_PANE_ID;
+      return replaceWorkspaceLeafContent(base, targetPaneId, { type: "document", documentId: id });
     });
+    setActivePaneId((current) => current || MAIN_PANE_ID);
     const next = { ...data, activeDocumentId: id };
     applyDataState(next);
     window.informio.saveDocuments(next.documents, id);
@@ -1158,16 +1291,34 @@ export function App() {
           : currentData.activeDocumentId;
 
     setOpenDocumentIds(nextTabs);
-    setEditorPanes((panes) => {
-      const remaining = panes.filter((pane) => pane.documentId !== id);
-      const replacementId = nextTabs.includes(nextActiveDocumentId) ? nextActiveDocumentId : nextTabs[0];
-      if (!remaining.length && replacementId) return [{ id: "main", documentId: replacementId }];
-      return normalizeEditorPanes(remaining);
+    setWorkspaceLayout((layout) => {
+      if (!layout) {
+        return nextActiveDocumentId ? createDocumentLeaf(nextActiveDocumentId) : null;
+      }
+      const leaves = collectWorkspaceLeaves(layout);
+      const remainingLeaves = leaves.filter((leaf) => !(leaf.content.type === "document" && leaf.content.documentId === id));
+      if (!remainingLeaves.length) {
+        return nextActiveDocumentId ? createDocumentLeaf(nextActiveDocumentId) : null;
+      }
+      if (remainingLeaves.length === 1) return remainingLeaves[0];
+      return remainingLeaves.reduce<WorkspaceSplitNode | null>((acc, leaf, index) => {
+        if (index === 0) return leaf;
+        if (!acc) return leaf;
+        return { type: "split", direction: "horizontal", ratio: 0.5, first: acc, second: leaf };
+      }, null);
     });
-    setActivePaneId((current) => (current === "secondary" && nextTabs.length < 2 ? "main" : current));
     const next = { ...currentData, activeDocumentId: nextActiveDocumentId };
     applyDataState(next);
     window.informio.saveDocuments(next.documents, nextActiveDocumentId);
+  };
+
+  const assignDocumentToActivePane = (documentId: string) => {
+    setWorkspaceLayout((layout) => {
+      const base = layout ?? createDocumentLeaf(documentId);
+      const targetPaneId = findWorkspaceLeaf(base, activePaneId) ? activePaneId : collectWorkspaceLeaves(base)[0]?.id ?? MAIN_PANE_ID;
+      return replaceWorkspaceLeafContent(base, targetPaneId, { type: "document", documentId });
+    });
+    setActivePaneId((current) => current || MAIN_PANE_ID);
   };
 
   const closeDocumentTab = async (id: string) => {
@@ -1194,36 +1345,21 @@ export function App() {
     setFileListCreationSignal((value) => value + 1);
     const next = folderPath ? await window.informio.createDocumentInFolder(folderPath) : await window.informio.createDocument();
     setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)]);
-    setEditorPanes((panes) =>
-      panes.length
-        ? normalizeEditorPanes(panes.map((pane) => (pane.id === activePaneId ? { ...pane, documentId: next.activeDocumentId } : pane)))
-        : [{ id: "main", documentId: next.activeDocumentId }]
-    );
-    setActivePaneId((current) => (editorPanes.some((pane) => pane.id === current) ? current : "main"));
+    assignDocumentToActivePane(next.activeDocumentId);
     applyMergedAppData(next);
   };
 
   const createDefaultMarkdownDocument = async () => {
     const next = await window.informio.createDefaultMarkdownDocument();
     setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)]);
-    setEditorPanes((panes) =>
-      panes.length
-        ? normalizeEditorPanes(panes.map((pane) => (pane.id === activePaneId ? { ...pane, documentId: next.activeDocumentId } : pane)))
-        : [{ id: "main", documentId: next.activeDocumentId }]
-    );
-    setActivePaneId((current) => (editorPanes.some((pane) => pane.id === current) ? current : "main"));
+    assignDocumentToActivePane(next.activeDocumentId);
     applyMergedAppData(next);
   };
 
   const createLinkedDocument = async (title: string) => {
     const next = await window.informio.createLinkedDocument(title);
     setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)]);
-    setEditorPanes((panes) =>
-      panes.length
-        ? normalizeEditorPanes(panes.map((pane) => (pane.id === activePaneId ? { ...pane, documentId: next.activeDocumentId } : pane)))
-        : [{ id: "main", documentId: next.activeDocumentId }]
-    );
-    setActivePaneId((current) => (editorPanes.some((pane) => pane.id === current) ? current : "main"));
+    assignDocumentToActivePane(next.activeDocumentId);
     applyMergedAppData(next);
   };
 
@@ -1249,80 +1385,49 @@ export function App() {
     event.dataTransfer.setData(DOCUMENT_DRAG_MIME, documentId);
   };
 
-  const editorDropZoneFromEvent = (event: ReactDragEvent<HTMLElement>): EditorDropZone => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const distances: Array<[EditorDropZone, number]> = [
-      ["left", x],
-      ["right", rect.width - x],
-      ["top", y],
-      ["bottom", rect.height - y]
-    ];
-    return distances.sort((a, b) => a[1] - b[1])[0][0];
+  const startToolDrag = (mode: RightPanelMode, event: ReactDragEvent<HTMLElement>) => {
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData(mode === "browser" ? BROWSER_DRAG_MIME : AGENT_DRAG_MIME, mode);
   };
 
-  const applyEditorDrop = (documentId: string, zone: EditorDropZone) => {
-    if (!data || !documentsById.has(documentId)) return;
-    const direction: SplitDirection = zone === "left" || zone === "right" ? "horizontal" : "vertical";
-    const targetPaneId: EditorPaneState["id"] = zone === "left" || zone === "top" ? "main" : "secondary";
-    const existingPaneForDrop = normalizeEditorPanes(editorPanes, (paneDocumentId) => documentsById.has(paneDocumentId)).find((pane) => pane.documentId === documentId);
-    const dropWillCollapse = Boolean(existingPaneForDrop && existingPaneForDrop.id !== targetPaneId);
-    setOpenDocumentIds((ids) => (ids.includes(documentId) ? ids : [...ids, documentId]));
-    setSplitDirection(direction);
-    setEditorPanes((panes) => {
-      const valid = normalizeEditorPanes(panes, (paneDocumentId) => documentsById.has(paneDocumentId));
-      const currentDocumentId = activeOpenDoc?.id ?? data.activeDocumentId;
-      if (!valid.length || !currentDocumentId) return [{ id: "main", documentId }];
-      if (valid.length === 1) {
-        if (valid[0].documentId === documentId) return valid;
-        return targetPaneId === "main"
-          ? [
-              { id: "main", documentId },
-              { id: "secondary", documentId: valid[0].documentId }
-            ]
-          : [
-              { id: "main", documentId: valid[0].documentId },
-              { id: "secondary", documentId }
-            ];
-      }
+  const applyDocumentDrop = (documentId: string, target: WorkspaceDropTarget) => {
+    if (!data || !documentsById.has(documentId) || !target) return;
+    openToolInWorkspace({ type: "document", documentId }, target);
+  };
 
-      const normalized = normalizeEditorPanes(valid);
-      const target = normalized.find((pane) => pane.id === targetPaneId) ?? normalized[0];
-      if (target.documentId === documentId) return normalizeEditorPanes(normalized);
-      const other = normalized.find((pane) => pane.id !== target.id);
-      if (other?.documentId === documentId) {
-        return [{ id: "main", documentId }];
-      }
-      return normalizeEditorPanes(normalized.map((pane) => (pane.id === target.id ? { ...pane, documentId } : pane)));
+  const applyToolDrop = (mode: RightPanelMode, target: WorkspaceDropTarget) => {
+    if (!target) return;
+    if (mode === "agent") {
+      openToolInWorkspace({ type: "agent" }, target);
+      return;
+    }
+    openToolInWorkspace(createBrowserContent(""), target);
+  };
+
+  const handleWorkspaceDrop = (target: WorkspaceDropTarget, dataTransfer: DataTransfer) => {
+    const documentId = dataTransfer.getData(DOCUMENT_DRAG_MIME);
+    if (documentId) {
+      applyDocumentDrop(documentId, target);
+      return;
+    }
+    if (dataTransfer.types.includes(BROWSER_DRAG_MIME)) {
+      applyToolDrop("browser", target);
+      return;
+    }
+    if (dataTransfer.types.includes(AGENT_DRAG_MIME)) {
+      applyToolDrop("agent", target);
+    }
+  };
+
+  const toggleRightTool = (mode: RightPanelMode) => {
+    if (!data) return;
+    const rightOpen = data.settings.appearance.rightPanel === "expanded";
+    const nextOpen = rightOpen && rightPanelMode === mode ? "collapsed" : "expanded";
+    setRightPanelMode(mode);
+    updateSettings({
+      ...data.settings,
+      appearance: { ...data.settings.appearance, rightPanel: nextOpen },
     });
-    setActivePaneId(dropWillCollapse ? "main" : targetPaneId);
-    const next = { ...data, activeDocumentId: documentId };
-    applyDataState(next);
-    window.informio.saveDocuments(next.documents, documentId);
-  };
-
-  const startEditorPaneResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const container = event.currentTarget.parentElement;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const startRatio = paneRatio;
-    const startX = event.clientX;
-    const startY = event.clientY;
-    document.body.classList.add("is-resizing-panel");
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      const delta = splitDirection === "horizontal" ? moveEvent.clientX - startX : moveEvent.clientY - startY;
-      const size = splitDirection === "horizontal" ? rect.width : rect.height;
-      setPaneRatio(clamp(startRatio + delta / Math.max(1, size), 0.25, 0.75));
-    };
-    const onPointerUp = () => {
-      document.body.classList.remove("is-resizing-panel");
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-    };
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp, { once: true });
   };
 
   const executeFileSystemAction = async (input: FileSystemOperationInput) => {
@@ -1580,6 +1685,8 @@ export function App() {
     let nextWidth = startWidth;
 
     document.body.classList.add("is-resizing-panel");
+    void window.informio.setBrowserPanelResizing(true);
+    void window.informio.hideAllBrowserPanes();
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const delta = moveEvent.clientX - startX;
@@ -1602,13 +1709,18 @@ export function App() {
       document.body.classList.remove("is-resizing-panel");
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
-      window.informio.saveSettings({
-        ...data.settings,
-        appearance: {
-          ...data.settings.appearance,
-          [key]: nextWidth
-        }
-      });
+      void window.informio
+        .saveSettings({
+          ...data.settings,
+          appearance: {
+            ...data.settings.appearance,
+            [key]: nextWidth,
+          },
+        })
+        .then(() => window.informio.setBrowserPanelResizing(false))
+        .then(() => {
+          window.dispatchEvent(new Event(BROWSER_BOUNDS_SYNC_EVENT));
+        });
     };
 
     window.addEventListener("pointermove", onPointerMove);
@@ -2185,15 +2297,18 @@ export function App() {
         })
     },
     {
-      id: "view:right",
+      id: "view:right-agent",
       scope: "system",
-      title: rightOpen ? t("commands.hideAgentSession") : t("commands.showAgentSession"),
+      title: rightOpen && rightPanelMode === "agent" ? t("commands.hideAgentSession") : t("commands.showAgentSession"),
       keywords: t("commands.toggleAgentSessionKeywords"),
-      run: () =>
-        updateSettings({
-          ...data.settings,
-          appearance: { ...data.settings.appearance, rightPanel: rightOpen ? "collapsed" : "expanded" }
-        })
+      run: () => toggleRightTool("agent")
+    },
+    {
+      id: "view:right-browser",
+      scope: "system",
+      title: rightOpen && rightPanelMode === "browser" ? t("commands.hideBrowser") : t("commands.showBrowser"),
+      keywords: t("commands.toggleBrowserKeywords"),
+      run: () => toggleRightTool("browser")
     },
     {
       id: "file:close-workspace",
@@ -2203,81 +2318,90 @@ export function App() {
       run: () => runAppCommand("file:close-workspace")
     }
   ];
-  const normalizedEditorPanes = normalizeEditorPanes(editorPanes, (documentId) => documentsById.has(documentId));
-  const visibleEditorPanes =
-    normalizedEditorPanes.length > 0
-      ? normalizedEditorPanes
-      : openDocuments[0]
-        ? [{ id: "main" as const, documentId: openDocuments[0].id }]
-        : [];
-  const singleEditorPane = visibleEditorPanes.length <= 1;
-  const renderEditorPane = (pane: EditorPaneState, index: number) => {
-    const document = documentsById.get(pane.documentId);
-    const active = pane.id === activePaneId || (singleEditorPane && index === 0);
-    const basis =
-      visibleEditorPanes.length === 2
-        ? `${(index === 0 ? paneRatio : 1 - paneRatio) * 100}%`
-        : "100%";
+  const normalizedWorkspaceLayout = normalizeWorkspaceLayout(
+    workspaceLayout ?? (openDocuments[0] ? createDocumentLeaf(openDocuments[0].id) : null),
+    (documentId) => documentsById.has(documentId)
+  );
+
+  const renderAgentPanel = (panelWidth?: number) => (
+    <AgentPanel
+      providers={data.settings.agents}
+      provider={activeAgent}
+      connection={activeConnection}
+      conversations={providerAgentConversations}
+      enabled={data.settings.agentRuntime.enabled}
+      currentModel={activeModel}
+      availableModels={activeModels}
+      chatFontSize={data.settings.appearance.chatFontSize}
+      onConnect={() => connectAgent()}
+      onSend={sendAgentSession}
+      onCancel={cancelAgentSession}
+      onNewConversation={startNewAgentConversation}
+      onSelectConversation={selectAgentConversation}
+      onDeleteConversation={deleteAgentConversation}
+      onSelectProvider={(providerId) =>
+        updateSettings({ ...data.settings, activeAgentId: providerId, toolbarAgentId: providerId })
+      }
+      onApprovalResponse={respondAgentApproval}
+      onOpenActionPath={openActionPath}
+      onModelChange={updateActiveAgentModel}
+      onOpenSettings={() => {
+        window.localStorage.setItem("informio-settings-section", "agent");
+        window.informio.openSettings();
+      }}
+      width={panelWidth}
+    />
+  );
+
+  const renderWorkspaceLeaf = (leaf: WorkspaceLeafNode) => {
+    if (leaf.content.type === "browser") {
+      const browserContent = normalizeBrowserContent(leaf.content);
+      return (
+        <BrowserPanel
+          paneId={leaf.id}
+          tabs={browserContent.tabs}
+          activeTabId={browserContent.activeTabId}
+          onTabsChange={(tabs, activeTabId) => updateBrowserPaneTabs(leaf.id, tabs, activeTabId)}
+        />
+      );
+    }
+    if (leaf.content.type === "agent") {
+      return renderAgentPanel();
+    }
+    const document = documentsById.get(leaf.content.documentId);
+    if (!document) {
+      return <EmptyEditorPane defaultFolder={data.settings.shortcuts.quickFolder} onCreate={createDefaultMarkdownDocument} />;
+    }
     return (
-      <div
-        key={pane.id}
-        className={cn("relative min-h-0 min-w-0 flex flex-col", active && visibleEditorPanes.length > 1 && "ring-1 ring-emerald-500/30")}
-        style={splitDirection === "horizontal" ? { flexBasis: basis } : { flexBasis: basis, minHeight: 0 }}
-        onMouseDown={() => activatePane(pane)}
-        onFocusCapture={() => activatePane(pane)}
-      >
-        {visibleEditorPanes.length === 2 && active ? (
+      <EditorSurfaceErrorBoundary documentId={document.id} onResetSelection={() => setAgentSelection(null)}>
+        {documentConflicts.has(document.id) ? (
           <button
             type="button"
-            aria-label={t("app.expandPane")}
-            className="absolute right-3 top-3 z-30 grid h-6 w-6 place-items-center rounded-md text-slate-400 opacity-80 transition hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              expandPaneToSingle(pane);
-            }}
+            className="mx-auto mt-2 flex w-[min(760px,calc(100%-32px))] shrink-0 items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[12px] font-semibold text-amber-900 shadow-sm"
+            onClick={() => openDocumentConflict(document.id)}
           >
-            <Maximize2 size={14} strokeWidth={1.8} />
+            <span className="min-w-0 truncate">{t("app.conflictBanner")}</span>
+            <span className="shrink-0 text-amber-700">{t("app.view")}</span>
           </button>
         ) : null}
-        {document ? (
-          <EditorSurfaceErrorBoundary documentId={document.id} onResetSelection={() => setAgentSelection(null)}>
-            {documentConflicts.has(document.id) ? (
-	              <button
-	                type="button"
-	                className="mx-auto mt-2 flex w-[min(760px,calc(100%-32px))] shrink-0 items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[12px] font-semibold text-amber-900 shadow-sm"
-	                onClick={() => openDocumentConflict(document.id)}
-	              >
-	                <span className="min-w-0 truncate">{t("app.conflictBanner")}</span>
-	                <span className="shrink-0 text-amber-700">{t("app.view")}</span>
-	              </button>
-            ) : null}
-            <EditorPane
-              key={`${pane.id}-${document.id}-${documentRefreshTokens[document.id] ?? 0}`}
-              paneId={pane.id}
-              documentId={document.id}
-              onOutlineJumpHandled={handleOutlineJumpHandled}
-              onChange={updateDocument}
-              onOpenInternalLink={(documentId, sourcePaneId) => {
-                openDocumentInLinkedPane(sourcePaneId, documentId);
-              }}
-              onCreateInternalLink={createLinkedDocument}
-              onSelection={handleAgentSelection}
-              onCompositionChange={handleEditorCompositionChange}
-              onDirtyChange={setDocumentDirtyState}
-              toolbarEnabled
-              onTranslateSelection={runSelectionToolbarTranslate}
-              onClearToolbarTranslate={clearToolbarTranslate}
-            />
-          </EditorSurfaceErrorBoundary>
-        ) : (
-          <EmptyEditorPane defaultFolder={data.settings.shortcuts.quickFolder} onCreate={createDefaultMarkdownDocument} />
-        )}
-      </div>
+        <EditorPane
+          key={`${leaf.id}-${document.id}-${documentRefreshTokens[document.id] ?? 0}`}
+          paneId={leaf.id}
+          documentId={document.id}
+          onOutlineJumpHandled={handleOutlineJumpHandled}
+          onChange={updateDocument}
+          onOpenInternalLink={(documentId, sourcePaneId) => {
+            openDocumentInLinkedPane(sourcePaneId, documentId);
+          }}
+          onCreateInternalLink={createLinkedDocument}
+          onSelection={handleAgentSelection}
+          onCompositionChange={handleEditorCompositionChange}
+          onDirtyChange={setDocumentDirtyState}
+          toolbarEnabled
+          onTranslateSelection={runSelectionToolbarTranslate}
+          onClearToolbarTranslate={clearToolbarTranslate}
+        />
+      </EditorSurfaceErrorBoundary>
     );
   };
 
@@ -2420,117 +2544,52 @@ export function App() {
 	            {leftOpen ? <PanelResizeHandle label="Resize left panel" onPointerDown={(event) => startPanelResize("left", event)} /> : null}
 
 	            <section className="flex min-w-0 flex-1">
-	              <div
-	                className="relative flex min-w-0 flex-1 flex-col"
-	                onDragOverCapture={(event) => {
-	                  if (!isInternalDocumentDrag(event.dataTransfer)) return;
-	                  event.preventDefault();
-	                  event.stopPropagation();
-	                  event.dataTransfer.dropEffect = "copy";
-	                  setDropZone(editorDropZoneFromEvent(event));
-	                }}
-	                onDropCapture={(event) => {
-	                  if (!isInternalDocumentDrag(event.dataTransfer)) return;
-	                  event.preventDefault();
-	                  event.stopPropagation();
-	                  const documentId = event.dataTransfer.getData(DOCUMENT_DRAG_MIME);
-	                  if (!documentId) {
-	                    setDropZone(null);
-	                    return;
-	                  }
-	                  const zone = dropZone ?? editorDropZoneFromEvent(event);
-	                  setDropZone(null);
-	                  applyEditorDrop(documentId, zone);
-	                }}
-	                onDragOver={(event) => {
-	                  if (!isInternalDocumentDrag(event.dataTransfer)) return;
-	                  event.preventDefault();
-	                  event.dataTransfer.dropEffect = "copy";
-	                  setDropZone(editorDropZoneFromEvent(event));
-	                }}
-	                onDragLeave={(event) => {
-	                  if (event.currentTarget.contains(event.relatedTarget as globalThis.Node | null)) return;
-	                  setDropZone(null);
-	                }}
-	                onDrop={(event) => {
-	                  if (!isInternalDocumentDrag(event.dataTransfer)) return;
-	                  const documentId = event.dataTransfer.getData(DOCUMENT_DRAG_MIME);
-	                  if (!documentId) return;
-	                  event.preventDefault();
-	                  const zone = dropZone ?? editorDropZoneFromEvent(event);
-	                  setDropZone(null);
-	                  applyEditorDrop(documentId, zone);
-	                }}
-	              >
-	                <div className={cn("flex min-h-0 min-w-0 flex-1", splitDirection === "vertical" && "flex-col")}>
-	                  {visibleEditorPanes.length ? (
-	                    visibleEditorPanes.map((pane, index) => (
-	                      <Fragment key={pane.id}>
-	                        {index === 1 ? (
-	                          <div
-	                            className={cn(
-	                              "shrink-0 bg-slate-200/70 transition-colors hover:bg-slate-300/80",
-	                              splitDirection === "horizontal" ? "h-full w-1 cursor-col-resize" : "h-1 w-full cursor-row-resize"
-	                            )}
-	                            onPointerDown={startEditorPaneResize}
-	                          />
-	                        ) : null}
-	                        {renderEditorPane(pane, index)}
-	                      </Fragment>
-	                    ))
-	                  ) : (
-	                    <EmptyEditorPane defaultFolder={data.settings.shortcuts.quickFolder} onCreate={createDefaultMarkdownDocument} />
-	                  )}
-	                </div>
-	                {dropZone ? (
-	                  <div className="pointer-events-none absolute inset-0 z-40 grid grid-cols-3 grid-rows-3 gap-1 bg-emerald-500/5 p-2">
-	                    <div className={cn("col-start-1 row-start-1 row-span-3 rounded-md", dropZone === "left" && "bg-emerald-500/20 ring-1 ring-emerald-500/35")} />
-	                    <div className={cn("col-start-3 row-start-1 row-span-3 rounded-md", dropZone === "right" && "bg-emerald-500/20 ring-1 ring-emerald-500/35")} />
-	                    <div className={cn("col-start-1 col-span-3 row-start-1 rounded-md", dropZone === "top" && "bg-emerald-500/20 ring-1 ring-emerald-500/35")} />
-	                    <div className={cn("col-start-1 col-span-3 row-start-3 rounded-md", dropZone === "bottom" && "bg-emerald-500/20 ring-1 ring-emerald-500/35")} />
-	                    <div className="col-start-2 row-start-2 grid place-items-center rounded-md bg-white/70 text-[12px] font-semibold text-emerald-700 shadow-sm">
-	                      {dropZone === "left"
-                          ? t("app.splitLeft")
-                          : dropZone === "right"
-                            ? t("app.splitRight")
-                            : dropZone === "top"
-                              ? t("app.splitTop")
-                              : t("app.splitBottom")}
-	                    </div>
-	                  </div>
+	              <div className="relative flex min-w-0 flex-1 flex-col">
+	                {rightOpen ? (
+	                  <div
+	                    role="separator"
+	                    aria-orientation="vertical"
+	                    aria-label="Resize right panel"
+	                    className="absolute right-0 top-0 z-20 h-full w-3 cursor-col-resize touch-none"
+	                    onPointerDown={(event) => startPanelResize("right", event)}
+	                  />
 	                ) : null}
+	                {normalizedWorkspaceLayout ? (
+	                  <WorkspaceSplitView
+	                    layout={normalizedWorkspaceLayout}
+	                    activePaneId={activePaneId}
+	                    dropTarget={dropTarget}
+	                    onActivatePane={activatePane}
+	                    onMaximizePane={expandPaneToSingle}
+	                    onClosePane={closeWorkspacePane}
+	                    onDropTargetChange={setDropTarget}
+	                    onDrop={(target, dataTransfer) => handleWorkspaceDrop(target, dataTransfer)}
+	                    onResizeSplit={(path, ratio) =>
+	                      setWorkspaceLayout((layout) => (layout ? updateSplitRatioAtPath(layout, path, ratio) : layout))
+	                    }
+	                    renderLeaf={(leaf) => renderWorkspaceLeaf(leaf)}
+	                  />
+	                ) : (
+	                  <EmptyEditorPane defaultFolder={data.settings.shortcuts.quickFolder} onCreate={createDefaultMarkdownDocument} />
+	                )}
 	              </div>
 	              {rightOpen ? (
 	                <>
 	                  <PanelResizeHandle label="Resize right panel" onPointerDown={(event) => startPanelResize("right", event)} />
-	                  <ErrorBoundary name={t("app.agentPanel")}>
-	                  <AgentPanel
-	                    providers={data.settings.agents}
-	                    provider={activeAgent}
-	                    connection={activeConnection}
-	                    conversations={providerAgentConversations}
-						    enabled={data.settings.agentRuntime.enabled}
-						    currentModel={activeModel}
-						    availableModels={activeModels}
-						    chatFontSize={data.settings.appearance.chatFontSize}
-						    onConnect={() => connectAgent()}
-	                    onSend={sendAgentSession}
-	                    onCancel={cancelAgentSession}
-	                    onNewConversation={startNewAgentConversation}
-	                    onSelectConversation={selectAgentConversation}
-	                    onDeleteConversation={deleteAgentConversation}
-	                    onSelectProvider={(providerId) =>
-	                      updateSettings({ ...data.settings, activeAgentId: providerId, toolbarAgentId: providerId })
-	                    }
-	                    onApprovalResponse={respondAgentApproval}
-	                    onOpenActionPath={openActionPath}
-	                    onModelChange={updateActiveAgentModel}
-	                    onOpenSettings={() => {
-                        window.localStorage.setItem("informio-settings-section", "agent");
-                        window.informio.openSettings();
-                      }}
-	                    width={rightPanelWidth}
-	                  />
+	                  <ErrorBoundary name={rightPanelMode === "browser" ? t("app.browserPanel") : t("app.agentPanel")}>
+	                    {rightPanelMode === "browser" ? (
+	                      <BrowserPanel
+	                        paneId={RIGHT_RAIL_BROWSER_PANE_ID}
+	                        tabs={rightBrowserTabs}
+	                        activeTabId={rightBrowserActiveTabId}
+	                        onTabsChange={setRightBrowserTabs}
+	                        className="assistant-panel h-full shrink-0 flex-none"
+	                        embedded
+	                        style={{ width: rightPanelWidth }}
+	                      />
+	                    ) : (
+	                      renderAgentPanel(rightPanelWidth)
+	                    )}
 	                  </ErrorBoundary>
 	                </>
 	              ) : null}
@@ -2596,15 +2655,22 @@ export function App() {
 	                <Code2 size={14} />
 	              </IconButton>
 	              <IconButton
-	                label={rightOpen ? t("commands.hideAgentSession") : t("commands.showAgentSession")}
+	                label={rightOpen && rightPanelMode === "browser" ? t("commands.hideBrowser") : t("commands.showBrowser")}
 	                className="h-6 w-6"
-	                pressed={rightOpen}
-	                onClick={() =>
-	                  updateSettings({
-	                    ...data.settings,
-	                    appearance: { ...data.settings.appearance, rightPanel: rightOpen ? "collapsed" : "expanded" }
-	                  })
-	                }
+	                pressed={rightOpen && rightPanelMode === "browser"}
+	                draggable
+	                onDragStart={(event) => startToolDrag("browser", event)}
+	                onClick={() => toggleRightTool("browser")}
+	              >
+	                <Globe size={14} />
+	              </IconButton>
+	              <IconButton
+	                label={rightOpen && rightPanelMode === "agent" ? t("commands.hideAgentSession") : t("commands.showAgentSession")}
+	                className="h-6 w-6"
+	                pressed={rightOpen && rightPanelMode === "agent"}
+	                draggable
+	                onDragStart={(event) => startToolDrag("agent", event)}
+	                onClick={() => toggleRightTool("agent")}
 	              >
 	                <Bot size={14} />
 	              </IconButton>

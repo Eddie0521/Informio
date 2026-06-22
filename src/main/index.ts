@@ -16,6 +16,8 @@ import type {
   AppData,
   AppSettings,
   AssetDataResult,
+  BrowserPaneBounds,
+  BrowserPaneState,
   FileSystemOperationInput,
   ImportExternalFilesInput,
   InformioDocumentKind,
@@ -42,6 +44,7 @@ import {
   saveAppData,
   saveAppDataAndFiles
 } from "./store.js";
+import { browserPaneManager } from "./browserPaneManager.js";
 import { AgentRuntimeManager } from "./agentRuntime.js";
 import { prepareRuntimeEnvironment } from "./runtimeEnvironment.js";
 import { detectApiModels, translateSelection } from "./translationApi.js";
@@ -358,10 +361,14 @@ const createWindow = () => {
 
   mainWindows.add(window);
   mainWindow = window;
+  browserPaneManager.attachWindow(window);
   registerExternalWebsiteLinkHandling(window);
   window.on("closed", () => {
     mainWindows.delete(window);
-    if (mainWindow === window) mainWindow = Array.from(mainWindows)[0] ?? null;
+    if (mainWindow === window) {
+      mainWindow = Array.from(mainWindows)[0] ?? null;
+      browserPaneManager.attachWindow(mainWindow);
+    }
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -1918,6 +1925,16 @@ app.whenReady().then(async () => {
     documents: await cleanDocumentsMarkdown(appData.documents.map(normalizeAssetDocumentMarkdown), { writeFiles: true })
   });
   appDataLoaded = true;
+  browserPaneManager.setPanelLayoutGetter(() => {
+    if (!appData) return null;
+    const appearance = appData.settings.appearance;
+    return {
+      leftOpen: appearance.leftPanel === "expanded",
+      rightOpen: appearance.rightPanel === "expanded",
+      leftPanelWidth: appearance.leftPanelWidth,
+      rightPanelWidth: appearance.rightPanelWidth,
+    };
+  });
   const startupFolder = appData.settings.shortcuts.quickFolder || appData.workspacePath || DEFAULT_WORKSPACE_PATH;
   appData = await saveAppData({
     ...appData,
@@ -2304,6 +2321,53 @@ ipcMain.handle("app:open-external", async (_event, url: string) => {
     return;
   }
   await openExternalWebsiteUrl(url);
+});
+
+ipcMain.handle("browser-pane:create", async (_event, input: { browserId: string; paneId: string; initialUrl?: string }) => {
+  if (!input || typeof input.browserId !== "string" || typeof input.paneId !== "string") return;
+  browserPaneManager.createView(input.browserId, input.paneId, input.initialUrl ?? "");
+});
+
+ipcMain.handle("browser-pane:destroy", async (_event, browserId: string) => {
+  if (typeof browserId !== "string") return;
+  browserPaneManager.destroyView(browserId);
+});
+
+ipcMain.handle("browser-pane:set-bounds", async (_event, browserId: string, bounds: BrowserPaneBounds) => {
+  if (typeof browserId !== "string" || !bounds) return;
+  browserPaneManager.setBounds(browserId, bounds);
+});
+
+ipcMain.handle("browser-pane:hide-all", async () => {
+  browserPaneManager.hideAll();
+});
+
+ipcMain.handle("browser-pane:set-panel-resizing", async (_event, resizing: boolean) => {
+  browserPaneManager.setPanelResizing(Boolean(resizing));
+});
+
+ipcMain.handle("browser-pane:load-url", async (_event, browserId: string, url: string) => {
+  if (typeof browserId !== "string" || typeof url !== "string") return { ok: false, error: "Invalid input" };
+  return browserPaneManager.loadUrl(browserId, url);
+});
+
+ipcMain.handle("browser-pane:get-state", async (_event, browserId: string): Promise<BrowserPaneState | null> => {
+  if (typeof browserId !== "string") return null;
+  return browserPaneManager.getState(browserId);
+});
+
+ipcMain.handle("browser-pane:reload", async (_event, browserId: string) => {
+  if (typeof browserId !== "string") return;
+  browserPaneManager.reload(browserId);
+});
+
+ipcMain.handle("browser-pane:open-external", async (_event, browserId: string) => {
+  if (typeof browserId !== "string") return;
+  browserPaneManager.openExternal(browserId);
+});
+
+ipcMain.handle("browser-pane:clear-session", async () => {
+  browserPaneManager.clearSession();
 });
 
 ipcMain.handle("app:open-path", async (_event, path: string) => {

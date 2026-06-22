@@ -10,14 +10,22 @@ export function normalizeEditorPanes(
   panes: EditorPaneState[],
   isValidDocument: (documentId: string) => boolean = () => true
 ): EditorPaneState[] {
-  const valid = panes.filter((pane) => isValidDocument(pane.documentId)).slice(0, 2);
+  const valid = panes.filter((pane) => isValidDocument(pane.documentId)).slice(0, 4);
   if (!valid.length) return [];
   const normalized = valid.map((pane, index) => ({
-    id: (index === 0 ? "main" : "secondary") as EditorPaneState["id"],
+    id: index === 0 ? "main-pane" : index === 1 ? "secondary-pane" : `pane-${index + 1}`,
     documentId: pane.documentId
   }));
-  if (normalized.length === 2 && normalized[0].documentId === normalized[1].documentId) {
-    return [{ id: "main", documentId: normalized[0].documentId }];
+  if (normalized.length >= 2) {
+    const seen = new Set<string>();
+    const deduped: EditorPaneState[] = [];
+    for (const pane of normalized) {
+      if (seen.has(pane.documentId)) continue;
+      seen.add(pane.documentId);
+      deduped.push(pane);
+    }
+    if (deduped.length === 1) return deduped;
+    return deduped.slice(0, 4);
   }
   return normalized;
 }

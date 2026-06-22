@@ -457,6 +457,16 @@ export function installDemoApi() {
     openExternal: async (url: string) => {
       window.open(url, "_blank");
     },
+    createBrowserPane: async () => undefined,
+    destroyBrowserPane: async () => undefined,
+    setBrowserPaneBounds: async () => undefined,
+    hideAllBrowserPanes: async () => undefined,
+    setBrowserPanelResizing: async () => undefined,
+    loadBrowserPaneUrl: async (browserId: string, url: string) => ({ ok: Boolean(url), error: url ? undefined : "Invalid URL" }),
+    getBrowserPaneState: async () => ({ url: "", title: "", isLoading: false, canGoBack: false, canGoForward: false }),
+    reloadBrowserPane: async () => undefined,
+    openBrowserPaneExternal: async () => undefined,
+    clearBrowserSession: async () => undefined,
     openPath: async () => undefined,
     addProject: async () => state,
     removeProject: async (_path: string) => state,

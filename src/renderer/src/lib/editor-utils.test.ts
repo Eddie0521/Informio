@@ -59,23 +59,25 @@ describe("normalizeEditorPanes", () => {
   it("filters invalid document ids", () => {
     const panes = [{ id: "main" as const, documentId: "a" }, { id: "secondary" as const, documentId: "b" }];
     const result = normalizeEditorPanes(panes, (id) => id === "a");
-    expect(result).toEqual([{ id: "main", documentId: "a" }]);
+    expect(result).toEqual([{ id: "main-pane", documentId: "a" }]);
   });
 
   it("removes duplicate document ids", () => {
     const panes = [{ id: "main" as const, documentId: "a" }, { id: "secondary" as const, documentId: "a" }];
     const result = normalizeEditorPanes(panes);
-    expect(result).toEqual([{ id: "main", documentId: "a" }]);
+    expect(result).toEqual([{ id: "main-pane", documentId: "a" }]);
   });
 
-  it("caps at 2 panes", () => {
+  it("caps at 4 panes", () => {
     const panes = [
-      { id: "main" as const, documentId: "a" },
-      { id: "secondary" as const, documentId: "b" },
-      { id: "main" as const, documentId: "c" }
+      { id: "main-pane", documentId: "a" },
+      { id: "secondary-pane", documentId: "b" },
+      { id: "pane-3", documentId: "c" },
+      { id: "pane-4", documentId: "d" },
+      { id: "pane-5", documentId: "e" }
     ];
     const result = normalizeEditorPanes(panes);
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(4);
   });
 
   it("returns empty for all invalid", () => {
@@ -185,8 +187,8 @@ describe("normalizeEditorPanes additional branches", () => {
     ];
     const result = normalizeEditorPanes(panes);
     expect(result).toEqual([
-      { id: "main", documentId: "a" },
-      { id: "secondary", documentId: "b" }
+      { id: "main-pane", documentId: "a" },
+      { id: "secondary-pane", documentId: "b" }
     ]);
   });
 
@@ -196,8 +198,8 @@ describe("normalizeEditorPanes additional branches", () => {
       { id: "main" as const, documentId: "y" }
     ];
     const result = normalizeEditorPanes(panes);
-    expect(result[0].id).toBe("main");
-    expect(result[1].id).toBe("secondary");
+    expect(result[0].id).toBe("main-pane");
+    expect(result[1].id).toBe("secondary-pane");
   });
 
   it("returns empty array for empty input", () => {
@@ -207,7 +209,7 @@ describe("normalizeEditorPanes additional branches", () => {
   it("handles single valid pane", () => {
     const panes = [{ id: "main" as const, documentId: "only" }];
     const result = normalizeEditorPanes(panes);
-    expect(result).toEqual([{ id: "main", documentId: "only" }]);
+    expect(result).toEqual([{ id: "main-pane", documentId: "only" }]);
   });
 
   it("filters first pane invalid but second valid", () => {
@@ -216,7 +218,7 @@ describe("normalizeEditorPanes additional branches", () => {
       { id: "secondary" as const, documentId: "good" }
     ];
     const result = normalizeEditorPanes(panes, (id) => id === "good");
-    expect(result).toEqual([{ id: "main", documentId: "good" }]);
+    expect(result).toEqual([{ id: "main-pane", documentId: "good" }]);
   });
 });
 

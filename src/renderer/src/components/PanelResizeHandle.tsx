@@ -12,7 +12,7 @@ export function PanelResizeHandle({
       aria-orientation="vertical"
       tabIndex={0}
       onPointerDown={onPointerDown}
-      className="panel-resize-handle no-drag h-full w-1 shrink-0 cursor-col-resize touch-none"
+      className="panel-resize-handle no-drag relative z-30 h-full w-2 shrink-0 cursor-col-resize touch-none"
     />
   );
 }

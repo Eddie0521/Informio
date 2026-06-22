@@ -1,5 +1,7 @@
-const LATEX_COMMAND_PATTERN =
-  /\\(?:in|notin|mathbb|mathbf|mathrm|mathcal|times|cdot|sim|approx|leq|geq|neq|to|rightarrow|leftarrow|Rightarrow|Leftarrow|frac|sqrt|sum|prod|int|log|exp|sin|cos|tan|alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|rho|sigma|tau|phi|psi|omega)\b/;
+const LATEX_COMMAND_NAMES =
+  "in|notin|mathbb|mathbf|mathrm|mathcal|text|hat|tilde|nabla|left|right|begin|end|tag|cdot|sim|approx|leq|geq|neq|to|rightarrow|leftarrow|Rightarrow|Leftarrow|frac|sqrt|sum|prod|int|log|exp|sin|cos|tan|alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|rho|sigma|tau|phi|psi|omega|times";
+
+const LATEX_COMMAND_PATTERN = new RegExp(String.raw`\\(?:${LATEX_COMMAND_NAMES})\b`);
 
 const CODE_FENCE_PATTERN = /^\s*(```|~~~)/;
 const CJK_PATTERN = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/;
@@ -10,10 +12,14 @@ const DISPLAY_MATH_CLOSE_PATTERN = /^\s*(?:\$\$|\\\])\s*$/;
 const DISPLAY_MATH_INLINE_OPEN_PATTERN = /^\s*(?:\$\$|\\\[)\s*(\S.*)$/;
 const DISPLAY_MATH_INLINE_CLOSE_PATTERN = /^(.*\S)\s*(?:\$\$|\\\])\s*$/;
 const MATH_SUBSCRIPT_PATTERN = /\b[A-Za-z][A-Za-z0-9]*(?:_\{[^}\n]+\}|_[A-Za-z0-9]+|\^\{[^}\n]+\}|\^[A-Za-z0-9]+)+/g;
-const LATEX_RUN_PATTERN =
-  /(?:\b[A-Za-z][A-Za-z0-9]*(?:_\{[^}\n]+\}|_[A-Za-z0-9]+|\^\{[^}\n]+\}|\^[A-Za-z0-9]+)?\s+)?\\(?:in|notin|mathbb|mathbf|mathrm|mathcal|times|cdot|sim|approx|leq|geq|neq|to|rightarrow|leftarrow|Rightarrow|Leftarrow|frac|sqrt|sum|prod|int|log|exp|sin|cos|tan|alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|rho|sigma|tau|phi|psi|omega)\b(?:[A-Za-z0-9_\\^{}\[\]()+\-*/=,.;:|<> \t]*[A-Za-z0-9_\\^{}\]\)])?/g;
+const LATEX_RUN_PATTERN = new RegExp(
+  String.raw`(?:\b[A-Za-z][A-Za-z0-9]*(?:_\{[^}\n]+\}|_[A-Za-z0-9]+|\^\{[^}\n]+\}|\^[A-Za-z0-9]+)?\s+)?\\(?:${LATEX_COMMAND_NAMES})\b(?:[A-Za-z0-9_\\^{}\[\]()+\-*/=,.;:|<> \t]*[A-Za-z0-9_\\^{}\]\)])?`,
+  "g"
+);
 const BARE_DISPLAY_MATH_HINT_PATTERN =
-  /(?:^\\[A-Za-z]+|\\(?:left|right|begin|end|tag|in|mathbb|times|frac|sum|prod|int)\b|[A-Za-z][A-Za-z0-9]*(?:_\{[^}\n]+\}|_[A-Za-z0-9]+|\^\{[^}\n]+\}|\^[A-Za-z0-9]+)\s*=|=\s*\\|\]\s*\\(?:in|to)|\\tag\{[^}\n]+})/;
+  /(?:^\\[A-Za-z]+|\\(?:left|right|begin|end|tag|in|mathbb|mathcal|nabla|cdot|sim|text|hat|times|frac|sum|prod|int)\b|[A-Za-z][A-Za-z0-9]*(?:_\{[^}\n]+\}|_[A-Za-z0-9]+|\^\{[^}\n]+\}|\^[A-Za-z0-9]+)\s*=|=\s*\\|\]\s*\\(?:in|to)|\\tag\{[^}\n]+})/;
+const LATEX_PAREN_INLINE_PATTERN = /\\{1,2}\(([\s\S]*?)\\{1,2}\)/g;
+const LATEX_BRACKET_DISPLAY_PATTERN = /\\{1,2}\[([\s\S]*?)\\{1,2}\]/g;
 const MARKDOWN_BLOCK_START_PATTERN = /^\s{0,3}(?:#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\|)/;
 const FORMULA_OPERATOR_PATTERN = /(?:=|[+\-−*/]|\\(?:times|cdot)\b)/;
 const FORMULA_IDENTIFIER_PATTERN = /\b[A-Z][A-Za-z0-9]*(?:_\{?[^}\s,.;]+}?|'\b)?/;
@@ -22,7 +28,23 @@ const MULTI_LETTER_SUPERSCRIPT_PATTERN = /\b([A-Za-z][A-Za-z0-9]*)\^([A-Za-z]{2,
 const INLINE_ASSIGNMENT_FORMULA_PATTERN =
   /(?:\b[A-Za-z][A-Za-z0-9]*(?:\([A-Za-z0-9]+\))?|[αβγδθλμπρστφψω](?:\([A-Za-z0-9]+\))?)\s*=\s*[^。；;，,\n]{1,140}/g;
 const COMPACT_SUBSCRIPT_PATTERN = /\b([A-Z])(?:apt|min|max|old|new|cond)\b/g;
-const MATH_FUNCTION_PATTERN = /\b(cos|sin|tan|log|exp)\b/g;
+const MATH_FUNCTION_PATTERN = /(?<!\\)\b(cos|sin|tan|log|exp)\b/g;
+const SPURIOUS_SUBSCRIPT_DOLLAR_PATTERN = /_\$/g;
+const SPURIOUS_SUM_LIMIT_DOLLAR_PATTERN = /\\sum\$\$t=1\^\{/g;
+const SPURIOUS_DOUBLE_DOLLAR_PATTERN = /\$\$/g;
+const SPURIOUS_COMMAND_DOLLAR_PATTERN = /\$(?=\\[a-zA-Z])/g;
+const SPURIOUS_TRAILING_DOLLAR_PATTERN = /\$(?=[)\]\s,;]|$)/g;
+const WRAPPED_SIMPLE_SUBSCRIPT_PATTERN =
+  /\$([A-Za-z]_[A-Za-z0-9]+(?:\^\{\\text\{[^}]+\}\})?)\$/g;
+const MISSING_NABLA_SUBSCRIPT_PATTERN = /\\nabla\\theta/g;
+const MISSING_PI_SUBSCRIPT_PATTERN = /\\pi\\theta/g;
+const MATHBB_EXPECTATION_SUBSCRIPT_PATTERN = /\\mathbb\{E\}\{/g;
+const MATHCAL_LOSS_SUBSCRIPT_PATTERN = /\\mathcal\{L\}\{(\\text\{[^}]+\})\}/g;
+const HAT_VARIABLE_TIME_SUBSCRIPT_PATTERN = /\\hat\{([^}]+)\}t(?=\s|\\|\)|,|\/|})/g;
+const TOKEN_HISTORY_SUBSCRIPT_PATTERN = /\by\{(<t)\}/g;
+const CORRUPTED_CONDITION_SEPARATOR_PATTERN = /\\cdot\/x\$,\s*\$y/g;
+const UNCLOSED_INNER_EXPECTATION_PATTERN =
+  /(\\mathbb\{E\}_\{\\\hat\{[^}]+\}_t \\sim\s+\\pi_?\\theta\([^)]+\))\s*\$?(?=[A-Z])/g;
 
 const MATH_UNICODE_REPLACEMENTS: Array<[RegExp, string]> = [
   [/−/g, "-"],
@@ -79,15 +101,53 @@ const wrapMatches = (line: string, pattern: RegExp, shouldWrap: (match: string) 
   return output + line.slice(lastIndex);
 };
 
-const normalizeDisplayMathSourceLine = (line: string) =>
-  MATH_UNICODE_REPLACEMENTS.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), line)
-    .replace(MULTI_LETTER_SUBSCRIPT_PATTERN, "$1_{$2}")
-    .replace(MULTI_LETTER_SUPERSCRIPT_PATTERN, "$1^{$2}")
-    .replace(MATH_FUNCTION_PATTERN, "\\$1")
-    .replace(COMPACT_SUBSCRIPT_PATTERN, (_match, variable: string) => {
-      const suffix = _match.slice(variable.length);
-      return `${variable}_{${suffix}}`;
-    });
+const repairCorruptedMathSource = (source: string) =>
+  source
+    .replace(SPURIOUS_SUBSCRIPT_DOLLAR_PATTERN, "_")
+    .replace(SPURIOUS_SUM_LIMIT_DOLLAR_PATTERN, String.raw`\sum_{t=1}^{`)
+    .replace(SPURIOUS_DOUBLE_DOLLAR_PATTERN, "")
+    .replace(SPURIOUS_COMMAND_DOLLAR_PATTERN, "")
+    .replace(WRAPPED_SIMPLE_SUBSCRIPT_PATTERN, "$1")
+    .replace(CORRUPTED_CONDITION_SEPARATOR_PATTERN, String.raw`\cdot|x, y`)
+    .replace(TOKEN_HISTORY_SUBSCRIPT_PATTERN, "y_{$1}")
+    .replace(MATHCAL_LOSS_SUBSCRIPT_PATTERN, String.raw`\mathcal{L}_{$1}`)
+    .replace(MATHBB_EXPECTATION_SUBSCRIPT_PATTERN, String.raw`\mathbb{E}_{`)
+    .replace(HAT_VARIABLE_TIME_SUBSCRIPT_PATTERN, String.raw`\hat{$1}_t`)
+    .replace(MISSING_NABLA_SUBSCRIPT_PATTERN, String.raw`\nabla_\theta`)
+    .replace(MISSING_PI_SUBSCRIPT_PATTERN, String.raw`\pi_\theta`)
+    .replace(UNCLOSED_INNER_EXPECTATION_PATTERN, "$1} ")
+    .replace(SPURIOUS_TRAILING_DOLLAR_PATTERN, "");
+
+const normalizeLatexBracketDelimiters = (markdown: string) => {
+  let inFence = false;
+  return markdown
+    .split("\n")
+    .map((line) => {
+      if (CODE_FENCE_PATTERN.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      return line
+        .replace(LATEX_BRACKET_DISPLAY_PATTERN, (_, content: string) => `$$${content.trim()}$$`)
+        .replace(LATEX_PAREN_INLINE_PATTERN, (_, content: string) => `$${content.trim()}$`);
+    })
+    .join("\n");
+};
+
+const normalizeMathSource = (source: string) =>
+  repairCorruptedMathSource(
+    MATH_UNICODE_REPLACEMENTS.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), source)
+      .replace(MULTI_LETTER_SUBSCRIPT_PATTERN, "$1_{$2}")
+      .replace(MULTI_LETTER_SUPERSCRIPT_PATTERN, "$1^{$2}")
+      .replace(MATH_FUNCTION_PATTERN, "\\$1")
+      .replace(COMPACT_SUBSCRIPT_PATTERN, (_match, variable: string) => {
+        const suffix = _match.slice(variable.length);
+        return `${variable}_{${suffix}}`;
+      })
+  );
+
+const normalizeDisplayMathSourceLine = (line: string) => normalizeMathSource(line);
 
 const normalizeAgentMathLine = (line: string) => {
   const withInlineAssignments = wrapMatches(line, INLINE_ASSIGNMENT_FORMULA_PATTERN, (value) => {
@@ -137,7 +197,7 @@ const normalizeDisplayMathDelimiters = (line: string) => {
   return line;
 };
 
-const normalizedDisplayMathBlock = (lines: string[]) => ["$$", ...lines.map(normalizeDisplayMathSourceLine), "$$"];
+const normalizedDisplayMathBlock = (lines: string[]) => ["$$", ...normalizeMathSource(lines.join("\n")).split("\n"), "$$"];
 
 const splitDisplayMathContent = (lines: string[]) => {
   const firstProseIndex = lines.findIndex((contentLine) => !isDisplayMathSourceLine(contentLine));
@@ -239,7 +299,7 @@ const normalizeAgentMathBlocks = (markdown: string) => {
       cursor += 1;
     }
 
-    output.push("$$", ...block.map(normalizeDisplayMathSourceLine), "$$");
+    output.push(...normalizedDisplayMathBlock(block));
     index = cursor - 1;
   }
 
@@ -249,7 +309,7 @@ const normalizeAgentMathBlocks = (markdown: string) => {
 export const normalizeAgentMathMarkdown = (markdown: string) => {
   let inFence = false;
   let inDisplayMath = false;
-  return normalizeAgentMathBlocks(markdown)
+  return normalizeAgentMathBlocks(normalizeLatexBracketDelimiters(markdown))
     .split("\n")
     .map((line) => {
       if (CODE_FENCE_PATTERN.test(line)) {

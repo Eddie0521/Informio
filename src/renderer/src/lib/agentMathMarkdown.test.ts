@@ -127,6 +127,40 @@ describe("normalizeAgentMathMarkdown", () => {
     );
   });
 
+  it("normalizes paren-style inline LaTeX delimiters", () => {
+    const markdown = "令 \\(x_i \\in \\mathbb{R}\\) 成立。";
+
+    expect(normalizeAgentMathMarkdown(markdown)).toBe("令 $x_i \\in \\mathbb{R}$ 成立。");
+  });
+
+  it("repairs SDPO-style policy gradient with spurious dollar signs", () => {
+    const markdown = [
+      "分布。遵循 SDPO 的方法，梯度为 logit 级策略梯度：",
+      "",
+      "\\nabla_$\\theta \\mathcal{L}{\\text{SDPO}}(\\theta) = -\\mathbb{E}{y \\sim",
+      "\\pi_\\theta(\\cdot|x)} \\left[ \\sum$$t=1^{|y|} \\mathbb{E}{\\hat{y}t \\sim",
+      "\\pi\\theta(\\cdot/x$, $y{<t}$) $A_t^{\\text{SDPO}}$(\\hat{y}t) $\\cdot",
+      "\\nabla\\theta \\log \\pi_\\theta(\\hat{y}t / x, y{<t}) \\right]$",
+      "",
+      "其中密集 token 级优势通过自教师估计："
+    ].join("\n");
+
+    expect(normalizeAgentMathMarkdown(markdown)).toBe(
+      [
+        "分布。遵循 SDPO 的方法，梯度为 logit 级策略梯度：",
+        "",
+        "$$",
+        "\\nabla_\\theta \\mathcal{L}_{\\text{SDPO}}(\\theta) = -\\mathbb{E}_{y \\sim",
+        "\\pi_\\theta(\\cdot|x)} \\left[ \\sum_{t=1}^{|y|} \\mathbb{E}_{\\hat{y}_t \\sim",
+        "\\pi_\\theta(\\cdot|x, y_{<t})} A_t^{\\text{SDPO}}(\\hat{y}_t) \\cdot",
+        "\\nabla_\\theta \\log \\pi_\\theta(\\hat{y}_t / x, y_{<t}) \\right]",
+        "$$",
+        "",
+        "其中密集 token 级优势通过自教师估计："
+      ].join("\n")
+    );
+  });
+
   it("keeps reference links and prose visible after a malformed display block", () => {
     const markdown = [
       "$$x_i \\in \\mathbb{R}^{C \\times T}",

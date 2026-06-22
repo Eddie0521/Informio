@@ -135,7 +135,7 @@ export function AgentPanel({
   onOpenActionPath: (path: string) => void;
   onModelChange: (model: string) => void;
   onOpenSettings: () => void;
-  width: number;
+  width?: number;
 }) {
   const { connections, activeConversationId, pendingNewConversation, agentMessages: messages, agentSelection: selectedSelection, agentBusy: busy } = useAgentStore();
   const [draft, setDraft] = useState("");
@@ -377,7 +377,7 @@ export function AgentPanel({
   }, [currentModelLabel, currentPermissionLabel, busy, enabled, selectedSelection?.text]);
 
   return (
-    <aside className="assistant-panel flex h-full shrink-0 flex-col" style={{ width }}>
+    <aside className={cn("assistant-panel flex h-full min-w-0 flex-col", width ? "flex-none" : "flex-1")} style={width ? { width } : undefined}>
       <div className="relative flex h-[48px] items-center justify-between border-b px-4">
         <div className="relative" ref={agentMenuRef}>
           <button
@@ -792,8 +792,13 @@ export function AgentPanel({
                         <Select.Item
                           key={model.id}
                           value={model.id}
-                          className="cursor-default rounded-md px-3 py-2 text-[13px] font-semibold text-slate-700 outline-none data-[highlighted]:bg-emerald-50 data-[highlighted]:text-slate-950"
+                          className="relative flex cursor-default select-none items-center rounded-md py-2 pl-8 pr-3 text-[13px] font-semibold text-slate-700 outline-none data-[highlighted]:bg-emerald-50 data-[highlighted]:text-slate-950 data-[state=checked]:bg-emerald-50 data-[state=checked]:text-emerald-900"
                         >
+                          <span className="absolute left-2.5 flex h-3.5 w-3.5 items-center justify-center">
+                            <Select.ItemIndicator>
+                              <Check size={13} strokeWidth={2.5} className="text-emerald-600" />
+                            </Select.ItemIndicator>
+                          </span>
                           <Select.ItemText>{model.label || model.id}</Select.ItemText>
                         </Select.Item>
                       ))}

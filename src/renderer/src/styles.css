@@ -207,13 +207,25 @@ button {
   background: color-mix(in srgb, var(--text-muted) 34%, transparent);
 }
 
+.browser-tabs-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.browser-tabs-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 28%, transparent);
+}
+
 .document-tabs-scroll:hover::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--text-muted) 54%, transparent);
 }
 
 .assistant-panel,
+.browser-panel,
 .assistant-panel .border-b,
-.assistant-panel .border-t {
+.browser-panel .border-b,
+.assistant-panel .border-t,
+.browser-panel .border-t {
   border-color: var(--divider);
 }
 

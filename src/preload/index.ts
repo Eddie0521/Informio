@@ -26,7 +26,9 @@ import type {
   SendAgentMessageInput,
   SendAgentMessageResult,
   TranslateSelectionInput,
-  TranslateSelectionResult
+  TranslateSelectionResult,
+  BrowserPaneBounds,
+  BrowserPaneState
 } from "../shared/types.js";
 
 const api = {
@@ -164,6 +166,21 @@ const api = {
   cancelAgentRun: (providerId: string) =>
     ipcRenderer.invoke("agent:cancel-run", providerId) as Promise<{ ok: boolean }>,
   openExternal: (url: string) => ipcRenderer.invoke("app:open-external", url) as Promise<void>,
+  createBrowserPane: (input: { browserId: string; paneId: string; initialUrl?: string }) =>
+    ipcRenderer.invoke("browser-pane:create", input) as Promise<void>,
+  destroyBrowserPane: (browserId: string) => ipcRenderer.invoke("browser-pane:destroy", browserId) as Promise<void>,
+  setBrowserPaneBounds: (browserId: string, bounds: BrowserPaneBounds) =>
+    ipcRenderer.invoke("browser-pane:set-bounds", browserId, bounds) as Promise<void>,
+  hideAllBrowserPanes: () => ipcRenderer.invoke("browser-pane:hide-all") as Promise<void>,
+  setBrowserPanelResizing: (resizing: boolean) =>
+    ipcRenderer.invoke("browser-pane:set-panel-resizing", resizing) as Promise<void>,
+  loadBrowserPaneUrl: (browserId: string, url: string) =>
+    ipcRenderer.invoke("browser-pane:load-url", browserId, url) as Promise<{ ok: boolean; error?: string }>,
+  getBrowserPaneState: (browserId: string) =>
+    ipcRenderer.invoke("browser-pane:get-state", browserId) as Promise<BrowserPaneState | null>,
+  reloadBrowserPane: (browserId: string) => ipcRenderer.invoke("browser-pane:reload", browserId) as Promise<void>,
+  openBrowserPaneExternal: (browserId: string) => ipcRenderer.invoke("browser-pane:open-external", browserId) as Promise<void>,
+  clearBrowserSession: () => ipcRenderer.invoke("browser-pane:clear-session") as Promise<void>,
   openPath: (path: string) => ipcRenderer.invoke("app:open-path", path) as Promise<void>,
   checkForUpdates: () => ipcRenderer.invoke("updater:check") as Promise<{ available: boolean; version?: string; releaseNotes?: string; error?: string }>,
   downloadUpdate: () => ipcRenderer.invoke("updater:download") as Promise<{ success: boolean; error?: string }>,

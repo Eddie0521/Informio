@@ -2,21 +2,20 @@ import { create } from "zustand";
 import type { SetStateAction } from "react";
 import type {
   DocumentConflict,
-  EditorDropZone,
-  EditorPaneState,
   EditorViewMode,
   OutlineJumpRequest,
-  SplitDirection,
+  WorkspaceDropTarget,
+  WorkspacePaneId,
+  WorkspaceSplitNode,
 } from "../types";
+import { MAIN_PANE_ID } from "../lib/workspace-layout-utils";
 
 type DocumentStore = {
   openDocumentIds: string[];
-  editorPanes: EditorPaneState[];
-  activePaneId: EditorPaneState["id"];
-  editorViewModes: Record<EditorPaneState["id"], EditorViewMode>;
-  splitDirection: SplitDirection;
-  paneRatio: number;
-  dropZone: EditorDropZone | null;
+  workspaceLayout: WorkspaceSplitNode | null;
+  activePaneId: WorkspacePaneId;
+  editorViewModes: Record<string, EditorViewMode>;
+  dropTarget: WorkspaceDropTarget;
   documentRefreshTokens: Record<string, number>;
   dirtyDocumentIds: Set<string>;
   documentConflicts: Map<string, DocumentConflict>;
@@ -25,12 +24,10 @@ type DocumentStore = {
   fileListCreationSignal: number;
 
   setOpenDocumentIds: (value: SetStateAction<string[]>) => void;
-  setEditorPanes: (value: SetStateAction<EditorPaneState[]>) => void;
-  setActivePaneId: (value: SetStateAction<EditorPaneState["id"]>) => void;
-  setEditorViewModes: (value: SetStateAction<Record<EditorPaneState["id"], EditorViewMode>>) => void;
-  setSplitDirection: (dir: SplitDirection) => void;
-  setPaneRatio: (ratio: number) => void;
-  setDropZone: (zone: EditorDropZone | null) => void;
+  setWorkspaceLayout: (value: SetStateAction<WorkspaceSplitNode | null>) => void;
+  setActivePaneId: (value: SetStateAction<WorkspacePaneId>) => void;
+  setEditorViewModes: (value: SetStateAction<Record<string, EditorViewMode>>) => void;
+  setDropTarget: (target: WorkspaceDropTarget) => void;
   setDocumentRefreshTokens: (value: SetStateAction<Record<string, number>>) => void;
   setDirtyDocumentIds: (value: SetStateAction<Set<string>>) => void;
   setDocumentConflicts: (value: SetStateAction<Map<string, DocumentConflict>>) => void;
@@ -45,12 +42,10 @@ const resolve = <T>(prev: T, value: SetStateAction<T>): T =>
 
 export const useDocumentStore = create<DocumentStore>((set) => ({
   openDocumentIds: [],
-  editorPanes: [],
-  activePaneId: "main",
-  editorViewModes: { main: "rich-text", secondary: "rich-text" },
-  splitDirection: "horizontal",
-  paneRatio: 0.5,
-  dropZone: null,
+  workspaceLayout: null,
+  activePaneId: MAIN_PANE_ID,
+  editorViewModes: { [MAIN_PANE_ID]: "rich-text" },
+  dropTarget: null,
   documentRefreshTokens: {},
   dirtyDocumentIds: new Set(),
   documentConflicts: new Map(),
@@ -59,12 +54,10 @@ export const useDocumentStore = create<DocumentStore>((set) => ({
   fileListCreationSignal: 0,
 
   setOpenDocumentIds: (value) => set((s) => ({ openDocumentIds: resolve(s.openDocumentIds, value) })),
-  setEditorPanes: (value) => set((s) => ({ editorPanes: resolve(s.editorPanes, value) })),
+  setWorkspaceLayout: (value) => set((s) => ({ workspaceLayout: resolve(s.workspaceLayout, value) })),
   setActivePaneId: (value) => set((s) => ({ activePaneId: resolve(s.activePaneId, value) })),
   setEditorViewModes: (value) => set((s) => ({ editorViewModes: resolve(s.editorViewModes, value) })),
-  setSplitDirection: (dir) => set({ splitDirection: dir }),
-  setPaneRatio: (ratio) => set({ paneRatio: ratio }),
-  setDropZone: (zone) => set({ dropZone: zone }),
+  setDropTarget: (target) => set({ dropTarget: target }),
   setDocumentRefreshTokens: (value) => set((s) => ({ documentRefreshTokens: resolve(s.documentRefreshTokens, value) })),
   setDirtyDocumentIds: (value) => set((s) => ({ dirtyDocumentIds: resolve(s.dirtyDocumentIds, value) })),
   setDocumentConflicts: (value) => set((s) => ({ documentConflicts: resolve(s.documentConflicts, value) })),
