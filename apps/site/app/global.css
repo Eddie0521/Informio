@@ -1,31 +1,42 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
+@import 'lxgw-wenkai-webfont/lxgwwenkaimono-regular.css';
+@import 'lxgw-wenkai-webfont/lxgwwenkaimono-bold.css';
 
 @theme {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-sans: var(--informio-font-sans);
+  --font-mono: var(--informio-font-mono);
 }
 
 :root {
+  --informio-font-en: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  --informio-font-cn: 'LXGW WenKai Mono', '霞鹜文楷 Mono', ui-monospace, monospace;
+  --informio-font-sans: var(--informio-font-en);
+  --informio-font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --informio-accent: #059669;
   --informio-accent-hover: #047857;
-  --informio-text: #111820;
-  --informio-muted: #64748b;
+  --informio-text: #0a0a0a;
+  --informio-muted: #71717a;
   --informio-surface: #ffffff;
-  --informio-page-bg: #eef2f3;
+  --informio-page-bg: #fafafa;
   --informio-sidebar: #f8fafc;
-  --informio-border: #e2e8f0;
+  --informio-border: #e4e4e7;
 
   --fd-primary: #059669;
   --fd-primary-foreground: #ffffff;
   --fd-background: #ffffff;
-  --fd-foreground: #111820;
+  --fd-foreground: #0a0a0a;
   --fd-muted: #f8fafc;
-  --fd-muted-foreground: #64748b;
-  --fd-border: #e2e8f0;
+  --fd-muted-foreground: #71717a;
+  --fd-border: #e4e4e7;
   --fd-accent: #f8fafc;
-  --fd-accent-foreground: #111820;
+  --fd-accent-foreground: #0a0a0a;
+}
+
+html:lang(zh-CN) {
+  --informio-font-sans: var(--informio-font-cn);
+  --informio-font-mono: var(--informio-font-cn);
 }
 
 html {
@@ -40,6 +51,8 @@ html {
 
 body {
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 ::selection {

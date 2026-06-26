@@ -1,11 +1,11 @@
-import { GeistMono } from 'geist/font/mono';
-import { GeistSans } from 'geist/font/sans';
 import type { Metadata } from 'next';
 import { RootProvider } from 'fumadocs-ui/provider/next';
 import { defineI18nUI } from 'fumadocs-ui/i18n';
 import { i18n, isLocale } from '@/lib/i18n';
 import { APP_NAME, APP_TAGLINE_CN, APP_TAGLINE_EN } from '@informio/brand/meta';
 import { notFound } from 'next/navigation';
+import { GeistSans } from 'geist/font/sans';
+import { GeistMono } from 'geist/font/mono';
 import './../global.css';
 
 const { provider } = defineI18nUI(i18n, {
@@ -40,7 +40,7 @@ export async function generateMetadata({
     },
     description,
     icons: {
-      icon: '/icon.svg',
+      icon: [{ url: '/icon.png', type: 'image/png', sizes: '32x32' }],
       apple: '/icon-512.png',
     },
   };
@@ -60,11 +60,7 @@ export default async function RootLayout({
   }
 
   return (
-    <html
-      lang={lang === 'cn' ? 'zh-CN' : 'en'}
-      className={`${GeistSans.variable} ${GeistMono.variable}`}
-      suppressHydrationWarning
-    >
+    <html lang={lang === 'cn' ? 'zh-CN' : 'en'} className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
       <body className="min-h-[100dvh] bg-[var(--informio-page-bg)] font-sans text-[var(--informio-text)] antialiased">
         <RootProvider i18n={provider(lang)}>{children}</RootProvider>
       </body>

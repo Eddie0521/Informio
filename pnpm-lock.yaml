@@ -241,8 +241,11 @@ importers:
         specifier: ^15.7.13
         version: 15.8.5(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(lucide-react@0.552.0(react@19.2.6))(next@15.5.19(@babel/core@7.29.0)(@playwright/test@1.60.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(tailwindcss@4.3.0)
       geist:
-        specifier: ^1.4.2
+        specifier: ^1.7.2
         version: 1.7.2(next@15.5.19(@babel/core@7.29.0)(@playwright/test@1.60.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))
+      lxgw-wenkai-webfont:
+        specifier: ^1.7.0
+        version: 1.7.0
       motion:
         specifier: ^12.23.12
         version: 12.42.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -255,6 +258,9 @@ importers:
       react-dom:
         specifier: ^19.2.6
         version: 19.2.6(react@19.2.6)
+      simple-icons:
+        specifier: ^16.24.0
+        version: 16.24.0
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.3.0
@@ -4543,6 +4549,9 @@ packages:
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
+  lxgw-wenkai-webfont@1.7.0:
+    resolution: {integrity: sha512-kVJmT4xMAyOLhG6q0w63wJkVU7RP8UMQRGoAWj9tnpzL7sWFFYiEHBdUQyW9myqBQFa5SQfWfa2VLYF4IJBL5g==}
+
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
@@ -5392,6 +5401,10 @@ packages:
 
   signal-exit@3.0.7:
     resolution: {integrity: sha512-wnD2ZE+l+SPC/uoS0vXeE9L1+0wuaMqKlfz9AMUo38JsyLSBWSFcHR1Rri62LZc12vLr1gb3jl7iwQhgwpAbGQ==}
+
+  simple-icons@16.24.0:
+    resolution: {integrity: sha512-lAPW1rqgwPQ4tdIY15TtcKSgSelvJexz8q/B+a7Igg1dJoXR0LPjScLkLMI8UbLSkS41/fLVZWIhsH7HPUwAgQ==}
+    engines: {node: '>=0.12.18'}
 
   simple-update-notifier@2.0.0:
     resolution: {integrity: sha512-a2B9Y0KlNXl9u/vsW6sTIu9vGEpfKu2wRV6l1H3XEas/0gUIzGzBoP/IouTcUQbm9JWZLH3COxyn03TYlFax6w==}
@@ -8600,7 +8613,7 @@ snapshots:
       '@vue/shared': 3.5.34
       estree-walker: 2.0.2
       magic-string: 0.30.21
-      postcss: 8.5.14
+      postcss: 8.5.15
       source-map-js: 1.2.1
 
   '@vue/compiler-ssr@3.5.34':
@@ -10358,6 +10371,8 @@ snapshots:
     dependencies:
       react: 19.2.6
 
+  lxgw-wenkai-webfont@1.7.0: {}
+
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
@@ -11592,6 +11607,8 @@ snapshots:
   siginfo@2.0.0: {}
 
   signal-exit@3.0.7: {}
+
+  simple-icons@16.24.0: {}
 
   simple-update-notifier@2.0.0:
     dependencies:
