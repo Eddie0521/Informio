@@ -453,7 +453,12 @@ export function installDemoApi() {
     loadAsset: async () => ({ data: new ArrayBuffer(0), mimeType: "application/octet-stream" }),
     loadEmbedPdfWasm: async () => ({ data: new ArrayBuffer(0), mimeType: "application/wasm" }),
     savePdfFile: async () => undefined,
-    saveSpreadsheetFile: async () => undefined,
+    saveSpreadsheetFile: async () => ({ path: "/tmp/demo.xlsx" }),
+    getSpreadsheetFileStat: async () => ({ mtimeMs: Date.now(), size: 0 }),
+    saveSpreadsheetAs: async () => state,
+    saveWordFile: async () => ({ path: "/tmp/demo.docx" }),
+    getWordFileStat: async () => ({ mtimeMs: Date.now(), size: 0 }),
+    saveWordAs: async () => state,
     openExternal: async (url: string) => {
       window.open(url, "_blank");
     },
@@ -510,6 +515,7 @@ export function installDemoApi() {
     onUpdateAvailable: () => {},
     onUpdateDownloaded: () => {},
     onDownloadProgress: () => {},
+    onUpdateError: () => {},
     setLanguage: () => {},
     onLanguageChanged: () => {}
   };

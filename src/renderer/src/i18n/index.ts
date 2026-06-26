@@ -31,4 +31,15 @@ i18n.use(initReactI18next).init({
   }
 });
 
+if (import.meta.hot) {
+  import.meta.hot.accept(["./locales/zh.json", "./locales/en.json"], async () => {
+    const [{ default: nextZh }, { default: nextEn }] = await Promise.all([
+      import("./locales/zh.json"),
+      import("./locales/en.json")
+    ]);
+    i18n.addResourceBundle("zh", "translation", nextZh, true, true);
+    i18n.addResourceBundle("en", "translation", nextEn, true, true);
+  });
+}
+
 export default i18n;

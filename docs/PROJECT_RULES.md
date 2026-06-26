@@ -21,11 +21,18 @@ Informio is a minimal desktop Markdown editor with contextual Agent assistance. 
 - Markdown files are the source of truth and must stay clean: do not write presentation-only HTML, text-color spans, app-private file URLs, or media iframe/video/audio tags by default. Use standard Markdown links/images and Obsidian-compatible block syntax; encrypted content is the only allowed Informio-specific Markdown extension because it needs cryptographic metadata.
 - The left library and right Agent panel are optional context. Users can collapse both.
 - AI actions should start from selected text or current document context.
-- Table controls should stay latent: show only the nearby `+` insertion affordance when the pointer is close to a table edge, and resize only the specific row or column being dragged.
+- Table controls should stay latent: show only the nearby `+` insertion affordance when the pointer is close to a table edge, and resize only the specific row or column being dragged. The formatting toolbar and row/column chrome should appear only when the table is selected or actively hovered.
+- Table column widths, row heights, and merged cells are editor-session layout only (same policy as image resize width): saved Markdown keeps standard GFM pipe tables, cell content, and per-column alignment via separator syntax (`:---`, `:---:`, `---:`); do not write HTML tables or presentation-only width/height metadata into Markdown files.
 - Clipboard paste must normalize external HTML before it reaches the editor: extract `StartFragment`/`EndFragment` content, strip site-only styling and unsafe attributes, preserve semantic links/images/tables, and keep source-mode paste readable. Add a regression fixture before changing paste behavior.
 - Images in the editor should support direct drag-to-resize from the canvas when it can be represented without dirtying Markdown; the saved Markdown must remain a standard image reference.
 - PDF highlighting remains available through `pdf.js` native highlight mode from the PDF toolbar; default PDF mode remains plain browsing and text selection.
 - PDF annotation management surfaces such as comment dialogs, annotation side panels, and PDF-to-Markdown backlink management should stay out of the PDF viewer unless intentionally reintroduced with a new rule update first.
+- Spreadsheet documents use the binary workbook file as the source of truth; the `markdown` field is only an in-library link reference.
+- Word documents (`.docx`) use the binary file as the source of truth; the `markdown` field is only an in-library link reference.
+- Legacy `.doc` files are not edited in-app; users should open them with the system word processor.
+- Spreadsheet and Word saves preserve the original file extension (for example `.xls` stays `.xls`).
+- External changes to an open spreadsheet must be confirmed by the user (reload, keep local edits, or save as) before overwriting local editor state.
+- External changes to an open Word document must be confirmed by the user (reload, keep local edits, or save as) before overwriting local editor state.
 - Settings must be discoverable from the main shell and should expose practical controls without forcing setup before writing.
 - Errors must explain what happened and the next action, especially for missing or failed MCP servers.
 - Agent runtime infrastructure may be shared, but execution flow presentation must follow each provider's native stage feel and pacing.

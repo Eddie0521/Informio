@@ -130,6 +130,38 @@ export const markdownTableAlign = (separatorCell: string): HorizontalCellAlign =
   return "left";
 };
 
+export const horizontalAlignToSeparatorCell = (align: HorizontalCellAlign) => {
+  if (align === "left") return "---";
+  if (align === "right") return "---:";
+  return ":---:";
+};
+
+export const tableJsonFromHeaderRow = (headerLine: string): JSONContent | null => {
+  if (!isExplicitMarkdownTableRow(headerLine)) return null;
+  const header = parseMarkdownTableRow(headerLine);
+  if (!header) return null;
+  const paragraph = (text?: string): JSONContent => (text ? { type: "paragraph", content: [{ type: "text", text }] } : { type: "paragraph" });
+  return {
+    type: "table",
+    content: [
+      {
+        type: "tableRow",
+        content: header.map((cell) => ({
+          type: "tableHeader",
+          content: [paragraph(cell)]
+        }))
+      },
+      {
+        type: "tableRow",
+        content: header.map(() => ({
+          type: "tableCell",
+          content: [paragraph()]
+        }))
+      }
+    ]
+  };
+};
+
 export const createTableFromMarkdown = (schema: ProseMirrorSchemaLike, lines: string[]) => {
   const header = parseMarkdownTableRow(lines[0]);
   if (!header || !isMarkdownTableSeparator(lines[1], header.length)) return null;

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Informio icon">
+  <rect width="1024" height="1024" rx="224" fill="#f4f6f7"/>
+  <rect x="226" y="164" width="572" height="696" rx="92" fill="#ffffff"/>
+  <path d="M665 164v132c0 28 23 51 51 51h82" fill="#eef1f3"/>
+  <path
+    d="M665 164v132c0 28 23 51 51 51h82"
+    fill="none"
+    stroke="#d5dbe0"
+    stroke-width="30"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M347 444h330M347 550h250M347 656h186"
+    fill="none"
+    stroke="#c8d0d6"
+    stroke-width="42"
+    stroke-linecap="round"
+  />
+  <rect
+    x="226"
+    y="164"
+    width="572"
+    height="696"
+    rx="92"
+    fill="none"
+    stroke="#d9dee2"
+    stroke-width="30"
+  />
+</svg>

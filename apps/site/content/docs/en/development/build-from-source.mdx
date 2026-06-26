@@ -1,0 +1,48 @@
+---
+title: Build from source
+description: Clone Informio, install dependencies, and package desktop builds locally.
+---
+
+## Clone and install
+
+```bash
+git clone https://github.com/Eddie0521/Informio.git
+cd Informio
+corepack enable
+corepack pnpm install
+```
+
+## Development
+
+```bash
+corepack pnpm dev
+```
+
+## Package desktop builds
+
+```bash
+# macOS unsigned DMG + ZIP
+corepack pnpm run dist:mac:unsigned
+
+# Windows NSIS installer
+corepack pnpm run dist:win
+```
+
+Artifacts land in `release/`.
+
+## Verify before contributing
+
+```bash
+corepack pnpm test
+corepack pnpm typecheck
+corepack pnpm build
+```
+
+## Web site (this documentation)
+
+```bash
+corepack pnpm dev:site
+corepack pnpm build:site
+```
+
+The marketing site and Fumadocs app live in `apps/site`.

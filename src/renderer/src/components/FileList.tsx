@@ -393,6 +393,8 @@ export default function FileList({
                       <ImageIcon size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
                     ) : documentKind(doc) === "spreadsheet" ? (
                       <Table size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
+                    ) : documentKind(doc) === "word" ? (
+                      <FileText size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
                     ) : (
                       <FileText size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
                     )}

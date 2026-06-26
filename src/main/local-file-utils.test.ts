@@ -13,7 +13,10 @@ import {
   generatedMarkdownForAssetPath,
   pdfMarkdown,
   spreadsheetMarkdown,
+  wordMarkdown,
   saveSpreadsheetFile,
+  saveWordFile,
+  getWordFileStat,
   normalizeAssetDocumentMarkdown,
   isWritableTextDocument,
   normalizeDocumentKind,
@@ -55,6 +58,11 @@ describe("documentKindFromPath", () => {
     expect(documentKindFromPath("budget.xlsx")).toBe("spreadsheet");
     expect(documentKindFromPath("legacy.xls")).toBe("spreadsheet");
     expect(documentKindFromPath("data.csv")).toBe("spreadsheet");
+  });
+
+  it("returns word for word extensions", () => {
+    expect(documentKindFromPath("essay.docx")).toBe("word");
+    expect(documentKindFromPath("legacy.doc")).toBe("word");
   });
 
   it("returns unknown for unrecognized", () => {
@@ -200,20 +208,69 @@ describe("spreadsheetMarkdown", () => {
   });
 });
 
+describe("wordMarkdown", () => {
+  it("generates word link markdown", () => {
+    const md = wordMarkdown("/project/report.docx", "/project/doc.md");
+    expect(md).toContain("[report.docx]");
+  });
+});
+
 describe("saveSpreadsheetFile", () => {
   it("writes spreadsheet bytes to disk", async () => {
     const dir = await mkdtemp(join(tmpdir(), "informio-spreadsheet-"));
     const path = join(dir, "budget.xlsx");
     const payload = new Uint8Array([1, 2, 3, 4]);
-    await saveSpreadsheetFile(path, payload.buffer);
+    const result = await saveSpreadsheetFile(path, payload.buffer);
+    expect(result.path).toBe(path);
     const written = await readFile(path);
     expect(Array.from(written)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("preserves legacy .xls path on save", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "informio-spreadsheet-"));
+    const xlsPath = join(dir, "budget.xls");
+    const payload = new Uint8Array([5, 6, 7, 8]);
+    await writeFile(xlsPath, payload);
+    const result = await saveSpreadsheetFile(xlsPath, payload.buffer);
+    expect(result).toEqual({ path: xlsPath });
+    const written = await readFile(xlsPath);
+    expect(Array.from(written)).toEqual([5, 6, 7, 8]);
   });
 
   it("rejects non-spreadsheet paths", async () => {
     await expect(saveSpreadsheetFile("/tmp/readme.txt", new ArrayBuffer(0))).rejects.toThrow(
       "Only spreadsheet files can be saved this way"
     );
+  });
+});
+
+describe("saveWordFile", () => {
+  it("writes .docx bytes to disk", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "informio-word-"));
+    const path = join(dir, "report.docx");
+    const payload = new Uint8Array([9, 8, 7, 6]);
+    const result = await saveWordFile(path, payload.buffer);
+    expect(result.path).toBe(path);
+    const written = await readFile(path);
+    expect(Array.from(written)).toEqual([9, 8, 7, 6]);
+  });
+
+  it("rejects non-docx paths", async () => {
+    await expect(saveWordFile("/tmp/readme.doc", new ArrayBuffer(0))).rejects.toThrow(
+      "Only .docx files can be saved this way"
+    );
+  });
+});
+
+describe("getWordFileStat", () => {
+  it("returns file fingerprint for .docx", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "informio-word-"));
+    const path = join(dir, "report.docx");
+    const payload = new Uint8Array([1, 2, 3]);
+    await writeFile(path, payload);
+    const stat = await getWordFileStat(path);
+    expect(stat.size).toBe(3);
+    expect(stat.mtimeMs).toBeGreaterThan(0);
   });
 });
 

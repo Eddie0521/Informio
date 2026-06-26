@@ -1,0 +1,30 @@
+---
+title: Agent overview
+description: How Informio connects to local Agents without leaving your writing flow.
+---
+
+Informio is an MCP Host/Client. It starts local Agent runtimes and passes workspace context from your writing surface.
+
+## Supported runtimes
+
+- Claude Code (Claude Agent SDK)
+- Codex (app-server)
+- OpenCode (OpenCode SDK)
+
+Each provider uses its own execution flow UI. Informio does not force a single generic process view for built-in providers.
+
+## Context sources
+
+Agents can start from:
+
+- Selected text
+- The current document
+- Open tabs and project structure (when the runtime supports it)
+
+## Privacy boundary
+
+Encrypted or passphrase-locked notes stay out of Agent context. Local-first means your files remain on your machine.
+
+## Safety defaults
+
+When a provider supports permission modes, Informio enforces them at the runtime level for file edits and shell commands.

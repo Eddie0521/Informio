@@ -1,0 +1,26 @@
+---
+title: macOS Gatekeeper
+description: Fix the damaged app warning for unsigned macOS builds.
+---
+
+Unsigned release builds are not notarized. macOS may block or mark Informio as damaged on first open.
+
+## Remove quarantine flag
+
+Run this in Terminal before opening the app:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Informio.app
+```
+
+Adjust the path if Informio is installed elsewhere.
+
+## Prefer no warning at all?
+
+Build Informio on your Mac from source. Locally built apps open without Gatekeeper damage prompts. See [Build from source](/docs/development/build-from-source).
+
+## Still blocked?
+
+1. Open **System Settings → Privacy & Security**.
+2. Look for a message about Informio and choose **Open Anyway** if shown.
+3. If the issue persists, file an [issue](https://github.com/Eddie0521/Informio/issues) with your macOS version.

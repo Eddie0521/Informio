@@ -142,15 +142,18 @@ export type EditorDropZone = "left" | "right" | "top" | "bottom";
 
 export type WorkspacePaneId = string;
 
-export type BrowserTab = {
-  id: string;
+export type BrowserTabMeta = {
   url?: string;
   title?: string;
 };
 
+export type WorkspaceTabRef =
+  | { kind: "document"; id: string }
+  | { kind: "browser"; id: string };
+
 export type WorkspacePaneContent =
   | { type: "document"; documentId: string }
-  | { type: "browser"; tabs: BrowserTab[]; activeTabId: string }
+  | { type: "browser"; tabId: string }
   | { type: "agent" };
 
 export type WorkspaceLeafNode = {

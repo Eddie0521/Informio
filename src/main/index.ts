@@ -30,6 +30,10 @@ import type {
   SaveAttachmentResult,
   SaveAgentConversationsInput,
   SaveResult,
+  SaveSpreadsheetResult,
+  SaveWordResult,
+  SpreadsheetDiskFingerprint,
+  WordDiskFingerprint,
   AgentApprovalResponseInput,
   AgentSessionInput,
   SendAgentMessageInput,
@@ -83,9 +87,13 @@ import {
   loadAssetData,
   savePdfFile,
   saveSpreadsheetFile,
+  getSpreadsheetFileStat,
+  saveWordFile,
+  getWordFileStat,
   generatedMarkdownForAssetPath,
   pdfMarkdown,
   spreadsheetMarkdown,
+  wordMarkdown,
   normalizeAssetDocumentMarkdown,
   escapeHtml,
   exportFontStack,
@@ -674,6 +682,8 @@ const readDocumentsFromPaths = async (paths: string[]) => {
             markdown = pdfMarkdown(path);
           } else if (kind === "spreadsheet") {
             markdown = spreadsheetMarkdown(path);
+          } else if (kind === "word") {
+            markdown = wordMarkdown(path);
           } else {
             markdown = await readFile(path, "utf8");
             sourceMarkdown = markdown;
@@ -917,7 +927,7 @@ const openFileDialog = async (): Promise<AppData | null> => {
   const result = await dialog.showOpenDialog(window, {
     properties: ["openFile", "multiSelections"],
     filters: [
-      { name: "Informio files", extensions: ["md", "markdown", "txt", "png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "mov", "webm", "mp3", "wav", "m4a", "ogg", "pdf"] },
+      { name: "Informio files", extensions: ["md", "markdown", "txt", "png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "mov", "webm", "mp3", "wav", "m4a", "ogg", "pdf", "docx", "doc"] },
       { name: "All Files", extensions: ["*"] }
     ]
   });
@@ -1582,6 +1592,87 @@ const saveActiveDocumentAs = async (documents?: InformioDocument[], activeDocume
   return appData;
 };
 
+const saveWordAs = async (
+  documents?: InformioDocument[],
+  activeDocumentId?: string,
+  data?: ArrayBuffer
+) => {
+  await syncRendererDocuments(documents, activeDocumentId);
+  const window = getFocusedMainWindow();
+  const doc = activeDocument();
+  if (!window || !doc || normalizeDocumentKind(doc) !== "word" || !data || !(data instanceof ArrayBuffer)) return;
+  const result = await dialog.showSaveDialog(window, {
+    defaultPath: doc.filePath ?? doc.title,
+    filters: [{ name: "Word", extensions: ["docx"] }]
+  });
+  if (result.canceled || !result.filePath) return;
+  if (documentKindFromPath(result.filePath) !== "word" || extname(result.filePath).toLowerCase() !== ".docx") {
+    throw new Error("Only .docx files can be saved this way");
+  }
+  await writeFile(result.filePath, Buffer.from(data));
+  appData = await saveAppData({
+    ...appData,
+    folders: withTrackedFolders(appData.folders, [dirname(result.filePath)]),
+    documents: appData.documents.map((item) =>
+      item.id === doc.id
+        ? {
+            ...item,
+            title: basename(result.filePath!),
+            filePath: result.filePath,
+            markdown: wordMarkdown(result.filePath!),
+            kind: "word" as const,
+            updatedAt: new Date().toISOString()
+          }
+        : item
+    )
+  });
+  updateApplicationMenu();
+  emitAppData();
+  return appData;
+};
+
+const saveSpreadsheetAs = async (
+  documents?: InformioDocument[],
+  activeDocumentId?: string,
+  data?: ArrayBuffer
+) => {
+  await syncRendererDocuments(documents, activeDocumentId);
+  const window = getFocusedMainWindow();
+  const doc = activeDocument();
+  if (!window || !doc || normalizeDocumentKind(doc) !== "spreadsheet" || !data || !(data instanceof ArrayBuffer)) return;
+  const result = await dialog.showSaveDialog(window, {
+    defaultPath: doc.filePath ?? doc.title,
+    filters: [
+      { name: "Excel", extensions: ["xlsx"] },
+      { name: "CSV", extensions: ["csv"] }
+    ]
+  });
+  if (result.canceled || !result.filePath) return;
+  if (documentKindFromPath(result.filePath) !== "spreadsheet") {
+    throw new Error("Only spreadsheet files can be saved this way");
+  }
+  await writeFile(result.filePath, Buffer.from(data));
+  appData = await saveAppData({
+    ...appData,
+    folders: withTrackedFolders(appData.folders, [dirname(result.filePath)]),
+    documents: appData.documents.map((item) =>
+      item.id === doc.id
+        ? {
+            ...item,
+            title: basename(result.filePath!),
+            filePath: result.filePath,
+            markdown: spreadsheetMarkdown(result.filePath!),
+            kind: "spreadsheet" as const,
+            updatedAt: new Date().toISOString()
+          }
+        : item
+    )
+  });
+  updateApplicationMenu();
+  emitAppData();
+  return appData;
+};
+
 const moveActiveDocumentTo = async () => {
   const window = getFocusedMainWindow();
   const doc = activeDocument();
@@ -1954,7 +2045,7 @@ app.whenReady().then(async () => {
   }
   updateApplicationMenu();
   createWindow();
-  setupAutoUpdater(() => mainWindow);
+  setupAutoUpdater();
   registerGlobalShortcuts();
   await flushPendingExternalOpenFiles();
 });
@@ -2149,7 +2240,7 @@ ipcMain.handle("app:save-pdf-file", async (_event, path: string, data: ArrayBuff
   return savePdfFile(path, data);
 });
 
-ipcMain.handle("app:save-spreadsheet-file", async (_event, path: string, data: ArrayBuffer): Promise<void> => {
+ipcMain.handle("app:save-spreadsheet-file", async (_event, path: string, data: ArrayBuffer): Promise<SaveSpreadsheetResult | void> => {
   if (typeof path !== "string" || path.includes("..")) {
     log.warn("Invalid path in app:save-spreadsheet-file:", path);
     return;
@@ -2158,8 +2249,77 @@ ipcMain.handle("app:save-spreadsheet-file", async (_event, path: string, data: A
     log.warn("Invalid data in app:save-spreadsheet-file");
     return;
   }
-  return saveSpreadsheetFile(path, data);
+  const result = await saveSpreadsheetFile(path, data);
+  return result;
 });
+
+ipcMain.handle("app:spreadsheet-file-stat", async (_event, path: string): Promise<SpreadsheetDiskFingerprint | void> => {
+  if (typeof path !== "string" || path.includes("..")) {
+    log.warn("Invalid path in app:spreadsheet-file-stat:", path);
+    return;
+  }
+  try {
+    return await getSpreadsheetFileStat(path);
+  } catch (error) {
+    log.warn("Failed to stat spreadsheet file:", path, error);
+    return;
+  }
+});
+
+ipcMain.handle(
+  "app:save-spreadsheet-as",
+  async (_event, documents: InformioDocument[], activeDocumentId: string, data: ArrayBuffer) => {
+    if (!Array.isArray(documents) || typeof activeDocumentId !== "string") {
+      log.warn("Invalid IPC args for app:save-spreadsheet-as");
+      return;
+    }
+    if (!data || !(data instanceof ArrayBuffer)) {
+      log.warn("Invalid data in app:save-spreadsheet-as");
+      return;
+    }
+    return saveSpreadsheetAs(documents, activeDocumentId, data);
+  }
+);
+
+ipcMain.handle("app:save-word-file", async (_event, path: string, data: ArrayBuffer): Promise<SaveWordResult | void> => {
+  if (typeof path !== "string" || path.includes("..")) {
+    log.warn("Invalid path in app:save-word-file:", path);
+    return;
+  }
+  if (!data || !(data instanceof ArrayBuffer)) {
+    log.warn("Invalid data in app:save-word-file");
+    return;
+  }
+  return saveWordFile(path, data);
+});
+
+ipcMain.handle("app:word-file-stat", async (_event, path: string): Promise<WordDiskFingerprint | void> => {
+  if (typeof path !== "string" || path.includes("..")) {
+    log.warn("Invalid path in app:word-file-stat:", path);
+    return;
+  }
+  try {
+    return await getWordFileStat(path);
+  } catch (error) {
+    log.warn("Failed to stat word file:", path, error);
+    return;
+  }
+});
+
+ipcMain.handle(
+  "app:save-word-as",
+  async (_event, documents: InformioDocument[], activeDocumentId: string, data: ArrayBuffer) => {
+    if (!Array.isArray(documents) || typeof activeDocumentId !== "string") {
+      log.warn("Invalid IPC args for app:save-word-as");
+      return;
+    }
+    if (!data || !(data instanceof ArrayBuffer)) {
+      log.warn("Invalid data in app:save-word-as");
+      return;
+    }
+    return saveWordAs(documents, activeDocumentId, data);
+  }
+);
 
 ipcMain.handle("app:save-settings", async (_event, settings: AppSettings) => {
   if (!settings || typeof settings !== "object") {

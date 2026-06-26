@@ -1,0 +1,30 @@
+---
+title: Agent 概览
+description: Informio 如何连接本地 Agent，同时不打断写作流程。
+---
+
+Informio 是 MCP Host/Client。它启动本地 Agent 运行时，并从写作界面传递工作区上下文。
+
+## 支持的运行时
+
+- Claude Code（Claude Agent SDK）
+- Codex（app-server）
+- OpenCode（OpenCode SDK）
+
+每个提供方使用各自的执行流程 UI。Informio 不会把内置提供方强制套进单一通用流程界面。
+
+## 上下文来源
+
+Agent 可从以下来源启动：
+
+- 选中文本
+- 当前文档
+- 已打开标签页与项目结构（在运行时支持时）
+
+## 隐私边界
+
+加密或用口令锁定的笔记不会进入 Agent 上下文。本地优先意味着文件留在你的机器上。
+
+## 安全默认值
+
+当提供方支持权限模式时，Informio 在运行时层面强制执行文件编辑与 shell 命令的权限边界。

@@ -23,6 +23,10 @@ import type {
   SaveAgentConversationsInput,
   SaveAttachmentResult,
   SaveResult,
+  SaveSpreadsheetResult,
+  SaveWordResult,
+  SpreadsheetDiskFingerprint,
+  WordDiskFingerprint,
   SendAgentMessageInput,
   SendAgentMessageResult,
   TranslateSelectionInput,
@@ -62,7 +66,17 @@ const api = {
   loadEmbedPdfWasm: () => ipcRenderer.invoke("app:load-embedpdf-wasm") as Promise<AssetDataResult>,
   savePdfFile: (path: string, data: ArrayBuffer) => ipcRenderer.invoke("app:save-pdf-file", path, data) as Promise<void>,
   saveSpreadsheetFile: (path: string, data: ArrayBuffer) =>
-    ipcRenderer.invoke("app:save-spreadsheet-file", path, data) as Promise<void>,
+    ipcRenderer.invoke("app:save-spreadsheet-file", path, data) as Promise<SaveSpreadsheetResult | void>,
+  getSpreadsheetFileStat: (path: string) =>
+    ipcRenderer.invoke("app:spreadsheet-file-stat", path) as Promise<SpreadsheetDiskFingerprint | void>,
+  saveSpreadsheetAs: (documents: InformioDocument[], activeDocumentId: string, data: ArrayBuffer) =>
+    ipcRenderer.invoke("app:save-spreadsheet-as", documents, activeDocumentId, data) as Promise<AppData | undefined>,
+  saveWordFile: (path: string, data: ArrayBuffer) =>
+    ipcRenderer.invoke("app:save-word-file", path, data) as Promise<SaveWordResult | void>,
+  getWordFileStat: (path: string) =>
+    ipcRenderer.invoke("app:word-file-stat", path) as Promise<WordDiskFingerprint | void>,
+  saveWordAs: (documents: InformioDocument[], activeDocumentId: string, data: ArrayBuffer) =>
+    ipcRenderer.invoke("app:save-word-as", documents, activeDocumentId, data) as Promise<AppData | undefined>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("app:save-settings", settings) as Promise<AppSettings>,
   getAppInfo: () => ipcRenderer.invoke("app:get-info") as Promise<AppInfo>,
   saveDocuments: (documents: InformioDocument[], activeDocumentId: string) =>
@@ -193,6 +207,9 @@ const api = {
   },
   onDownloadProgress: (callback: (info: { percent: number; transferred: number; total: number }) => void) => {
     ipcRenderer.on("updater:download-progress", (_event, info) => callback(info));
+  },
+  onUpdateError: (callback: (info: { message: string }) => void) => {
+    ipcRenderer.on("updater:error", (_event, info) => callback(info));
   },
   setLanguage: (lang: string) => { ipcRenderer.invoke("app:set-language", lang); },
   onLanguageChanged: (callback: (lang: string) => void) => {

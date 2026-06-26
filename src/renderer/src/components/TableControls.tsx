@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import type {
   HorizontalCellAlign,
-  TableColumnWidthInfo,
   TableHoverTarget,
   TableOverlayState,
   TableSelectionShape,
@@ -38,29 +37,13 @@ import {
   TABLE_TOOLBAR_HEIGHT,
 } from "../constants";
 import { cn } from "../lib/utils";
-
-const tablePosFromDom = (editor: Editor, table: HTMLTableElement) => {
-  const firstCell = table.querySelector("th, td");
-  if (firstCell instanceof HTMLTableCellElement) {
-    let cellPos: number | null = null;
-    try {
-      const contentPos = editor.view.posAtDOM(firstCell, 0);
-      const nextCellPos = Math.max(0, contentPos - 1);
-      const node = editor.state.doc.nodeAt(nextCellPos);
-      if (node?.type.name === "tableCell" || node?.type.name === "tableHeader") cellPos = nextCellPos;
-    } catch (error) {
-      console.warn("Failed to resolve table cell position:", error);
-      cellPos = null;
-    }
-    if (cellPos !== null) {
-      const $cell = editor.state.doc.resolve(cellPos);
-      for (let depth = $cell.depth; depth > 0; depth -= 1) {
-        if ($cell.node(depth).type.name === "table") return $cell.before(depth);
-      }
-    }
-  }
-  return null;
-};
+import {
+  measureLogicalTableColumns,
+  tableCellPosAt,
+  tableColumnLabel,
+  tablePosFromDom,
+  tableResizeSessionRef
+} from "../lib/table-utils";
 
 const selectCellForTableCommand = (editor: Editor, table: HTMLTableElement, rowIndex: number, columnIndex: number) => {
   const row = table.rows.item(rowIndex);
@@ -76,13 +59,6 @@ const selectionTableFromEditor = (editor: Editor) => {
   const target =
     domAtSelection.node instanceof Element ? domAtSelection.node : domAtSelection.node.parentElement;
   return target?.closest("table") as HTMLTableElement | null;
-};
-
-export const tableCellPosAt = (table: ProseMirrorNode, tablePos: number, rowIndex: number, columnIndex: number) => {
-  const map = TableMap.get(table);
-  if (rowIndex < 0 || rowIndex >= map.height || columnIndex < 0 || columnIndex >= map.width) return null;
-  const offset = map.map[rowIndex * map.width + columnIndex];
-  return tablePos + 1 + offset;
 };
 
 const tableRowPosAt = (table: ProseMirrorNode, tablePos: number, rowIndex: number) => {
@@ -160,80 +136,6 @@ const activeTableCellNodeFromSelection = (selection: Editor["state"]["selection"
   return null;
 };
 
-const tableColumnLabel = (index: number) => {
-  let value = index;
-  let label = "";
-  do {
-    label = String.fromCharCode(65 + (value % 26)) + label;
-    value = Math.floor(value / 26) - 1;
-  } while (value >= 0);
-  return label;
-};
-
-const tableColumnWidthInfo = (editor: Editor, table: HTMLTableElement, tablePos: number): TableColumnWidthInfo[] => {
-  const tableNode = editor.state.doc.nodeAt(tablePos);
-  if (tableNode?.type.name !== "table") return [];
-
-  const map = TableMap.get(tableNode);
-  const fallbackWidths = Array.from(table.querySelectorAll("colgroup col")).map((column) => {
-    const width = Number.parseFloat(window.getComputedStyle(column).width);
-    return Number.isFinite(width) && width > 0 ? width : TABLE_CELL_MIN_WIDTH;
-  });
-
-  const widths = Array.from({ length: map.width }, (_, index) => ({
-    width: fallbackWidths[index] ?? TABLE_CELL_MIN_WIDTH,
-    fixed: false
-  }));
-
-  const tableStart = tablePos + 1;
-  for (let rowIndex = 0; rowIndex < map.height; rowIndex += 1) {
-    for (let columnIndex = 0; columnIndex < map.width; columnIndex += 1) {
-      if (widths[columnIndex].fixed) continue;
-      const cellPos = tableCellPosAt(tableNode, tablePos, rowIndex, columnIndex);
-      if (cellPos === null) continue;
-
-      const cellNode = editor.state.doc.nodeAt(cellPos);
-      if (!cellNode) continue;
-
-      const rect = map.findCell(cellPos - tableStart);
-      const colwidth = Array.isArray(cellNode.attrs.colwidth) ? cellNode.attrs.colwidth : [];
-      const width = Number(colwidth[columnIndex - rect.left] ?? 0);
-      if (!Number.isFinite(width) || width <= 0) continue;
-
-      widths[columnIndex] = { width, fixed: true };
-    }
-  }
-
-  return widths;
-};
-
-const measureNaturalTableColumnWidthInfo = (
-  editor: Editor,
-  table: HTMLTableElement,
-  tablePos: number,
-  columns: HTMLElement[]
-): TableColumnWidthInfo[] => {
-  const previousInlineFit = table.dataset.inlineFit;
-  const previousTableWidth = table.style.width;
-  const previousColumnWidths = columns.map((column) => column.style.width);
-
-  try {
-    delete table.dataset.inlineFit;
-    table.style.width = "";
-    columns.forEach((column) => {
-      column.style.width = "";
-    });
-    return tableColumnWidthInfo(editor, table, tablePos);
-  } finally {
-    if (previousInlineFit === undefined) delete table.dataset.inlineFit;
-    else table.dataset.inlineFit = previousInlineFit;
-    table.style.width = previousTableWidth;
-    columns.forEach((column, index) => {
-      column.style.width = previousColumnWidths[index] ?? "";
-    });
-  }
-};
-
 const nearestTableHoverTarget = (overlay: TableOverlayState, clientX: number, clientY: number): TableHoverTarget => {
   const tableRect = overlay.table.getBoundingClientRect();
   const relativeX = clientX - tableRect.left;
@@ -273,6 +175,16 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
   const [overlay, setOverlay] = useState<TableOverlayState | null>(null);
   const [hoverTarget, setHoverTarget] = useState<TableHoverTarget>(null);
   const selectionTableRef = useRef<HTMLTableElement | null>(null);
+  const hoverTargetRef = useRef<TableHoverTarget>(null);
+  const overlayTableRef = useRef<HTMLTableElement | null>(null);
+
+  useEffect(() => {
+    hoverTargetRef.current = hoverTarget;
+  }, [hoverTarget]);
+
+  useEffect(() => {
+    overlayTableRef.current = overlay?.table ?? null;
+  }, [overlay?.table]);
 
   const measureTable = (table: HTMLTableElement): TableOverlayState | null => {
     const container = containerRef.current;
@@ -299,15 +211,7 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
               return column;
             });
           })()
-        : Array.from(firstRow.cells).flatMap((cell) => {
-            const rect = cell.getBoundingClientRect();
-            const colspan = Math.max(1, cell.colSpan || 1);
-            const logicalWidth = rect.width / colspan;
-            return Array.from({ length: colspan }, (_, columnIndex) => ({
-              left: rect.left - tableRect.left + logicalWidth * columnIndex,
-              width: logicalWidth
-            }));
-          }).slice(0, map.width);
+        : measureLogicalTableColumns(editor!, table, tablePos, tableNode);
     return {
       table,
       tablePos,
@@ -363,7 +267,7 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
       const table = selectionTableFromEditor(editor);
       selectionTableRef.current = table;
       if (table) refreshOverlay(table);
-      else if (!hoverTarget) setOverlay(null);
+      else if (!hoverTargetRef.current) setOverlay(null);
     };
     const onScroll = () => refreshOverlay();
     const onResize = () => refreshOverlay();
@@ -383,7 +287,7 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
       editor.off("selectionUpdate", updateFromSelection);
       editor.off("update", updateFromSelection);
     };
-  }, [containerRef, editor, hoverTarget, overlay?.table]);
+  }, [containerRef, editor]);
 
   if (!editor || !overlay) return null;
 
@@ -484,6 +388,7 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
   const startRowResize = (rowIndex: number, event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    tableResizeSessionRef.active = true;
     const baseHeight = overlay.rows[rowIndex]?.height ?? TABLE_ROW_MIN_HEIGHT;
     const startY = event.clientY;
     const onPointerMove = (moveEvent: PointerEvent) => {
@@ -491,6 +396,7 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
       refreshOverlay();
     };
     const onPointerUp = () => {
+      tableResizeSessionRef.active = false;
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       refreshOverlay();
@@ -502,6 +408,7 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
   const startColumnResize = (columnIndex: number, event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    tableResizeSessionRef.active = true;
     const baseWidth = overlay.columns[columnIndex]?.width ?? TABLE_CELL_MIN_WIDTH;
     const startX = event.clientX;
     const onPointerMove = (moveEvent: PointerEvent) => {
@@ -509,6 +416,7 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
       refreshOverlay();
     };
     const onPointerUp = () => {
+      tableResizeSessionRef.active = false;
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       refreshOverlay();
@@ -623,10 +531,14 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
         </button>
       ) : null}
 
+      {selectionInOverlayTable ? (
       <div
         className="informio-table-toolbar"
         style={{
-          top: overlay.rect.top - TABLE_HEADER_STRIP_SIZE - TABLE_TOOLBAR_HEIGHT - 6,
+          top: Math.max(
+            TABLE_HEADER_STRIP_SIZE,
+            overlay.rect.top - TABLE_HEADER_STRIP_SIZE - TABLE_TOOLBAR_HEIGHT - 6
+          ),
           left: overlay.rect.left + TABLE_HEADER_STRIP_SIZE
         }}
       >
@@ -755,6 +667,7 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
           <Trash2 size={13} />
         </button>
       </div>
+      ) : null}
 
       <button
         type="button"
@@ -791,8 +704,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
               selectionShape && columnIndex >= selectionShape.left && columnIndex < selectionShape.right && "is-active"
             )}
             style={{ width: column.width, height: TABLE_HEADER_STRIP_SIZE }}
-            aria-label={t("table.selectColumn", { column: columnIndex + 1 })}
-            title={t("table.selectColumn", { column: columnIndex + 1 })}
+            aria-label={t("table.selectColumn", { column: tableColumnLabel(columnIndex) })}
+            title={t("table.selectColumn", { column: tableColumnLabel(columnIndex) })}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => selectTableColumnAt(columnIndex)}
           >
@@ -801,8 +714,8 @@ export function TableControls({ editor, containerRef }: { editor: Editor | null;
           <button
             type="button"
             className="informio-table-column-resize-handle"
-            aria-label={t("table.resizeColumn", { column: columnIndex + 1 })}
-            title={t("table.resizeColumn", { column: columnIndex + 1 })}
+            aria-label={t("table.resizeColumn", { column: tableColumnLabel(columnIndex) })}
+            title={t("table.resizeColumn", { column: tableColumnLabel(columnIndex) })}
             onMouseDown={(event) => startColumnResize(columnIndex, event)}
           />
         </div>

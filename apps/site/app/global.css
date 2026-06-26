@@ -1,0 +1,47 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+:root {
+  --informio-accent: #059669;
+  --informio-accent-hover: #047857;
+  --informio-text: #111820;
+  --informio-muted: #64748b;
+  --informio-surface: #ffffff;
+  --informio-page-bg: #eef2f3;
+  --informio-sidebar: #f8fafc;
+  --informio-border: #e2e8f0;
+
+  --fd-primary: #059669;
+  --fd-primary-foreground: #ffffff;
+  --fd-background: #ffffff;
+  --fd-foreground: #111820;
+  --fd-muted: #f8fafc;
+  --fd-muted-foreground: #64748b;
+  --fd-border: #e2e8f0;
+  --fd-accent: #f8fafc;
+  --fd-accent-foreground: #111820;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background: rgb(5 150 105 / 0.18);
+}

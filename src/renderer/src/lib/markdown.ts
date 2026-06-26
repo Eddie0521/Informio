@@ -1,5 +1,6 @@
 import type { JSONContent, MarkdownRendererHelpers } from "@tiptap/core";
-import type { InformioDocument } from "../types";
+import type { HorizontalCellAlign, InformioDocument } from "../types";
+import { horizontalAlignToSeparatorCell } from "./markdown-block-parser";
 
 export const escapeHtml = (value: string) =>
   value
@@ -76,7 +77,12 @@ export const renderTableToGfm = (node: JSONContent, h: MarkdownRendererHelpers) 
     Array.from({ length: columnCount }, (_, index) => row[index] ?? "")
   );
   const header = aligned[0];
-  const separator = header.map(() => "---");
+  const firstRowCells = node.content?.[0]?.content ?? [];
+  const separator = Array.from({ length: columnCount }, (_, index) => {
+    const cell = firstRowCells[index];
+    const align = (cell?.attrs?.align as HorizontalCellAlign | undefined) ?? "center";
+    return horizontalAlignToSeparatorCell(align);
+  });
   const body = aligned.slice(1);
   const lines = [
     `| ${header.join(" | ")} |`,
@@ -120,44 +126,3 @@ export const renderJsonNodeToHtml = (node: JSONContent): string => {
   return children;
 };
 
-export const tableJsonUsesRichMarkdown = (node: JSONContent) =>
-  Boolean(
-    node.type === "table" &&
-    node.content?.some((row) =>
-      row.content?.some((cell) =>
-        cell.attrs?.colwidth !== undefined &&
-        Array.isArray(cell.attrs.colwidth) &&
-        cell.attrs.colwidth.some((w: number) => w > 0)
-      )
-    )
-  );
-
-export const renderRichTableToMarkdown = (node: JSONContent) => {
-  const rows = (node.content ?? []).map((row) =>
-    (row.content ?? []).map((cell) => {
-      const text = (cell.content ?? [])
-        .map((child) => {
-          if (child.type === "paragraph") {
-            return (child.content ?? []).map((grandchild) => grandchild.text ?? "").join("");
-          }
-          return child.text ?? "";
-        })
-        .join("\n");
-      return text;
-    })
-  );
-  if (!rows.length) return "";
-  const columnCount = Math.max(...rows.map((row) => row.length));
-  const aligned = rows.map((row) =>
-    Array.from({ length: columnCount }, (_, index) => row[index] ?? "")
-  );
-  const header = aligned[0];
-  const separator = header.map(() => "---");
-  const body = aligned.slice(1);
-  const lines = [
-    `| ${header.join(" | ")} |`,
-    `| ${separator.join(" | ")} |`,
-    ...body.map((row) => `| ${row.join(" | ")} |`)
-  ];
-  return `\n${lines.join("\n")}\n`;
-};

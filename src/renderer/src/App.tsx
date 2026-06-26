@@ -43,10 +43,10 @@ import {
   FileText,
   Film,
   Folder,
-  Github,
   FolderPlus,
   FolderRoot,
   Globe,
+  Github,
   Highlighter,
   History,
   ImageIcon,
@@ -68,7 +68,6 @@ import {
   Palette,
   Pin,
   PinOff,
-  Plus,
   Replace,
   Search,
   Settings,
@@ -203,7 +202,10 @@ import {
   resolveMarkdownAssetPath,
   loadLocalAssetObjectUrl,
 } from "./lib/asset-url";
-import { saveSpreadsheetDocumentNow } from "./lib/spreadsheet-save-bridge";
+import { saveSpreadsheetDocumentAs, saveSpreadsheetDocumentNow } from "./lib/spreadsheet-save-bridge";
+import { spreadsheetDocumentMarkdown } from "./lib/spreadsheet-document";
+import { saveWordDocumentAs, saveWordDocumentNow } from "./lib/word-save-bridge";
+import { wordDocumentMarkdown } from "./lib/word-document";
 import {
   documentKindFromPath,
   documentKind,
@@ -251,10 +253,7 @@ import {
   replaceWikiLinkTargets,
   plainText,
   parseHtmlAttr,
-  renderTableToGfm,
   renderJsonNodeToHtml,
-  tableJsonUsesRichMarkdown,
-  renderRichTableToMarkdown,
 } from "./lib/markdown";
 import {
   parseFrontmatter,
@@ -365,7 +364,8 @@ import type {
   FileContextMenuState,
   ProjectContextMenuState,
   BlankContextMenuState,
-  BrowserTab,
+  BrowserTabMeta,
+  WorkspaceTabRef,
   InlineRenameState,
   PendingCreationState,
   TreeDropTarget,
@@ -404,9 +404,7 @@ import "katex/dist/katex.min.css";
 import i18n, { settingsLanguageToUiLanguage } from "./i18n";
 
 import { getThemeSwatchStyle, isDarkColor, settingsNav, mergeFontOptions, lastToolbarSelectionText, setLastToolbarSelectionText, syncDocumentAppearanceVariables, buildShellStyle, buildConfiguredFontStack, buildUiFontStack } from "./lib/settings-helpers";
-import { useUiStore, useAppStore, useAgentStore, useDocumentStore } from "./stores";
-
-const RIGHT_RAIL_BROWSER_PANE_ID = "informio-right-pane";
+import { useUiStore, useAppStore, useAgentStore, useDocumentStore, selectOpenDocumentIds } from "./stores";
 
 const resolveTranslationTarget = (text: string): "zh-CN" | "en" => {
   const normalized = text.trim();
@@ -423,6 +421,7 @@ import { OutlineList } from "./components/OutlineList";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { AgentPanel } from "./components/AgentPanel";
 import { BrowserPanel, BROWSER_BOUNDS_SYNC_EVENT } from "./components/BrowserPanel";
+import { WorkspaceDropOverlay } from "./components/WorkspaceDropOverlay";
 import { WorkspaceSplitView } from "./components/WorkspaceSplitView";
 import { CommandPalette } from "./components/CommandPalette";
 import { SelectionToolbar } from "./components/SelectionToolbar";
@@ -446,20 +445,21 @@ import {
   countWorkspaceLeaves,
   createAgentLeaf,
   createBrowserContent,
+  createBrowserId,
   createBrowserLeaf,
+  browserTabLabel,
   createDocumentLeaf,
   createPaneId,
   findAgentLeaf,
+  findBrowserLeafByTabId,
   findDocumentLeafById,
   findWorkspaceLeaf,
   getActiveDocumentId,
-  getBrowserTabIds,
   maximizeWorkspaceLeaf,
-  normalizeBrowserContent,
   normalizeWorkspaceLayout,
+  paneDropZoneFromRect,
   removeWorkspaceLeaf,
   replaceWorkspaceLeafContent,
-  updateWorkspaceLeaf,
   splitWorkspaceLeaf,
   updateSplitRatioAtPath,
 } from "./lib/workspace-layout-utils";
@@ -516,19 +516,34 @@ export function App() {
   } = useAgentStore();
   const { checkingApiModels, setCheckingApiModels, apiCheckState, setApiCheckState } = useUiStore();
   const { appInfo, setAppInfo } = useAppStore();
-  const { sidebarMode, setSidebarMode, rightPanelMode, setRightPanelMode, commandPaletteOpen, setCommandPaletteOpen, rightBrowserTabs, rightBrowserActiveTabId, setRightBrowserTabs } = useUiStore();
+  const { sidebarMode, setSidebarMode, rightPanelMode, setRightPanelMode, commandPaletteOpen, setCommandPaletteOpen } = useUiStore();
   const {
-    openDocumentIds, setOpenDocumentIds,
-    workspaceLayout, setWorkspaceLayout,
-    activePaneId, setActivePaneId,
-    editorViewModes, setEditorViewModes,
-    documentRefreshTokens, setDocumentRefreshTokens,
-    dropTarget, setDropTarget,
-    dirtyDocumentIds, setDirtyDocumentIds,
-    documentConflicts, setDocumentConflicts,
-    activeConflictDocumentId, setActiveConflictDocumentId,
-    fileListCreationSignal, setFileListCreationSignal,
-    outlineJumpRequest, setOutlineJumpRequest
+    openWorkspaceTabs,
+    setOpenWorkspaceTabs,
+    browserTabMeta,
+    setBrowserTabMeta,
+    activeWorkspaceTab,
+    setActiveWorkspaceTab,
+    workspaceLayout,
+    setWorkspaceLayout,
+    activePaneId,
+    setActivePaneId,
+    editorViewModes,
+    setEditorViewModes,
+    documentRefreshTokens,
+    setDocumentRefreshTokens,
+    dropTarget,
+    setDropTarget,
+    dirtyDocumentIds,
+    setDirtyDocumentIds,
+    documentConflicts,
+    setDocumentConflicts,
+    activeConflictDocumentId,
+    setActiveConflictDocumentId,
+    fileListCreationSignal,
+    setFileListCreationSignal,
+    outlineJumpRequest,
+    setOutlineJumpRequest,
   } = useDocumentStore();
   const saveTimer = useRef<number | null>(null);
   const saveQueueRef = useRef(Promise.resolve<AppData | null>(null));
@@ -543,6 +558,8 @@ export function App() {
   const lastActiveDocumentIdRef = useRef<string | null>(null);
   const tabsScrollRef = useRef<HTMLDivElement | null>(null);
   const activeTabRef = useRef<HTMLDivElement | null>(null);
+  const workspaceSectionRef = useRef<HTMLElement | null>(null);
+  const isWorkspaceDraggingRef = useRef(false);
 
   useEffect(() => {
     if (!data) return;
@@ -602,6 +619,60 @@ export function App() {
     forgetDocumentDirtyState(documentId);
   }, []);
 
+  const updateSpreadsheetDocumentPath = useCallback((documentId: string, nextPath: string) => {
+    const current = latestDataRef.current;
+    if (!current) return;
+    const title = pathBaseName(nextPath);
+    const markdown = spreadsheetDocumentMarkdown(nextPath);
+    const documents = current.documents.map((doc) =>
+      doc.id === documentId
+        ? {
+            ...doc,
+            filePath: nextPath,
+            title,
+            markdown,
+            kind: "spreadsheet" as const,
+            updatedAt: new Date().toISOString()
+          }
+        : doc
+    );
+    applyDataState({ ...current, documents });
+    void window.informio.saveDocuments(documents, current.activeDocumentId);
+  }, []);
+
+  const updateWordDocumentPath = useCallback((documentId: string, nextPath: string) => {
+    const current = latestDataRef.current;
+    if (!current) return;
+    const title = pathBaseName(nextPath);
+    const markdown = wordDocumentMarkdown(nextPath);
+    const documents = current.documents.map((doc) =>
+      doc.id === documentId
+        ? {
+            ...doc,
+            filePath: nextPath,
+            title,
+            markdown,
+            kind: "word" as const,
+            updatedAt: new Date().toISOString()
+          }
+        : doc
+    );
+    applyDataState({ ...current, documents });
+    void window.informio.saveDocuments(documents, current.activeDocumentId);
+  }, []);
+
+  const handleBinaryDocumentPathChange = useCallback((documentId: string, nextPath: string) => {
+    const doc = latestDataRef.current?.documents.find((item) => item.id === documentId);
+    if (!doc) return;
+    if (documentKind(doc) === "spreadsheet") {
+      updateSpreadsheetDocumentPath(documentId, nextPath);
+      return;
+    }
+    if (documentKind(doc) === "word") {
+      updateWordDocumentPath(documentId, nextPath);
+    }
+  }, [updateSpreadsheetDocumentPath, updateWordDocumentPath]);
+
   const applyMergedAppData = (updated: AppData, options: { allowNewConflicts?: boolean } = {}) => {
     const merged = mergeDiskDataWithLocalDrafts(
       updated,
@@ -622,6 +693,44 @@ export function App() {
       }
     });
     return merged.data;
+  };
+
+  const requestSpreadsheetSaveAs = async (documentId: string) => {
+    const current = latestDataRef.current;
+    if (!current) return;
+    try {
+      const next = await saveSpreadsheetDocumentAs(documentId, current.documents, current.activeDocumentId);
+      if (!next) return;
+      applyMergedAppData(next);
+      forgetDocumentDirtyState(documentId);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const requestWordSaveAs = async (documentId: string) => {
+    const current = latestDataRef.current;
+    if (!current) return;
+    try {
+      const next = await saveWordDocumentAs(documentId, current.documents, current.activeDocumentId);
+      if (!next) return;
+      applyMergedAppData(next);
+      forgetDocumentDirtyState(documentId);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const requestBinaryDocumentSaveAs = async (documentId: string) => {
+    const doc = latestDataRef.current?.documents.find((item) => item.id === documentId);
+    if (!doc) return;
+    if (documentKind(doc) === "spreadsheet") {
+      await requestSpreadsheetSaveAs(documentId);
+      return;
+    }
+    if (documentKind(doc) === "word") {
+      await requestWordSaveAs(documentId);
+    }
   };
 
   const mergeDiskDataWithLocalDrafts = (
@@ -652,7 +761,10 @@ export function App() {
 
       if (local.markdown === doc.markdown) {
         dirtyBaseMarkdownRef.current.delete(doc.id);
-        if (documentKind(local) === "spreadsheet") {
+        if (documentKind(local) === "spreadsheet" && dirtyIds.has(doc.id)) {
+          nextDirtyIds.add(doc.id);
+        }
+        if (documentKind(local) === "word" && dirtyIds.has(doc.id)) {
           nextDirtyIds.add(doc.id);
         }
         return doc;
@@ -831,30 +943,30 @@ export function App() {
   useEffect(() => {
     if (!data) return;
     const activeDocumentChanged = lastActiveDocumentIdRef.current !== data.activeDocumentId;
-    setOpenDocumentIds((ids) => {
-      const validIds = ids.filter((id) => data.documents.some((doc) => doc.id === id));
+    setOpenWorkspaceTabs((tabs) => {
+      const documentTabs = tabs.filter(
+        (tab): tab is Extract<WorkspaceTabRef, { kind: "document" }> =>
+          tab.kind === "document" && data.documents.some((doc) => doc.id === tab.id),
+      );
+      const browserTabs = tabs.filter((tab) => tab.kind === "browser");
 
       if (!initializedTabsRef.current) {
         initializedTabsRef.current = true;
-        const seeded = data.activeDocumentId
-          ? [data.activeDocumentId, ...validIds, ...data.documents.slice(0, 2).map((doc) => doc.id)].filter(Boolean)
-          : validIds;
-        const nextIds = Array.from(new Set(seeded));
-        return nextIds.length === ids.length && nextIds.every((id, index) => id === ids[index]) ? ids : nextIds;
+        const seededDocumentIds = data.activeDocumentId
+          ? [data.activeDocumentId, ...documentTabs.map((tab) => tab.id), ...data.documents.slice(0, 2).map((doc) => doc.id)].filter(Boolean)
+          : documentTabs.map((tab) => tab.id);
+        const nextDocumentTabs = Array.from(new Set(seededDocumentIds)).map((id) => ({ kind: "document" as const, id }));
+        return [...nextDocumentTabs, ...browserTabs];
       }
 
-      if (activeDocumentChanged && data.activeDocumentId && !validIds.includes(data.activeDocumentId)) {
-        return [data.activeDocumentId, ...validIds];
+      if (activeDocumentChanged && data.activeDocumentId && !documentTabs.some((tab) => tab.id === data.activeDocumentId)) {
+        return [{ kind: "document", id: data.activeDocumentId }, ...documentTabs, ...browserTabs];
       }
 
-      if (validIds.includes(data.activeDocumentId) || !activeDocumentChanged) {
-        return validIds.length === ids.length && validIds.every((id, index) => id === ids[index]) ? ids : validIds;
-      }
-
-      return validIds;
+      return [...documentTabs, ...browserTabs];
     });
     lastActiveDocumentIdRef.current = data.activeDocumentId;
-  }, [data?.activeDocumentId, data?.documents]);
+  }, [data?.activeDocumentId, data?.documents, setOpenWorkspaceTabs]);
 
   const activeAgent = useMemo(
     () => data?.settings.agents.find((agent) => agent.id === data.settings.activeAgentId) ?? data?.settings.agents[0],
@@ -916,9 +1028,10 @@ export function App() {
     [data?.documents]
   );
   const documentsById = useMemo(() => new Map((data?.documents ?? []).map((doc) => [doc.id, doc])), [data?.documents]);
+  const openDocumentIds = useMemo(() => selectOpenDocumentIds(openWorkspaceTabs), [openWorkspaceTabs]);
   const openDocuments = useMemo(
     () => openDocumentIds.map((id) => documentsById.get(id)).filter((doc): doc is InformioDocument => Boolean(doc)),
-    [documentsById, openDocumentIds]
+    [documentsById, openDocumentIds],
   );
   const activeDocumentId = getActiveDocumentId(workspaceLayout, activePaneId);
   const activeOpenDoc = useMemo(
@@ -930,7 +1043,7 @@ export function App() {
 
   useEffect(() => {
     activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [activeOpenDoc?.id, openDocuments.length]);
+  }, [activeWorkspaceTab, openWorkspaceTabs.length]);
 
   useEffect(() => {
     const target = tabsScrollRef.current;
@@ -943,12 +1056,45 @@ export function App() {
     };
     target.addEventListener("wheel", handleWheel, { passive: false });
     return () => target.removeEventListener("wheel", handleWheel);
-  }, [openDocuments.length]);
+  }, [openWorkspaceTabs.length]);
+
+  useEffect(() => {
+    const onDragEnd = () => {
+      if (!isWorkspaceDraggingRef.current) return;
+      isWorkspaceDraggingRef.current = false;
+      setDropTarget(null);
+      window.dispatchEvent(new Event(BROWSER_BOUNDS_SYNC_EVENT));
+    };
+    document.addEventListener("dragend", onDragEnd);
+    return () => document.removeEventListener("dragend", onDragEnd);
+  }, [setDropTarget]);
+
+  const beginWorkspaceDrag = () => {
+    isWorkspaceDraggingRef.current = true;
+    void window.informio.hideAllBrowserPanes();
+  };
+
+  const handleWorkspaceDragOver = (event: ReactDragEvent<HTMLElement>) => {
+    if (!isWorkspaceDraggingRef.current) return;
+    event.preventDefault();
+    const elements = document.elementsFromPoint(event.clientX, event.clientY);
+    const paneEl = elements.find(
+      (el): el is HTMLElement => el instanceof HTMLElement && el.hasAttribute("data-pane-id"),
+    );
+    if (!paneEl) {
+      setDropTarget(null);
+      return;
+    }
+    const paneId = paneEl.getAttribute("data-pane-id");
+    if (!paneId) return;
+    const zone = paneDropZoneFromRect(paneEl.getBoundingClientRect(), event.clientX, event.clientY);
+    setDropTarget({ paneId, zone });
+  };
 
   useEffect(() => {
     if (!data) return;
     setWorkspaceLayout((layout) => {
-      if (initializedTabsRef.current && openDocumentIds.length === 0) {
+      if (initializedTabsRef.current && openWorkspaceTabs.length === 0) {
         const leaves = collectWorkspaceLeaves(layout);
         const nonDocumentLeaves = leaves.filter((leaf) => leaf.content.type !== "document");
         if (!nonDocumentLeaves.length) return null;
@@ -960,7 +1106,7 @@ export function App() {
       }
       return normalized;
     });
-  }, [data?.activeDocumentId, data?.documents, openDocumentIds.length, setWorkspaceLayout]);
+  }, [data?.activeDocumentId, data?.documents, openWorkspaceTabs.length, setWorkspaceLayout]);
 
   useEffect(() => {
     if (!workspaceLayout) return;
@@ -1131,7 +1277,9 @@ export function App() {
             { type: "document", documentId }
           );
     const targetLeaf = findDocumentLeafById(nextLayout, documentId);
-    setOpenDocumentIds((ids) => (ids.includes(documentId) ? ids : [...ids, documentId]));
+    setOpenWorkspaceTabs((tabs) =>
+      tabs.some((tab) => tab.kind === "document" && tab.id === documentId) ? tabs : [...tabs, { kind: "document", id: documentId }],
+    );
     setWorkspaceLayout(nextLayout);
     if (options?.forceRichText && targetLeaf) {
       setEditorViewModes((current) => ({ ...current, [targetLeaf.id]: "rich-text" }));
@@ -1147,7 +1295,12 @@ export function App() {
     if (!data) return;
     setActivePaneId(paneId);
     const leaf = workspaceLayout ? findWorkspaceLeaf(workspaceLayout, paneId) : null;
+    if (leaf?.content.type === "browser") {
+      setActiveWorkspaceTab({ kind: "browser", id: leaf.content.tabId });
+      return;
+    }
     if (leaf?.content.type !== "document") return;
+    setActiveWorkspaceTab({ kind: "document", id: leaf.content.documentId });
     if (data.activeDocumentId === leaf.content.documentId) return;
     const next = { ...data, activeDocumentId: leaf.content.documentId };
     applyDataState(next);
@@ -1161,38 +1314,154 @@ export function App() {
     setActivePaneId(paneId);
     setDropTarget(null);
     const leaf = findWorkspaceLeaf(maximized, paneId);
-    if (leaf?.content.type !== "document") return;
-    if (data.activeDocumentId === leaf.content.documentId) return;
-    const next = { ...data, activeDocumentId: leaf.content.documentId };
-    applyDataState(next);
-    window.informio.saveDocuments(next.documents, leaf.content.documentId);
+    if (!leaf) return;
+    if (leaf.content.type === "document") {
+      if (data.activeDocumentId === leaf.content.documentId) return;
+      const next = { ...data, activeDocumentId: leaf.content.documentId };
+      applyDataState(next);
+      window.informio.saveDocuments(next.documents, leaf.content.documentId);
+      setActiveWorkspaceTab({ kind: "document", id: leaf.content.documentId });
+      return;
+    }
+    if (leaf.content.type === "browser") {
+      setActiveWorkspaceTab({ kind: "browser", id: leaf.content.tabId });
+    }
   };
 
   const closeWorkspacePane = (paneId: string) => {
     if (!workspaceLayout) return;
-    const leaf = findWorkspaceLeaf(workspaceLayout, paneId);
-    if (!leaf) return;
-    if (leaf.content.type === "browser") {
-      for (const tabId of getBrowserTabIds(normalizeBrowserContent(leaf.content))) {
-        void window.informio.destroyBrowserPane(tabId);
-      }
-    }
     const nextLayout = removeWorkspaceLeaf(workspaceLayout, paneId);
     setWorkspaceLayout(nextLayout);
     setDropTarget(null);
     const leaves = collectWorkspaceLeaves(nextLayout);
     const nextActive = leaves[0];
-    if (nextActive) setActivePaneId(nextActive.id);
+    if (nextActive) {
+      setActivePaneId(nextActive.id);
+      if (nextActive.content.type === "document") {
+        setActiveWorkspaceTab({ kind: "document", id: nextActive.content.documentId });
+      } else if (nextActive.content.type === "browser") {
+        setActiveWorkspaceTab({ kind: "browser", id: nextActive.content.tabId });
+      }
+    }
   };
 
-  const updateBrowserPaneTabs = (paneId: string, tabs: BrowserTab[], activeTabId: string) => {
+  const updateBrowserTabMeta = (tabId: string, meta: BrowserTabMeta) => {
+    setBrowserTabMeta((current) => ({ ...current, [tabId]: { ...current[tabId], ...meta } }));
+  };
+
+  const selectBrowserTab = (tabId: string) => {
+    if (!data) return;
+    setOpenWorkspaceTabs((tabs) =>
+      tabs.some((tab) => tab.kind === "browser" && tab.id === tabId) ? tabs : [...tabs, { kind: "browser", id: tabId }],
+    );
+    setActiveWorkspaceTab({ kind: "browser", id: tabId });
     setWorkspaceLayout((layout) => {
-      if (!layout) return layout;
-      return updateWorkspaceLeaf(layout, paneId, (leaf) => {
-        if (leaf.content.type !== "browser") return leaf;
-        return { ...leaf, content: { type: "browser", tabs, activeTabId } };
-      });
+      const base =
+        layout ??
+        (data.activeDocumentId ? createDocumentLeaf(data.activeDocumentId) : createBrowserLeaf(tabId));
+      const targetPaneId = findWorkspaceLeaf(base, activePaneId) ? activePaneId : collectWorkspaceLeaves(base)[0]?.id ?? MAIN_PANE_ID;
+      return replaceWorkspaceLeafContent(base, targetPaneId, { type: "browser", tabId });
     });
+    setActivePaneId((current) => current || MAIN_PANE_ID);
+  };
+
+  const createNewBrowserTab = () => {
+    const tabId = createBrowserId();
+    setBrowserTabMeta((meta) => ({ ...meta, [tabId]: {} }));
+    selectBrowserTab(tabId);
+  };
+
+  const hideBrowser = () => {
+    const browserTabs = openWorkspaceTabs.filter((tab) => tab.kind === "browser");
+    if (!browserTabs.length) return;
+
+    browserTabs.forEach((tab) => {
+      void window.informio.destroyBrowserPane(tab.id);
+    });
+    setBrowserTabMeta((meta) => {
+      const next = { ...meta };
+      browserTabs.forEach((tab) => {
+        delete next[tab.id];
+      });
+      return next;
+    });
+
+    const closingIndex =
+      activeWorkspaceTab?.kind === "browser"
+        ? openWorkspaceTabs.findIndex((tab) => tab.kind === "browser" && tab.id === activeWorkspaceTab.id)
+        : openWorkspaceTabs.length;
+    const nextTabs = openWorkspaceTabs.filter((tab) => tab.kind !== "browser");
+    setOpenWorkspaceTabs(nextTabs);
+    setWorkspaceLayout((layout) => {
+      if (!layout) return null;
+      const remainingLeaves = collectWorkspaceLeaves(layout).filter((leaf) => leaf.content.type !== "browser");
+      if (!remainingLeaves.length) {
+        const fallbackDocument = selectOpenDocumentIds(nextTabs)[0];
+        return fallbackDocument ? createDocumentLeaf(fallbackDocument) : null;
+      }
+      if (remainingLeaves.length === 1) return remainingLeaves[0];
+      return remainingLeaves.reduce<WorkspaceSplitNode | null>((acc, leaf, index) => {
+        if (index === 0) return leaf;
+        if (!acc) return leaf;
+        return { type: "split", direction: "horizontal", ratio: 0.5, first: acc, second: leaf };
+      }, null);
+    });
+    if (activeWorkspaceTab?.kind === "browser") {
+      const nextActive =
+        nextTabs[closingIndex] ?? nextTabs[closingIndex - 1] ?? nextTabs[0] ?? null;
+      setActiveWorkspaceTab(nextActive);
+    }
+  };
+
+  const toggleBrowser = () => {
+    if (!data) return;
+    if (activeWorkspaceTab?.kind === "browser") {
+      hideBrowser();
+      return;
+    }
+    const browserTabs = openWorkspaceTabs.filter((tab) => tab.kind === "browser");
+    const existing = browserTabs[browserTabs.length - 1];
+    if (existing) {
+      selectBrowserTab(existing.id);
+      return;
+    }
+    createNewBrowserTab();
+  };
+
+  const closeBrowserTab = (tabId: string) => {
+    void window.informio.destroyBrowserPane(tabId);
+    setBrowserTabMeta((meta) => {
+      const next = { ...meta };
+      delete next[tabId];
+      return next;
+    });
+    const closingIndex = openWorkspaceTabs.findIndex((tab) => tab.kind === "browser" && tab.id === tabId);
+    const nextTabs = openWorkspaceTabs.filter((tab) => !(tab.kind === "browser" && tab.id === tabId));
+    setOpenWorkspaceTabs(nextTabs);
+    setWorkspaceLayout((layout) => {
+      if (!layout) return null;
+      const remainingLeaves = collectWorkspaceLeaves(layout).filter(
+        (leaf) => !(leaf.content.type === "browser" && leaf.content.tabId === tabId),
+      );
+      if (!remainingLeaves.length) {
+        const fallbackDocument = selectOpenDocumentIds(nextTabs)[0];
+        return fallbackDocument ? createDocumentLeaf(fallbackDocument) : null;
+      }
+      if (remainingLeaves.length === 1) return remainingLeaves[0];
+      return remainingLeaves.reduce<WorkspaceSplitNode | null>((acc, leaf, index) => {
+        if (index === 0) return leaf;
+        if (!acc) return leaf;
+        return { type: "split", direction: "horizontal", ratio: 0.5, first: acc, second: leaf };
+      }, null);
+    });
+    if (activeWorkspaceTab?.kind === "browser" && activeWorkspaceTab.id === tabId) {
+      const nextActive =
+        nextTabs[closingIndex] ??
+        nextTabs[closingIndex - 1] ??
+        nextTabs[0] ??
+        null;
+      setActiveWorkspaceTab(nextActive);
+    }
   };
 
   const openToolInWorkspace = (content: WorkspacePaneContent, target: WorkspaceDropTarget) => {
@@ -1213,7 +1482,7 @@ export function App() {
     }
     const baseLayout =
       workspaceLayout ??
-      (data.activeDocumentId ? createDocumentLeaf(data.activeDocumentId) : createBrowserLeaf("", createPaneId()));
+      (data.activeDocumentId ? createDocumentLeaf(data.activeDocumentId) : createBrowserLeaf(createBrowserId()));
     if (!target) {
       if (countWorkspaceLeaves(baseLayout) >= 4) return;
       const leaf = collectWorkspaceLeaves(baseLayout)[0];
@@ -1234,17 +1503,26 @@ export function App() {
     setWorkspaceLayout(next);
     const openedLeaf = collectWorkspaceLeaves(next).find((leaf) => {
       if (content.type === "document") return leaf.content.type === "document" && leaf.content.documentId === content.documentId;
-      if (content.type === "browser") {
-        return leaf.content.type === "browser" && leaf.content.activeTabId === content.activeTabId;
-      }
+      if (content.type === "browser") return leaf.content.type === "browser" && leaf.content.tabId === content.tabId;
       return leaf.content.type === "agent";
     });
     if (openedLeaf) setActivePaneId(openedLeaf.id);
     if (content.type === "document") {
-      setOpenDocumentIds((ids) => (ids.includes(content.documentId) ? ids : [...ids, content.documentId]));
+      setOpenWorkspaceTabs((tabs) =>
+        tabs.some((tab) => tab.kind === "document" && tab.id === content.documentId)
+          ? tabs
+          : [...tabs, { kind: "document", id: content.documentId }],
+      );
+      setActiveWorkspaceTab({ kind: "document", id: content.documentId });
       const nextData = { ...data, activeDocumentId: content.documentId };
       applyDataState(nextData);
       window.informio.saveDocuments(nextData.documents, content.documentId);
+    }
+    if (content.type === "browser") {
+      setOpenWorkspaceTabs((tabs) =>
+        tabs.some((tab) => tab.kind === "browser" && tab.id === content.tabId) ? tabs : [...tabs, { kind: "browser", id: content.tabId }],
+      );
+      setActiveWorkspaceTab({ kind: "browser", id: content.tabId });
     }
   };
 
@@ -1266,7 +1544,10 @@ export function App() {
 
   const selectDocument = (id: string) => {
     if (!data) return;
-    setOpenDocumentIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
+    setOpenWorkspaceTabs((tabs) =>
+      tabs.some((tab) => tab.kind === "document" && tab.id === id) ? tabs : [...tabs, { kind: "document", id }],
+    );
+    setActiveWorkspaceTab({ kind: "document", id });
     setWorkspaceLayout((layout) => {
       const base =
         layout ??
@@ -1280,25 +1561,29 @@ export function App() {
     window.informio.saveDocuments(next.documents, id);
   };
 
-  const applyClosedDocumentTab = (id: string, currentData: AppData, currentTabs: string[]) => {
-    const closingIndex = currentTabs.indexOf(id);
-    const nextTabs = currentTabs.filter((item) => item !== id);
+  const applyClosedDocumentTab = (id: string, currentData: AppData, currentTabs: WorkspaceTabRef[]) => {
+    const documentTabs = currentTabs.filter((tab) => tab.kind === "document");
+    const browserTabs = currentTabs.filter((tab) => tab.kind === "browser");
+    const closingIndex = documentTabs.findIndex((tab) => tab.id === id);
+    const nextDocumentTabs = documentTabs.filter((tab) => tab.id !== id);
+    const nextTabs = [...nextDocumentTabs, ...browserTabs];
+    const nextDocumentIds = nextDocumentTabs.map((tab) => tab.id);
     const nextActiveDocumentId =
-      currentData.activeDocumentId === id && nextTabs.length
-        ? (currentTabs[closingIndex + 1] ?? currentTabs[closingIndex - 1] ?? nextTabs[0])
+      currentData.activeDocumentId === id && nextDocumentIds.length
+        ? (nextDocumentIds[closingIndex] ?? nextDocumentIds[closingIndex - 1] ?? nextDocumentIds[0])
         : currentData.activeDocumentId === id
           ? ""
           : currentData.activeDocumentId;
 
-    setOpenDocumentIds(nextTabs);
+    setOpenWorkspaceTabs(nextTabs);
     setWorkspaceLayout((layout) => {
       if (!layout) {
-        return nextActiveDocumentId ? createDocumentLeaf(nextActiveDocumentId) : null;
+        return nextActiveDocumentId ? createDocumentLeaf(nextActiveDocumentId) : browserTabs.length ? createBrowserLeaf(browserTabs[0]!.id) : null;
       }
       const leaves = collectWorkspaceLeaves(layout);
       const remainingLeaves = leaves.filter((leaf) => !(leaf.content.type === "document" && leaf.content.documentId === id));
       if (!remainingLeaves.length) {
-        return nextActiveDocumentId ? createDocumentLeaf(nextActiveDocumentId) : null;
+        return nextActiveDocumentId ? createDocumentLeaf(nextActiveDocumentId) : browserTabs.length ? createBrowserLeaf(browserTabs[0]!.id) : null;
       }
       if (remainingLeaves.length === 1) return remainingLeaves[0];
       return remainingLeaves.reduce<WorkspaceSplitNode | null>((acc, leaf, index) => {
@@ -1307,6 +1592,14 @@ export function App() {
         return { type: "split", direction: "horizontal", ratio: 0.5, first: acc, second: leaf };
       }, null);
     });
+    if (activeWorkspaceTab?.kind === "document" && activeWorkspaceTab.id === id) {
+      const nextActive =
+        nextTabs[closingIndex] ??
+        nextTabs[closingIndex - 1] ??
+        nextTabs[0] ??
+        null;
+      setActiveWorkspaceTab(nextActive);
+    }
     const next = { ...currentData, activeDocumentId: nextActiveDocumentId };
     applyDataState(next);
     window.informio.saveDocuments(next.documents, nextActiveDocumentId);
@@ -1330,6 +1623,9 @@ export function App() {
         if (closingDoc && documentKind(closingDoc) === "spreadsheet") {
           await saveSpreadsheetDocumentNow(id);
           forgetDocumentDirtyState(id);
+        } else if (closingDoc && documentKind(closingDoc) === "word") {
+          await saveWordDocumentNow(id);
+          forgetDocumentDirtyState(id);
         } else {
           await saveDocumentsNow(currentData.documents, currentData.activeDocumentId, [id]);
         }
@@ -1338,27 +1634,36 @@ export function App() {
       window.alert(error instanceof Error ? t("app.saveFailedCancelCloseWithMessage", { message: error.message }) : t("app.saveFailedCancelClose"));
       return;
     }
-    applyClosedDocumentTab(id, latestDataRef.current ?? currentData, openDocumentIds);
+    applyClosedDocumentTab(id, latestDataRef.current ?? currentData, openWorkspaceTabs);
   };
 
   const createDocument = async (folderPath?: string) => {
     setFileListCreationSignal((value) => value + 1);
     const next = folderPath ? await window.informio.createDocumentInFolder(folderPath) : await window.informio.createDocument();
-    setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)]);
+    setOpenWorkspaceTabs((tabs) => [
+      { kind: "document", id: next.activeDocumentId },
+      ...tabs.filter((tab) => !(tab.kind === "document" && tab.id === next.activeDocumentId)),
+    ]);
     assignDocumentToActivePane(next.activeDocumentId);
     applyMergedAppData(next);
   };
 
   const createDefaultMarkdownDocument = async () => {
     const next = await window.informio.createDefaultMarkdownDocument();
-    setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)]);
+    setOpenWorkspaceTabs((tabs) => [
+      { kind: "document", id: next.activeDocumentId },
+      ...tabs.filter((tab) => !(tab.kind === "document" && tab.id === next.activeDocumentId)),
+    ]);
     assignDocumentToActivePane(next.activeDocumentId);
     applyMergedAppData(next);
   };
 
   const createLinkedDocument = async (title: string) => {
     const next = await window.informio.createLinkedDocument(title);
-    setOpenDocumentIds((ids) => [next.activeDocumentId, ...ids.filter((item) => item !== next.activeDocumentId)]);
+    setOpenWorkspaceTabs((tabs) => [
+      { kind: "document", id: next.activeDocumentId },
+      ...tabs.filter((tab) => !(tab.kind === "document" && tab.id === next.activeDocumentId)),
+    ]);
     assignDocumentToActivePane(next.activeDocumentId);
     applyMergedAppData(next);
   };
@@ -1374,6 +1679,7 @@ export function App() {
   };
 
   const startDocumentDrag = (documentId: string, event: ReactDragEvent<HTMLElement>) => {
+    beginWorkspaceDrag();
     const document = documentsById.get(documentId);
     event.dataTransfer.effectAllowed = "copyMove";
     if (document?.filePath) {
@@ -1386,6 +1692,7 @@ export function App() {
   };
 
   const startToolDrag = (mode: RightPanelMode, event: ReactDragEvent<HTMLElement>) => {
+    beginWorkspaceDrag();
     event.dataTransfer.effectAllowed = "copy";
     event.dataTransfer.setData(mode === "browser" ? BROWSER_DRAG_MIME : AGENT_DRAG_MIME, mode);
   };
@@ -1401,7 +1708,7 @@ export function App() {
       openToolInWorkspace({ type: "agent" }, target);
       return;
     }
-    openToolInWorkspace(createBrowserContent(""), target);
+    openToolInWorkspace(createBrowserContent(createBrowserId()), target);
   };
 
   const handleWorkspaceDrop = (target: WorkspaceDropTarget, dataTransfer: DataTransfer) => {
@@ -1419,7 +1726,7 @@ export function App() {
     }
   };
 
-  const toggleRightTool = (mode: RightPanelMode) => {
+  const toggleRightTool = (mode: "agent") => {
     if (!data) return;
     const rightOpen = data.settings.appearance.rightPanel === "expanded";
     const nextOpen = rightOpen && rightPanelMode === mode ? "collapsed" : "expanded";
@@ -1456,11 +1763,17 @@ export function App() {
       documentId: input.documentId
     });
     applyMergedAppData(next);
-    setOpenDocumentIds((ids) => ids.filter((id) => next.documents.some((doc) => doc.id === id)));
+    setOpenWorkspaceTabs((tabs) =>
+      tabs.filter((tab) => tab.kind !== "document" || next.documents.some((doc) => doc.id === tab.id)),
+    );
     dirtyBaseMarkdownRef.current.clear();
     applyDirtyDocumentIds(new Set());
     if (saved.activeDocumentId !== next.activeDocumentId && next.documents.some((doc) => doc.id === next.activeDocumentId)) {
-      setOpenDocumentIds((ids) => (ids.includes(next.activeDocumentId) ? ids : [next.activeDocumentId, ...ids]));
+      setOpenWorkspaceTabs((tabs) =>
+        tabs.some((tab) => tab.kind === "document" && tab.id === next.activeDocumentId)
+          ? tabs
+          : [{ kind: "document", id: next.activeDocumentId }, ...tabs],
+      );
     }
     if (affectedEmbeddableDocumentIds.length) {
       const nextIds = new Set(next.documents.map((doc) => doc.id));
@@ -1497,7 +1810,11 @@ export function App() {
     if (!next) return;
     applyMergedAppData(next);
     if (next.activeDocumentId) {
-      setOpenDocumentIds((ids) => (ids.includes(next.activeDocumentId) ? ids : [next.activeDocumentId, ...ids]));
+      setOpenWorkspaceTabs((tabs) =>
+        tabs.some((tab) => tab.kind === "document" && tab.id === next.activeDocumentId)
+          ? tabs
+          : [{ kind: "document", id: next.activeDocumentId }, ...tabs],
+      );
     }
   };
 
@@ -1561,9 +1878,23 @@ export function App() {
           });
           return true;
         }
+        if (activeOpenDoc && documentKind(activeOpenDoc) === "word") {
+          void saveWordDocumentNow(activeOpenDoc.id).then((saved) => {
+            if (saved) forgetDocumentDirtyState(activeOpenDoc.id);
+          });
+          return true;
+        }
         if (activeOpenDoc) void saveDocumentsNow(data.documents, data.activeDocumentId);
         return true;
       case "file:save-as":
+        if (activeOpenDoc && documentKind(activeOpenDoc) === "spreadsheet") {
+          void requestSpreadsheetSaveAs(activeOpenDoc.id);
+          return true;
+        }
+        if (activeOpenDoc && documentKind(activeOpenDoc) === "word") {
+          void requestWordSaveAs(activeOpenDoc.id);
+          return true;
+        }
         void saveActiveDocumentAs();
         return true;
       case "file:export-html":
@@ -2306,9 +2637,9 @@ export function App() {
     {
       id: "view:right-browser",
       scope: "system",
-      title: rightOpen && rightPanelMode === "browser" ? t("commands.hideBrowser") : t("commands.showBrowser"),
+      title: activeWorkspaceTab?.kind === "browser" ? t("commands.hideBrowser") : t("commands.showBrowser"),
       keywords: t("commands.toggleBrowserKeywords"),
-      run: () => toggleRightTool("browser")
+      run: () => toggleBrowser()
     },
     {
       id: "file:close-workspace",
@@ -2322,6 +2653,10 @@ export function App() {
     workspaceLayout ?? (openDocuments[0] ? createDocumentLeaf(openDocuments[0].id) : null),
     (documentId) => documentsById.has(documentId)
   );
+  const workspaceLeafCount = countWorkspaceLeaves(normalizedWorkspaceLayout);
+
+  const isWorkspaceTabActive = (tab: WorkspaceTabRef) =>
+    activeWorkspaceTab?.kind === tab.kind && activeWorkspaceTab.id === tab.id;
 
   const renderAgentPanel = (panelWidth?: number) => (
     <AgentPanel
@@ -2355,13 +2690,15 @@ export function App() {
 
   const renderWorkspaceLeaf = (leaf: WorkspaceLeafNode) => {
     if (leaf.content.type === "browser") {
-      const browserContent = normalizeBrowserContent(leaf.content);
       return (
         <BrowserPanel
           paneId={leaf.id}
-          tabs={browserContent.tabs}
-          activeTabId={browserContent.activeTabId}
-          onTabsChange={(tabs, activeTabId) => updateBrowserPaneTabs(leaf.id, tabs, activeTabId)}
+          tabId={leaf.content.tabId}
+          initialUrl={browserTabMeta[leaf.content.tabId]?.url}
+          showPaneControls={workspaceLeafCount > 1}
+          onClosePane={() => closeWorkspacePane(leaf.id)}
+          onMaximizePane={() => expandPaneToSingle(leaf.id)}
+          onTabMetaChange={updateBrowserTabMeta}
         />
       );
     }
@@ -2397,6 +2734,8 @@ export function App() {
           onSelection={handleAgentSelection}
           onCompositionChange={handleEditorCompositionChange}
           onDirtyChange={setDocumentDirtyState}
+          onFilePathChange={handleBinaryDocumentPathChange}
+          onRequestSaveAs={requestBinaryDocumentSaveAs}
           toolbarEnabled
           onTranslateSelection={runSelectionToolbarTranslate}
           onClearToolbarTranslate={clearToolbarTranslate}
@@ -2452,55 +2791,94 @@ export function App() {
                 ref={tabsScrollRef}
                 className="document-tabs-scroll no-drag flex h-full min-w-0 flex-1 items-center gap-2 overflow-x-auto overflow-y-hidden"
               >
-                {openDocuments.map((doc) => {
-                  const active = doc.id === activeOpenDoc?.id;
-                  const dirty = dirtyDocumentIds.has(doc.id);
-                  const conflicted = documentConflicts.has(doc.id);
+                {openWorkspaceTabs.map((tab) => {
+                  if (tab.kind === "document") {
+                    const doc = documentsById.get(tab.id);
+                    if (!doc) return null;
+                    const active = isWorkspaceTabActive(tab);
+                    const dirty = dirtyDocumentIds.has(doc.id);
+                    const conflicted = documentConflicts.has(doc.id);
+                    return (
+                      <div
+                        key={`document-${doc.id}`}
+                        ref={active ? activeTabRef : undefined}
+                        draggable
+                        onDragStart={(event) => startDocumentDrag(doc.id, event)}
+                        className={cn(
+                          "group relative flex h-7 min-w-28 max-w-40 shrink-0 items-center rounded-md text-[12px] font-semibold text-[var(--text-muted)] transition-[background-color,transform,color]",
+                          active && "surface-card text-[var(--text-main)] shadow-[inset_0_0_0_1px_rgba(15,23,42,0.12)]",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => selectDocument(doc.id)}
+                          className="no-drag flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2.5 pr-7 text-left transition-transform active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45"
+                        >
+                          {conflicted ? (
+                            <span
+                              className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                              title={t("documentconflict.mergeChanges")}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                openDocumentConflict(doc.id);
+                              }}
+                            />
+                          ) : null}
+                          {dirty ? <span className="h-2 w-2 rounded-full bg-emerald-600" /> : null}
+                          <span className="truncate">{doc.title}</span>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Close ${doc.title}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void closeDocumentTab(doc.id);
+                          }}
+                          className={cn(
+                            "no-drag absolute right-1 grid h-5 w-5 place-items-center rounded-md text-[var(--text-muted)] opacity-0 transition-[background-color,opacity,transform,color] active:scale-95",
+                            "hover:bg-slate-200/60 hover:text-[var(--text-main)] focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45 group-hover:opacity-100",
+                          )}
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    );
+                  }
+                  const active = isWorkspaceTabActive(tab);
+                  const label = browserTabLabel(browserTabMeta[tab.id], t("browser.newTab"));
                   return (
                     <div
-                      key={doc.id}
+                      key={`browser-${tab.id}`}
                       ref={active ? activeTabRef : undefined}
-                      draggable
-                      onDragStart={(event) => startDocumentDrag(doc.id, event)}
                       className={cn(
-	                        "group relative flex h-7 min-w-28 max-w-40 shrink-0 items-center rounded-md text-[12px] font-semibold text-[var(--text-muted)] transition-[background-color,transform,color]",
-                        active && "surface-card text-[var(--text-main)] shadow-[inset_0_0_0_1px_rgba(15,23,42,0.12)]"
+                        "group relative flex h-7 min-w-28 max-w-40 shrink-0 items-center rounded-md text-[12px] font-semibold text-[var(--text-muted)] transition-[background-color,transform,color]",
+                        active && "surface-card text-[var(--text-main)] shadow-[inset_0_0_0_1px_rgba(15,23,42,0.12)]",
                       )}
                     >
                       <button
                         type="button"
-                        onClick={() => selectDocument(doc.id)}
-	                        className="no-drag flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2.5 pr-7 text-left transition-transform active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45"
+                        onClick={() => selectBrowserTab(tab.id)}
+                        className="no-drag flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2.5 pr-7 text-left transition-transform active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45"
                       >
-	                        {conflicted ? (
-	                          <span
-	                            className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
-	                            title={t("documentconflict.mergeChanges")}
-	                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              openDocumentConflict(doc.id);
-                            }}
-                          />
-                        ) : null}
-                        {dirty ? <span className="h-2 w-2 rounded-full bg-emerald-600" /> : null}
-                        <span className="truncate">{doc.title}</span>
+                        <Globe size={12} className="shrink-0 text-slate-400" />
+                        <span className="truncate">{label}</span>
                       </button>
                       <button
                         type="button"
-                        aria-label={`Close ${doc.title}`}
+                        aria-label={t("browser.closeTab")}
                         onClick={(event) => {
                           event.stopPropagation();
-                          void closeDocumentTab(doc.id);
+                          closeBrowserTab(tab.id);
                         }}
                         className={cn(
-	                          "no-drag absolute right-1 grid h-5 w-5 place-items-center rounded-md text-[var(--text-muted)] opacity-0 transition-[background-color,opacity,transform,color] active:scale-95",
-                          "hover:bg-slate-200/60 hover:text-[var(--text-main)] focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45 group-hover:opacity-100"
+                          "no-drag absolute right-1 grid h-5 w-5 place-items-center rounded-md text-[var(--text-muted)] opacity-0 transition-[background-color,opacity,transform,color] active:scale-95",
+                          "hover:bg-slate-200/60 hover:text-[var(--text-main)] focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45 group-hover:opacity-100",
                         )}
                       >
-	                        <X size={12} />
+                        <X size={12} />
                       </button>
-	                    </div>
+                    </div>
                   );
                 })}
               </div>
@@ -2543,7 +2921,12 @@ export function App() {
 	            ) : null}
 	            {leftOpen ? <PanelResizeHandle label="Resize left panel" onPointerDown={(event) => startPanelResize("left", event)} /> : null}
 
-	            <section className="flex min-w-0 flex-1">
+	            <section
+	              ref={workspaceSectionRef}
+	              className="relative flex min-w-0 flex-1"
+	              onDragOver={handleWorkspaceDragOver}
+	            >
+	              <WorkspaceDropOverlay containerRef={workspaceSectionRef} dropTarget={dropTarget} />
 	              <div className="relative flex min-w-0 flex-1 flex-col">
 	                {rightOpen ? (
 	                  <div
@@ -2576,20 +2959,8 @@ export function App() {
 	              {rightOpen ? (
 	                <>
 	                  <PanelResizeHandle label="Resize right panel" onPointerDown={(event) => startPanelResize("right", event)} />
-	                  <ErrorBoundary name={rightPanelMode === "browser" ? t("app.browserPanel") : t("app.agentPanel")}>
-	                    {rightPanelMode === "browser" ? (
-	                      <BrowserPanel
-	                        paneId={RIGHT_RAIL_BROWSER_PANE_ID}
-	                        tabs={rightBrowserTabs}
-	                        activeTabId={rightBrowserActiveTabId}
-	                        onTabsChange={setRightBrowserTabs}
-	                        className="assistant-panel h-full shrink-0 flex-none"
-	                        embedded
-	                        style={{ width: rightPanelWidth }}
-	                      />
-	                    ) : (
-	                      renderAgentPanel(rightPanelWidth)
-	                    )}
+	                  <ErrorBoundary name={t("app.agentPanel")}>
+	                    {renderAgentPanel(rightPanelWidth)}
 	                  </ErrorBoundary>
 	                </>
 	              ) : null}
@@ -2655,12 +3026,12 @@ export function App() {
 	                <Code2 size={14} />
 	              </IconButton>
 	              <IconButton
-	                label={rightOpen && rightPanelMode === "browser" ? t("commands.hideBrowser") : t("commands.showBrowser")}
+	                label={activeWorkspaceTab?.kind === "browser" ? t("commands.hideBrowser") : t("commands.showBrowser")}
 	                className="h-6 w-6"
-	                pressed={rightOpen && rightPanelMode === "browser"}
+	                pressed={activeWorkspaceTab?.kind === "browser"}
 	                draggable
 	                onDragStart={(event) => startToolDrag("browser", event)}
-	                onClick={() => toggleRightTool("browser")}
+	                onClick={() => toggleBrowser()}
 	              >
 	                <Globe size={14} />
 	              </IconButton>

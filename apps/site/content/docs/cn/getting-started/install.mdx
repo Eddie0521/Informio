@@ -1,0 +1,36 @@
+---
+title: 安装
+description: 下载 macOS 或 Windows 版本，或从源码自行打包。
+---
+
+## 下载 Release
+
+1. 打开 [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest)。
+2. 下载对应平台的安装包：
+   - macOS：`.dmg` 或 `.zip`
+   - Windows：`.exe` 安装程序
+3. 按系统提示完成安装。
+
+## macOS Gatekeeper
+
+未签名的 macOS 构建可能提示应用「已损坏」。打开前请先阅读 [macOS Gatekeeper](/cn/docs/getting-started/macos-gatekeeper)。
+
+## 从源码打包
+
+若希望减少 Gatekeeper 提示或使用最新提交，请参阅 [从源码打包](/cn/docs/development/build-from-source)。
+
+## 开发前置条件
+
+从源码构建需要：
+
+- Node.js 20 LTS 或更高版本
+- 已启用 Corepack 的 pnpm（`corepack enable`）
+- Git
+
+验证环境：
+
+```bash
+node -v
+git --version
+corepack pnpm -v
+```

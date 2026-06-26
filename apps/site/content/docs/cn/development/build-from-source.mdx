@@ -1,0 +1,48 @@
+---
+title: 从源码打包
+description: 克隆 Informio、安装依赖，并在本地打包桌面应用。
+---
+
+## 克隆与安装
+
+```bash
+git clone https://github.com/Eddie0521/Informio.git
+cd Informio
+corepack enable
+corepack pnpm install
+```
+
+## 开发模式
+
+```bash
+corepack pnpm dev
+```
+
+## 打包桌面应用
+
+```bash
+# macOS 未签名 DMG + ZIP
+corepack pnpm run dist:mac:unsigned
+
+# Windows NSIS 安装程序
+corepack pnpm run dist:win
+```
+
+产物位于 `release/` 目录。
+
+## 贡献前验证
+
+```bash
+corepack pnpm test
+corepack pnpm typecheck
+corepack pnpm build
+```
+
+## 官网与文档（本站点）
+
+```bash
+corepack pnpm dev:site
+corepack pnpm build:site
+```
+
+营销页与 Fumadocs 应用位于 `apps/site`。

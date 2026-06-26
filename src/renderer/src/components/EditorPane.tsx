@@ -6,7 +6,6 @@ import type { Editor, JSONContent } from "@tiptap/core";
 import { useEditor, EditorContent, ReactNodeViewRenderer } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
-import { TableMap } from "@tiptap/pm/tables";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "@tiptap/markdown";
@@ -51,12 +50,10 @@ import type {
   DocumentLookupIndex,
   MenuCommand,
   PdfSelectionRect,
-  TableColumnWidthInfo,
   UnifiedToolbarTranslateState,
   ProseMirrorSchemaLike,
   ProseMirrorNodeLike,
   MarkdownAutoBlockMatch,
-  MarkdownTextBlock,
   EncryptedTextOptions,
   WikiLinkOptions
 } from "../types";
@@ -67,6 +64,8 @@ import {
   TABLE_CELL_MIN_WIDTH,
   TABLE_EDGE_COMPRESS_MIN_WIDTH
 } from "../constants";
+import { SpreadsheetEditorPane } from "./SpreadsheetEditorPane";
+import { WordEditorPane } from "./WordEditorPane";
 import { cn } from "../lib/utils";
 import { pathBaseName } from "../lib/path";
 import { markdownToStatusText, countWords, countCharacters, countLines } from "../lib/text-stats";
@@ -105,10 +104,14 @@ import {
   lowlight,
   sourceBackedNode,
   textContentNode,
-  parseMarkdownTableRow,
-  isMarkdownTableSeparator,
-  createTableFromMarkdown
+  markdownAutoBlockMatch
 } from "../lib/markdown-block-parser";
+import {
+  applyTableColumnWidths,
+  measureNaturalTableColumnWidthInfo,
+  tablePosFromDom,
+  tableResizeSessionRef
+} from "../lib/table-utils";
 import {
   clipboardPlainTextForPaste,
   insertTextIntoTextarea,
@@ -142,10 +145,6 @@ import { PropertiesPanel } from "./PropertiesPanel";
 import { PdfEditorContext as UnifiedPdfEditorContext, PdfViewerSurface as UnifiedPdfViewerSurface } from "../pdfSurface";
 import type { UnifiedPdfEditorContextValue } from "../types";
 
-const SpreadsheetViewerSurface = lazy(() =>
-  import("../spreadsheetSurface").then((module) => ({ default: module.SpreadsheetViewerSurface }))
-);
-
 const mathTextFromSource = (source: string) => {
   const trimmed = source.trim();
   const match =
@@ -157,21 +156,6 @@ const mathTextFromSource = (source: string) => {
 const INLINE_MATH_BOUNDARY = String.raw`(?=$|[\s,.;:!?，。；：！？、)\]）】」』》])`;
 const INLINE_MATH_AUTO_REGEX = new RegExp(String.raw`(^|[^\$])\$([^\n$]+?)\$(?!\$)` + INLINE_MATH_BOUNDARY, "g");
 const isSkippableInlineMathContent = (content: string) => !content || /^\d+(?:\.\d+)?$/.test(content);
-
-const detailsFromSource = (source: string) => {
-  const trimmed = source.trim();
-  const calloutMatch = trimmed.match(/^>\s*\[![A-Za-z0-9_-]+]-\s*(.*?)\s*\n?([\s\S]*)$/);
-  if (calloutMatch) {
-    const text = calloutMatch[2]
-      .split("\n")
-      .map((line) => line.replace(/^>\s?/, ""))
-      .join("\n")
-      .trim();
-    return { summary: plainText(calloutMatch[1] || "Summary"), text };
-  }
-  const match = trimmed.match(/^<details(?:\s[^>]*)?>\s*<summary>([\s\S]*?)<\/summary>\s*([\s\S]*?)\s*<\/details>$/i);
-  return { summary: plainText(match?.[1] ?? "Summary"), text: plainText(match?.[2] ?? trimmed) };
-};
 
 const footnoteFromSource = (source: string) => {
   const match = source.trim().match(/^\[\^([^\]]+)]:\s*([\s\S]*)$/);
@@ -189,21 +173,6 @@ const calloutFromSource = (source: string) => {
     .join("\n")
     .trim();
   return { title, text };
-};
-
-const codeBlockFromFence = (schema: ProseMirrorSchemaLike, language: string, lines: string[]) =>
-  schema.nodes.codeBlock.create({ language: language.trim() || "plaintext" }, textContentNode(schema, lines.join("\n")));
-
-const isPlainParagraph = (block: MarkdownTextBlock) => block.node.type.name === "paragraph";
-
-const topLevelTextBlocks = (doc: ProseMirrorNodeLike): MarkdownTextBlock[] => {
-  const blocks: MarkdownTextBlock[] = [];
-  doc.forEach((node, offset) => {
-    if (node.isTextblock) {
-      blocks.push({ node, pos: offset, text: node.textContent });
-    }
-  });
-  return blocks;
 };
 
 const getSelectionToolbarActions = (t: (key: string) => string): SelectionToolbarAction[] => [
@@ -253,171 +222,6 @@ const applyMarkdownAutoBlock = (editor: Editor) => {
 const documentLookupKey = (documents: InformioDocument[], excludedSuggestionDocumentId?: string) =>
   `${excludedSuggestionDocumentId ?? ""}::${documentStructureKey(documents)}`;
 
-const tablePosFromDom = (editor: Editor, table: HTMLTableElement) => {
-  const firstCell = table.querySelector("th, td");
-  if (firstCell instanceof HTMLTableCellElement) {
-    let cellPos: number | null = null;
-    try {
-      const contentPos = editor.view.posAtDOM(firstCell, 0);
-      const nextCellPos = Math.max(0, contentPos - 1);
-      const node = editor.state.doc.nodeAt(nextCellPos);
-      if (node?.type.name === "tableCell" || node?.type.name === "tableHeader") cellPos = nextCellPos;
-    } catch (error) {
-      console.warn("Failed to resolve table cell position:", error);
-      cellPos = null;
-    }
-    if (cellPos !== null) {
-      const $cell = editor.state.doc.resolve(cellPos);
-      for (let depth = $cell.depth; depth > 0; depth -= 1) {
-        if ($cell.node(depth).type.name === "table") return $cell.before(depth);
-      }
-    }
-  }
-  return null;
-};
-
-const measureNaturalTableColumnWidthInfo = (
-  editor: Editor,
-  table: HTMLTableElement,
-  tablePos: number,
-  columns: HTMLElement[]
-): TableColumnWidthInfo[] => {
-  const previousInlineFit = table.dataset.inlineFit;
-  const previousTableWidth = table.style.width;
-  const previousColumnWidths = columns.map((column) => column.style.width);
-
-  try {
-    delete table.dataset.inlineFit;
-    table.style.width = "";
-    columns.forEach((column) => {
-      column.style.width = "";
-    });
-    return tableColumnWidthInfo(editor, table, tablePos);
-  } finally {
-    if (previousInlineFit === undefined) delete table.dataset.inlineFit;
-    else table.dataset.inlineFit = previousInlineFit;
-    table.style.width = previousTableWidth;
-    columns.forEach((column, index) => {
-      column.style.width = previousColumnWidths[index] ?? "";
-    });
-  }
-};
-
-
-const markdownAutoBlockMatch = (schema: ProseMirrorSchemaLike, doc: ProseMirrorNodeLike): MarkdownAutoBlockMatch | null => {
-  const blocks = topLevelTextBlocks(doc);
-
-  for (let index = 0; index < blocks.length; index += 1) {
-    const block = blocks[index];
-    const text = block.text.trim();
-    if (!text) continue;
-
-    if (!isPlainParagraph(block)) continue;
-
-    const singleLineMath = text.match(/^\$\$([\s\S]+?)\$\$$/);
-    if (singleLineMath) {
-      return {
-        from: block.pos,
-        to: block.pos + block.node.nodeSize,
-        node: sourceBackedNode(schema, "mathBlock", text, { text: singleLineMath[1].trim() }),
-        selectionOffset: text.length
-      };
-    }
-
-    const footnote = text.match(/^\[\^([^\]]+)]:\s*([\s\S]*)$/);
-    if (footnote) {
-      return {
-        from: block.pos,
-        to: block.pos + block.node.nodeSize,
-        node: sourceBackedNode(schema, "footnoteBlock", text, { index: footnote[1], text: footnote[2].trim() }),
-        selectionOffset: text.length
-      };
-    }
-
-    const singleLineDetails = text.match(/^<details(?:\s[^>]*)?>[\s\S]*<\/details>$/i);
-    if (singleLineDetails) {
-      const details = detailsFromSource(text);
-      return {
-        from: block.pos,
-        to: block.pos + block.node.nodeSize,
-        node: sourceBackedNode(schema, "detailsBlock", text, details),
-        selectionOffset: text.length
-      };
-    }
-
-    const headerCells = parseMarkdownTableRow(text);
-    if (headerCells && blocks[index + 1] && isPlainParagraph(blocks[index + 1]) && isMarkdownTableSeparator(blocks[index + 1].text, headerCells.length)) {
-      const tableLines = [text, blocks[index + 1].text.trim()];
-      let endIndex = index + 1;
-      while (blocks[endIndex + 1] && isPlainParagraph(blocks[endIndex + 1])) {
-        const row = parseMarkdownTableRow(blocks[endIndex + 1].text);
-        if (!row || row.length !== headerCells.length) break;
-        tableLines.push(blocks[endIndex + 1].text.trim());
-        endIndex += 1;
-      }
-      const table = createTableFromMarkdown(schema, tableLines);
-      if (table) {
-        return {
-          from: block.pos,
-          to: blocks[endIndex].pos + blocks[endIndex].node.nodeSize,
-          node: table,
-          selectionOffset: 4
-        };
-      }
-    }
-
-    const fence = text.match(/^```([A-Za-z0-9_-]*)\s*$/);
-    if (fence) {
-      const closingIndex = blocks.findIndex((candidate, candidateIndex) => candidateIndex > index && isPlainParagraph(candidate) && candidate.text.trim() === "```");
-      if (closingIndex > index) {
-        const language = fence[1] || "plaintext";
-        const bodyLines = blocks.slice(index + 1, closingIndex).map((candidate) => candidate.text);
-        const source = [text, ...bodyLines, "```"].join("\n");
-        return {
-          from: block.pos,
-          to: blocks[closingIndex].pos + blocks[closingIndex].node.nodeSize,
-          node:
-            language.toLowerCase() === "mermaid"
-              ? sourceBackedNode(schema, "chartBlock", source, { text: bodyLines.join("\n") })
-              : codeBlockFromFence(schema, language, bodyLines),
-          selectionOffset: language.toLowerCase() === "mermaid" ? source.length : bodyLines.join("\n").length
-        };
-      }
-    }
-
-    if (text === "$$") {
-      const closingIndex = blocks.findIndex((candidate, candidateIndex) => candidateIndex > index && isPlainParagraph(candidate) && candidate.text.trim() === "$$");
-      if (closingIndex > index) {
-        const bodyLines = blocks.slice(index + 1, closingIndex).map((candidate) => candidate.text);
-        const source = ["$$", ...bodyLines, "$$"].join("\n");
-        return {
-          from: block.pos,
-          to: blocks[closingIndex].pos + blocks[closingIndex].node.nodeSize,
-          node: sourceBackedNode(schema, "mathBlock", source, { text: bodyLines.join("\n").trim() }),
-          selectionOffset: source.length
-        };
-      }
-    }
-
-    if (/^<details\b/i.test(text)) {
-      const closingIndex = blocks.findIndex(
-        (candidate, candidateIndex) => candidateIndex >= index && isPlainParagraph(candidate) && /<\/details>/i.test(candidate.text)
-      );
-      if (closingIndex >= index) {
-        const source = blocks.slice(index, closingIndex + 1).map((candidate) => candidate.text).join("\n");
-        const details = detailsFromSource(source);
-        return {
-          from: block.pos,
-          to: blocks[closingIndex].pos + blocks[closingIndex].node.nodeSize,
-          node: sourceBackedNode(schema, "detailsBlock", source, details),
-          selectionOffset: source.length
-        };
-      }
-    }
-  }
-
-  return null;
-};
 
 const markdownAutoInlineMathMatch = (schema: ProseMirrorSchemaLike, doc: ProseMirrorNodeLike): MarkdownAutoBlockMatch | null => {
   let found: MarkdownAutoBlockMatch | null = null;
@@ -446,52 +250,24 @@ const markdownAutoInlineMathMatch = (schema: ProseMirrorSchemaLike, doc: ProseMi
   return found;
 };
 
-const tableCellPosAt = (tableNode: ProseMirrorNode, tablePos: number, rowIndex: number, columnIndex: number): number | null => {
-  const map = TableMap.get(tableNode);
-  const index = rowIndex * map.width + columnIndex;
-  if (index >= map.map.length) return null;
-  return tablePos + 1 + map.map[index];
+type EditorPaneProps = {
+  paneId: EditorPaneState["id"];
+  documentId: string;
+  onOutlineJumpHandled: (request: OutlineJumpRequest) => void;
+  onChange: (documentId: string, markdown: string, options?: { composing?: boolean }) => void;
+  onOpenInternalLink: (documentId: string, sourcePaneId: EditorPaneState["id"]) => void;
+  onCreateInternalLink: (title: string) => void;
+  onSelection: (selection: AgentSelection | null) => void;
+  onCompositionChange: (documentId: string, composing: boolean) => void;
+  onDirtyChange: (documentId: string, dirty: boolean) => void;
+  onFilePathChange: (documentId: string, nextPath: string) => void;
+  onRequestSaveAs: (documentId: string) => void;
+  toolbarEnabled: boolean;
+  onTranslateSelection: (selection: AgentSelection) => void;
+  onClearToolbarTranslate: () => void;
 };
 
-const tableColumnWidthInfo = (editor: Editor, table: HTMLTableElement, tablePos: number): TableColumnWidthInfo[] => {
-  const tableNode = editor.state.doc.nodeAt(tablePos);
-  if (tableNode?.type.name !== "table") return [];
-
-  const map = TableMap.get(tableNode);
-  const fallbackWidths = Array.from(table.querySelectorAll("colgroup col")).map((column) => {
-    const width = Number.parseFloat(window.getComputedStyle(column).width);
-    return Number.isFinite(width) && width > 0 ? width : TABLE_CELL_MIN_WIDTH;
-  });
-
-  const widths = Array.from({ length: map.width }, (_, index) => ({
-    width: fallbackWidths[index] ?? TABLE_CELL_MIN_WIDTH,
-    fixed: false
-  }));
-
-  const tableStart = tablePos + 1;
-  for (let rowIndex = 0; rowIndex < map.height; rowIndex += 1) {
-    for (let columnIndex = 0; columnIndex < map.width; columnIndex += 1) {
-      if (widths[columnIndex].fixed) continue;
-      const cellPos = tableCellPosAt(tableNode, tablePos, rowIndex, columnIndex);
-      if (cellPos === null) continue;
-
-      const cellNode = editor.state.doc.nodeAt(cellPos);
-      if (!cellNode) continue;
-
-      const rect = map.findCell(cellPos - tableStart);
-      const colwidth = Array.isArray(cellNode.attrs.colwidth) ? cellNode.attrs.colwidth : [];
-      const width = Number(colwidth[columnIndex - rect.left] ?? 0);
-      if (!Number.isFinite(width) || width <= 0) continue;
-
-      widths[columnIndex] = { width, fixed: true };
-    }
-  }
-
-  return widths;
-};
-
-
-function EditorPane({
+function MarkdownEditorPane({
   paneId,
   documentId,
   onOutlineJumpHandled,
@@ -504,20 +280,7 @@ function EditorPane({
   toolbarEnabled,
   onTranslateSelection,
   onClearToolbarTranslate
-}: {
-  paneId: EditorPaneState["id"];
-  documentId: string;
-  onOutlineJumpHandled: (request: OutlineJumpRequest) => void;
-  onChange: (documentId: string, markdown: string, options?: { composing?: boolean }) => void;
-  onOpenInternalLink: (documentId: string, sourcePaneId: EditorPaneState["id"]) => void;
-  onCreateInternalLink: (title: string) => void;
-  onSelection: (selection: AgentSelection | null) => void;
-  onCompositionChange: (documentId: string, composing: boolean) => void;
-  onDirtyChange: (documentId: string, dirty: boolean) => void;
-  toolbarEnabled: boolean;
-  onTranslateSelection: (selection: AgentSelection) => void;
-  onClearToolbarTranslate: () => void;
-}) {
+}: EditorPaneProps) {
   const { t } = useTranslation();
   const { data } = useAppStore();
   const { editorViewModes, outlineJumpRequest } = useDocumentStore();
@@ -857,13 +620,11 @@ function EditorPane({
           dragover: (_view, event) => {
             if (!isInternalDocumentDrag(event.dataTransfer)) return false;
             event.preventDefault();
-            event.stopPropagation();
             return true;
           },
           drop: (_view, event) => {
             if (!isInternalDocumentDrag(event.dataTransfer)) return false;
             event.preventDefault();
-            event.stopPropagation();
             return true;
           },
           mouseup: () => {
@@ -1080,9 +841,14 @@ function EditorPane({
           (column as HTMLElement).style.width = "";
         }
       });
+
+      if (clamped) {
+        applyTableColumnWidths(editor, tablePos, adjustedWidths);
+      }
     };
 
     const fitAllTables = () => {
+      if (tableResizeSessionRef.active) return;
       frameId = 0;
       const root = editor.view.dom as HTMLElement;
       root.querySelectorAll("table").forEach((table) => fitTableWithinContentWidth(table as HTMLTableElement));
@@ -2202,13 +1968,7 @@ function EditorPane({
               className="informio-editor informio-editor-source w-full resize-none border-0 bg-transparent p-0"
             />
           ) : isSpreadsheetDocument ? (
-            <Suspense fallback={<div className="informio-spreadsheet-message">{t("editor.assetLoading")}</div>}>
-              <SpreadsheetViewerSurface
-                document={document}
-                autoSave={settings.markdown.autoSave}
-                onDirtyChange={onDirtyChange}
-              />
-            </Suspense>
+            <div className="informio-spreadsheet-message is-error">{t("editor.assetError")}</div>
           ) : isPdfDocument ? (
             <UnifiedPdfViewerSurface />
           ) : isReadOnlyDocument ? (
@@ -2386,6 +2146,34 @@ function EditorPane({
       </main>
     </div>
   );
+}
+
+function EditorPane(props: EditorPaneProps) {
+  const { data } = useAppStore();
+  const documents = data?.documents ?? [];
+  const document = documents.find((item) => item.id === props.documentId);
+  if (document && documentKind(document) === "spreadsheet") {
+    return (
+      <SpreadsheetEditorPane
+        document={document}
+        autoSave={data?.settings.markdown.autoSave ?? false}
+        onDirtyChange={props.onDirtyChange}
+        onFilePathChange={props.onFilePathChange}
+        onRequestSaveAs={() => props.onRequestSaveAs(document.id)}
+      />
+    );
+  }
+  if (document && documentKind(document) === "word") {
+    return (
+      <WordEditorPane
+        document={document}
+        autoSave={data?.settings.markdown.autoSave ?? false}
+        onDirtyChange={props.onDirtyChange}
+        onRequestSaveAs={() => props.onRequestSaveAs(document.id)}
+      />
+    );
+  }
+  return <MarkdownEditorPane {...props} />;
 }
 
 export default EditorPane;

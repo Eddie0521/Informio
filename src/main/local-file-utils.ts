@@ -1,7 +1,7 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname } from "node:path";
 import type { BrowserWindow } from "electron";
-import type { AssetDataResult, InformioDocument } from "../shared/types.js";
+import type { AssetDataResult, InformioDocument, SaveSpreadsheetResult, SaveWordResult, SpreadsheetDiskFingerprint, WordDiskFingerprint } from "../shared/types.js";
 import {
   markdownLink,
   markdownImage,
@@ -20,7 +20,8 @@ const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
 const PDF_EXTENSIONS = new Set([".pdf"]);
 const SPREADSHEET_EXTENSIONS = new Set([".xlsx", ".xls", ".csv"]);
-const OPENABLE_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4", ".mov", ".webm", ".mp3", ".wav", ".m4a", ".ogg", ".pdf", ".xlsx", ".xls", ".csv"]);
+const WORD_EXTENSIONS = new Set([".docx", ".doc"]);
+const OPENABLE_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4", ".mov", ".webm", ".mp3", ".wav", ".m4a", ".ogg", ".pdf", ".xlsx", ".xls", ".csv", ".docx", ".doc"]);
 
 const LOCAL_FILE_CONTENT_TYPES = new Map([
   [".png", "image/png"],
@@ -40,6 +41,8 @@ const LOCAL_FILE_CONTENT_TYPES = new Map([
   [".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
   [".xls", "application/vnd.ms-excel"],
   [".csv", "text/csv"],
+  [".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  [".doc", "application/msword"],
   [".md", "text/markdown; charset=utf-8"],
   [".markdown", "text/markdown; charset=utf-8"],
   [".txt", "text/plain; charset=utf-8"]
@@ -49,7 +52,7 @@ const LOCAL_FILE_CONTENT_TYPES = new Map([
 // Document kind helpers
 // ---------------------------------------------------------------------------
 
-export type InformioDocumentKind = "markdown" | "text" | "image" | "video" | "audio" | "pdf" | "spreadsheet" | "unknown";
+export type InformioDocumentKind = "markdown" | "text" | "image" | "video" | "audio" | "pdf" | "spreadsheet" | "word" | "unknown";
 
 export const documentKindFromPath = (path?: string): InformioDocumentKind => {
   if (!path) return "markdown";
@@ -61,6 +64,7 @@ export const documentKindFromPath = (path?: string): InformioDocumentKind => {
   if (AUDIO_EXTENSIONS.has(ext)) return "audio";
   if (PDF_EXTENSIONS.has(ext)) return "pdf";
   if (SPREADSHEET_EXTENSIONS.has(ext)) return "spreadsheet";
+  if (WORD_EXTENSIONS.has(ext)) return "word";
   return "unknown";
 };
 
@@ -134,8 +138,11 @@ export const localFileResponse = async (path: string, request: Request) => {
 
 export const loadAssetData = async (path: string): Promise<AssetDataResult> => {
   const kind = documentKindFromPath(path);
-  if (kind !== "image" && kind !== "video" && kind !== "audio" && kind !== "pdf" && kind !== "spreadsheet") {
+  if (kind !== "image" && kind !== "video" && kind !== "audio" && kind !== "pdf" && kind !== "spreadsheet" && kind !== "word") {
     throw new Error("Unsupported asset type");
+  }
+  if (kind === "word" && extname(path).toLowerCase() !== ".docx") {
+    throw new Error("Only .docx files can be loaded as assets");
   }
   const fileStats = await stat(path);
   if (!fileStats.isFile()) throw new Error("Asset file not found");
@@ -152,9 +159,27 @@ export const savePdfFile = async (path: string, data: ArrayBuffer): Promise<void
   await writeFile(path, Buffer.from(data));
 };
 
-export const saveSpreadsheetFile = async (path: string, data: ArrayBuffer): Promise<void> => {
+export const saveSpreadsheetFile = async (path: string, data: ArrayBuffer): Promise<SaveSpreadsheetResult> => {
   if (documentKindFromPath(path) !== "spreadsheet") throw new Error("Only spreadsheet files can be saved this way");
   await writeFile(path, Buffer.from(data));
+  return { path };
+};
+
+export const getWordFileStat = async (path: string): Promise<WordDiskFingerprint> => {
+  if (documentKindFromPath(path) !== "word" || extname(path).toLowerCase() !== ".docx") {
+    throw new Error("Only .docx files can be checked this way");
+  }
+  const fileStats = await stat(path);
+  if (!fileStats.isFile()) throw new Error("Word file not found");
+  return { mtimeMs: fileStats.mtimeMs, size: fileStats.size };
+};
+
+export const saveWordFile = async (path: string, data: ArrayBuffer): Promise<SaveWordResult> => {
+  if (documentKindFromPath(path) !== "word" || extname(path).toLowerCase() !== ".docx") {
+    throw new Error("Only .docx files can be saved this way");
+  }
+  await writeFile(path, Buffer.from(data));
+  return { path };
 };
 
 export const documentFolderForPath = (path: string) => dirname(path);
@@ -165,7 +190,17 @@ export const markdownPathFromDocumentPath = (documentPath: string, assetPath: st
 export const pdfMarkdown = (path: string, documentPath = path) =>
   markdownLink(basename(path), markdownPathFromDocumentPath(documentPath, path));
 
+export const getSpreadsheetFileStat = async (path: string): Promise<SpreadsheetDiskFingerprint> => {
+  if (documentKindFromPath(path) !== "spreadsheet") throw new Error("Only spreadsheet files can be checked this way");
+  const fileStats = await stat(path);
+  if (!fileStats.isFile()) throw new Error("Spreadsheet file not found");
+  return { mtimeMs: fileStats.mtimeMs, size: fileStats.size };
+};
+
 export const spreadsheetMarkdown = (path: string, documentPath = path) =>
+  markdownLink(basename(path), markdownPathFromDocumentPath(documentPath, path));
+
+export const wordMarkdown = (path: string, documentPath = path) =>
   markdownLink(basename(path), markdownPathFromDocumentPath(documentPath, path));
 
 export const generatedMarkdownForAssetPath = (path: string, documentPath = path) => {

@@ -1,0 +1,10 @@
+{
+  "name": "@informio/brand",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./tokens": "./tokens.ts",
+    "./meta": "./meta.ts"
+  }
+}

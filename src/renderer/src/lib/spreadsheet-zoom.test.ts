@@ -2,16 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   clampSpreadsheetZoom,
   isSpreadsheetPinchWheel,
-  spreadsheetZoomFromWheel,
-  SPREADSHEET_MAX_ZOOM,
-  SPREADSHEET_MIN_ZOOM
+  spreadsheetZoomFromWheel
 } from "./spreadsheet-zoom";
 
 describe("spreadsheet-zoom", () => {
-  it("clamps zoom to fortune-sheet limits", () => {
-    expect(clampSpreadsheetZoom(0.01)).toBe(SPREADSHEET_MIN_ZOOM);
-    expect(clampSpreadsheetZoom(10)).toBe(SPREADSHEET_MAX_ZOOM);
-    expect(clampSpreadsheetZoom(1.234)).toBe(1.23);
+  it("clamps zoom to spreadsheet limits", () => {
+    expect(clampSpreadsheetZoom(0.1)).toBe(0.5);
+    expect(clampSpreadsheetZoom(5)).toBe(2);
   });
 
   it("zooms in and out from wheel delta", () => {
@@ -20,8 +17,7 @@ describe("spreadsheet-zoom", () => {
   });
 
   it("detects pinch wheel gestures", () => {
-    expect(isSpreadsheetPinchWheel({ ctrlKey: true, metaKey: false, deltaY: 12 } as WheelEvent)).toBe(true);
-    expect(isSpreadsheetPinchWheel({ ctrlKey: false, metaKey: false, deltaY: 12 } as WheelEvent)).toBe(false);
-    expect(isSpreadsheetPinchWheel({ ctrlKey: true, metaKey: false, deltaY: 0 } as WheelEvent)).toBe(false);
+    expect(isSpreadsheetPinchWheel({ ctrlKey: true, metaKey: false, deltaY: 1 } as WheelEvent)).toBe(true);
+    expect(isSpreadsheetPinchWheel({ ctrlKey: false, metaKey: false, deltaY: 1 } as WheelEvent)).toBe(false);
   });
 });

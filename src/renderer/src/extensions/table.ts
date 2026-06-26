@@ -7,7 +7,7 @@ import TableRow from "@tiptap/extension-table-row";
 import { NodeSelection } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
 import type { HorizontalCellAlign, VerticalCellAlign } from "../types";
-import { tableJsonUsesRichMarkdown, renderRichTableToMarkdown, renderTableToGfm } from "../lib/markdown";
+import { renderTableToGfm } from "../lib/markdown";
 
 export const ResizableTableRow = TableRow.extend({
   addAttributes() {
@@ -90,8 +90,7 @@ export const AlignableTableHeader = TableHeader.extend({
 export const RichTable = Table.extend({
   draggable: true,
   renderMarkdown(node, h) {
-    const content = node as JSONContent;
-    return tableJsonUsesRichMarkdown(content) ? renderRichTableToMarkdown(content) : renderTableToGfm(content, h);
+    return renderTableToGfm(node as JSONContent, h);
   }
 });
 

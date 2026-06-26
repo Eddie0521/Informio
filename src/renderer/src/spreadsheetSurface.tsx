@@ -1,46 +1,32 @@
-import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
-import { Workbook } from "@fortune-sheet/react";
-import type { WorkbookInstance } from "@fortune-sheet/react";
-import { transformExcelToFortune } from "@corbe30/fortune-excel";
-import * as XLSX from "xlsx";
-import "@fortune-sheet/react/dist/index.css";
-import type { InformioDocument } from "../../shared/types";
+import type { InformioDocument, SpreadsheetDiskFingerprint } from "../../shared/types";
+import { SpreadsheetConflictDialog } from "./components/SpreadsheetConflictDialog";
+import { SpreadsheetGrid } from "./components/SpreadsheetGrid";
 import { assetExtensionFromSrc } from "./lib/asset-url";
 import { exportFormatFromPath, exportSpreadsheetBlob } from "./lib/spreadsheet-export";
-import { registerSpreadsheetSaveHandler } from "./lib/spreadsheet-save-bridge";
-import { sanitizeFortuneSheets } from "./lib/spreadsheet-sanitize";
+import { spreadsheetFingerprintsEqual } from "./lib/spreadsheet-fingerprint";
+import { registerSpreadsheetExportHandler, registerSpreadsheetSaveHandler } from "./lib/spreadsheet-save-bridge";
 import {
-  applySpreadsheetZoom,
+  clampSpreadsheetZoom,
   isSpreadsheetPinchWheel,
-  readActiveSpreadsheetZoom,
   spreadsheetZoomFromWheel
 } from "./lib/spreadsheet-zoom";
+import {
+  loadSpreadsheetWorkbook,
+  parseCellInput,
+  updateWorkbookCell,
+  type SpreadsheetWorkbook
+} from "./lib/spreadsheet-workbook";
 import { pathBaseName } from "./lib/path";
 import { cn } from "./lib/utils";
 
 const SPREADSHEET_SAVE_DEBOUNCE_MS = 900;
+const SPREADSHEET_CONFLICT_POLL_MS = 30_000;
 
-type FortuneSheetData = NonNullable<ComponentProps<typeof Workbook>["data"]>;
-
-const mimeTypeForSpreadsheetExtension = (ext: string) => {
-  if (ext === "csv") return "text/csv";
-  if (ext === "xls") return "application/vnd.ms-excel";
-  return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-};
-
-const prepareSpreadsheetFile = async (data: ArrayBuffer, fileName: string, ext: string): Promise<File> => {
-  if (ext !== "xls") {
-    return new File([data], fileName, { type: mimeTypeForSpreadsheetExtension(ext) });
-  }
-  const workbook = XLSX.read(data, { type: "array" });
-  const xlsxBuffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
-  const xlsxName = fileName.replace(/\.xls$/i, ".xlsx");
-  return new File([xlsxBuffer], xlsxName, { type: mimeTypeForSpreadsheetExtension("xlsx") });
-};
-
-const notifyFortuneSheetResize = () => {
-  window.dispatchEvent(new Event("resize"));
+const readSpreadsheetFingerprint = async (path: string): Promise<SpreadsheetDiskFingerprint | null> => {
+  const fingerprint = await window.informio.getSpreadsheetFileStat(path);
+  return fingerprint ?? null;
 };
 
 type SpreadsheetSurfaceProps = {
@@ -48,12 +34,21 @@ type SpreadsheetSurfaceProps = {
   filePath: string;
   autoSave: boolean;
   onDirtyChange: (documentId: string, dirty: boolean) => void;
+  onFilePathChange: (documentId: string, nextPath: string) => void;
+  onRequestSaveAs: () => void;
 };
 
-function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: SpreadsheetSurfaceProps) {
+function SpreadsheetSurface({
+  documentId,
+  filePath,
+  autoSave,
+  onDirtyChange,
+  onFilePathChange,
+  onRequestSaveAs
+}: SpreadsheetSurfaceProps) {
   const { t } = useTranslation();
-  const sheetRef = useRef<WorkbookInstance | null>(null);
   const viewerRef = useRef<HTMLDivElement | null>(null);
+  const workbookRef = useRef<SpreadsheetWorkbook | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const savingRef = useRef(false);
   const dirtyRef = useRef(false);
@@ -62,14 +57,27 @@ function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: S
   const filePathRef = useRef(filePath);
   const autoSaveRef = useRef(autoSave);
   const onDirtyChangeRef = useRef(onDirtyChange);
-  const [sheets, setSheets] = useState<FortuneSheetData | null>(null);
+  const onFilePathChangeRef = useRef(onFilePathChange);
+  const onRequestSaveAsRef = useRef(onRequestSaveAs);
+  const diskFingerprintRef = useRef<SpreadsheetDiskFingerprint | null>(null);
+  const conflictCheckInFlightRef = useRef(false);
+  const [workbook, setWorkbook] = useState<SpreadsheetWorkbook | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const [zoom, setZoom] = useState(1);
   const [isLoading, setIsLoading] = useState(Boolean(filePath));
   const [loadFailed, setLoadFailed] = useState(false);
   const [loadErrorDetail, setLoadErrorDetail] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [conflictOpen, setConflictOpen] = useState(false);
+  const [conflictHasUnsavedChanges, setConflictHasUnsavedChanges] = useState(false);
+  const [pendingFingerprint, setPendingFingerprint] = useState<SpreadsheetDiskFingerprint | null>(null);
+
+  workbookRef.current = workbook;
 
   autoSaveRef.current = autoSave;
   onDirtyChangeRef.current = onDirtyChange;
+  onFilePathChangeRef.current = onFilePathChange;
+  onRequestSaveAsRef.current = onRequestSaveAs;
 
   const setDirtyState = useCallback((dirty: boolean) => {
     if (dirtyRef.current === dirty) return;
@@ -84,45 +92,41 @@ function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: S
     }
   }, []);
 
+  const rememberDiskFingerprint = useCallback(async (path: string) => {
+    const fingerprint = await readSpreadsheetFingerprint(path);
+    if (fingerprint) {
+      diskFingerprintRef.current = fingerprint;
+    }
+  }, []);
+
   useEffect(() => {
     filePathRef.current = filePath;
   }, [filePath]);
 
   useEffect(() => () => clearSaveTimer(), [clearSaveTimer]);
 
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer || typeof ResizeObserver === "undefined") return;
-
-    let lastWidth = 0;
-    let lastHeight = 0;
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      const { width, height } = entry.contentRect;
-      if (width <= 0 || height <= 0) return;
-      if (width === lastWidth && height === lastHeight) return;
-      lastWidth = width;
-      lastHeight = height;
-      if (sheetRef.current) {
-        notifyFortuneSheetResize();
-      }
-    });
-
-    observer.observe(viewer);
-    return () => observer.disconnect();
+  const exportCurrentSpreadsheet = useCallback(async () => {
+    return exportSpreadsheetBlob(workbookRef as RefObject<SpreadsheetWorkbook | null>, exportFormatFromPath(filePathRef.current));
   }, []);
 
   const persistSpreadsheet = useCallback(async () => {
     const currentPath = filePathRef.current;
     if (!currentPath || !dirtyRef.current || savingRef.current) return;
-    if (!sheetRef.current || typeof sheetRef.current.getAllSheets !== "function") return;
+    if (!workbookRef.current) return;
 
     savingRef.current = true;
     try {
-      const blob = await exportSpreadsheetBlob(sheetRef, exportFormatFromPath(currentPath));
+      const { blob } = await exportCurrentSpreadsheet();
       const buffer = await blob.arrayBuffer();
-      await window.informio.saveSpreadsheetFile(currentPath, buffer);
+      const result = await window.informio.saveSpreadsheetFile(currentPath, buffer);
+      if (!result) throw new Error(t("spreadsheet.saveFailed"));
+
+      if (result.path !== currentPath) {
+        filePathRef.current = result.path;
+        onFilePathChangeRef.current(documentId, result.path);
+      }
+
+      await rememberDiskFingerprint(result.path);
       setDirtyState(false);
       setSaveError("");
     } catch (error) {
@@ -131,7 +135,7 @@ function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: S
     } finally {
       savingRef.current = false;
     }
-  }, [setDirtyState]);
+  }, [documentId, exportCurrentSpreadsheet, rememberDiskFingerprint, setDirtyState, t]);
 
   const flushSpreadsheetSave = useCallback(async () => {
     clearSaveTimer();
@@ -140,7 +144,7 @@ function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: S
 
   const scheduleSave = useCallback(() => {
     if (importingRef.current || isLoading || !dirtyRef.current || !autoSaveRef.current) return;
-    if (!sheetRef.current || typeof sheetRef.current.getAllSheets !== "function") return;
+    if (!workbookRef.current) return;
     clearSaveTimer();
     saveTimerRef.current = window.setTimeout(() => {
       saveTimerRef.current = null;
@@ -148,7 +152,7 @@ function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: S
     }, SPREADSHEET_SAVE_DEBOUNCE_MS);
   }, [clearSaveTimer, isLoading, persistSpreadsheet]);
 
-  const handleWorkbookOp = useCallback(() => {
+  const markDirty = useCallback(() => {
     if (importingRef.current || isLoading || Date.now() < suppressSaveUntilRef.current) return;
     setDirtyState(true);
     scheduleSave();
@@ -159,11 +163,36 @@ function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: S
   }, [documentId, flushSpreadsheetSave]);
 
   useEffect(() => {
+    return registerSpreadsheetExportHandler(documentId, exportCurrentSpreadsheet);
+  }, [documentId, exportCurrentSpreadsheet]);
+
+  const checkDiskConflict = useCallback(async () => {
+    const currentPath = filePathRef.current;
+    if (!currentPath || isLoading || !workbook || conflictOpen || conflictCheckInFlightRef.current) return;
+    const baseline = diskFingerprintRef.current;
+    if (!baseline) return;
+
+    conflictCheckInFlightRef.current = true;
+    try {
+      const nextFingerprint = await readSpreadsheetFingerprint(currentPath);
+      if (!nextFingerprint || spreadsheetFingerprintsEqual(baseline, nextFingerprint)) return;
+      setConflictHasUnsavedChanges(dirtyRef.current);
+      setPendingFingerprint(nextFingerprint);
+      setConflictOpen(true);
+    } finally {
+      conflictCheckInFlightRef.current = false;
+    }
+  }, [conflictOpen, isLoading, workbook]);
+
+  useEffect(() => {
     if (!filePath) {
-      setSheets(null);
+      setWorkbook(null);
       setLoadFailed(false);
       setIsLoading(false);
       setSaveError("");
+      setConflictOpen(false);
+      setPendingFingerprint(null);
+      diskFingerprintRef.current = null;
       setDirtyState(false);
       return;
     }
@@ -173,34 +202,29 @@ function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: S
     setDirtyState(false);
     importingRef.current = true;
     suppressSaveUntilRef.current = Date.now() + 5000;
-    setSheets(null);
+    setWorkbook(null);
     setIsLoading(true);
     setLoadFailed(false);
     setLoadErrorDetail("");
     setSaveError("");
+    setConflictOpen(false);
+    setPendingFingerprint(null);
+    diskFingerprintRef.current = null;
+    setZoom(1);
 
     void (async () => {
       try {
         const asset = await window.informio.loadAsset(filePath);
         if (disposed) return;
-        const fileName = pathBaseName(filePath);
         const ext = assetExtensionFromSrc(filePath);
-        const file = await prepareSpreadsheetFile(asset.data, fileName, ext);
-        await transformExcelToFortune(
-          file,
-          (nextSheets: FortuneSheetData) => {
-            if (disposed) return;
-            const sanitized = sanitizeFortuneSheets(nextSheets);
-            if (sanitized.length === 0) {
-              throw new Error("Spreadsheet has no sheets");
-            }
-            setSheets(sanitized);
-          },
-          () => 0,
-          { current: null }
-        );
+        const loaded = loadSpreadsheetWorkbook(asset.data, ext);
+        if (loaded.sheets.length === 0) {
+          throw new Error("Spreadsheet has no sheets");
+        }
         if (!disposed) {
+          setWorkbook(loaded);
           suppressSaveUntilRef.current = Date.now() + 1500;
+          await rememberDiskFingerprint(filePath);
         }
       } catch (error) {
         if (!disposed) {
@@ -221,48 +245,86 @@ function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: S
         void flushSpreadsheetSave();
       }
     };
-  }, [clearSaveTimer, filePath, flushSpreadsheetSave, setDirtyState]);
+  }, [clearSaveTimer, filePath, flushSpreadsheetSave, reloadNonce, rememberDiskFingerprint, setDirtyState]);
 
   useEffect(() => {
-    if (isLoading || !sheets) return;
+    const handleFocus = () => {
+      void checkDiskConflict();
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [checkDiskConflict]);
+
+  useEffect(() => {
+    const unsubscribe = window.informio.onAppDataUpdated(() => {
+      void checkDiskConflict();
+    });
+    return unsubscribe;
+  }, [checkDiskConflict]);
+
+  useEffect(() => {
+    if (isLoading || !workbook) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void checkDiskConflict();
+    }, SPREADSHEET_CONFLICT_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [checkDiskConflict, isLoading, workbook]);
+
+  useEffect(() => {
+    if (isLoading || !workbook) return;
 
     const viewer = viewerRef.current;
     if (!viewer) return;
 
     const handleWheel = (event: WheelEvent) => {
       if (!isSpreadsheetPinchWheel(event)) return;
-      const instance = sheetRef.current;
-      if (!instance || typeof instance.applyOp !== "function") return;
-
       event.preventDefault();
       event.stopPropagation();
-
-      const currentZoom = readActiveSpreadsheetZoom(instance);
-      const nextZoom = spreadsheetZoomFromWheel(currentZoom, event.deltaY);
-      applySpreadsheetZoom(instance, nextZoom);
+      setZoom((currentZoom) => spreadsheetZoomFromWheel(currentZoom, event.deltaY));
     };
 
     viewer.addEventListener("wheel", handleWheel, { capture: true, passive: false });
     return () => viewer.removeEventListener("wheel", handleWheel, { capture: true });
-  }, [isLoading, sheets]);
+  }, [isLoading, workbook]);
 
-  useEffect(() => {
-    if (isLoading || !sheets) return;
+  const handleWorkbookChange = (next: SpreadsheetWorkbook) => {
+    setWorkbook(next);
+    markDirty();
+  };
 
-    let cancelled = false;
-    const frame = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        if (!cancelled && sheetRef.current) {
-          notifyFortuneSheetResize();
-        }
-      });
-    });
+  const handleCellChange = (sheetIndex: number, row: number, column: number, rawValue: string) => {
+    if (!workbook) return;
+    const nextValue = parseCellInput(rawValue);
+    const currentValue = workbook.sheets[sheetIndex]?.rows[row]?.[column] ?? null;
+    const currentText = currentValue == null ? "" : String(currentValue);
+    if (rawValue === currentText || (rawValue.trim() === "" && currentValue == null)) return;
+    setWorkbook(updateWorkbookCell(workbook, sheetIndex, row, column, nextValue));
+    markDirty();
+  };
 
-    return () => {
-      cancelled = true;
-      window.cancelAnimationFrame(frame);
-    };
-  }, [isLoading, sheets, filePath]);
+  const handleConflictReload = () => {
+    setConflictOpen(false);
+    setPendingFingerprint(null);
+    clearSaveTimer();
+    setDirtyState(false);
+    setSaveError("");
+    setReloadNonce((value) => value + 1);
+  };
+
+  const handleConflictKeepLocal = () => {
+    if (pendingFingerprint) {
+      diskFingerprintRef.current = pendingFingerprint;
+    }
+    setPendingFingerprint(null);
+    setConflictOpen(false);
+  };
+
+  const handleConflictSaveAs = () => {
+    setConflictOpen(false);
+    setPendingFingerprint(null);
+    onRequestSaveAsRef.current();
+  };
 
   if (!filePath) {
     return <div className="informio-spreadsheet-message is-error">{t("spreadsheet.missingFilePath")}</div>;
@@ -280,13 +342,31 @@ function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: S
   return (
     <div className={cn("informio-spreadsheet-shell", "is-full")}>
       <div ref={viewerRef} className="informio-spreadsheet-viewer">
-        {isLoading || !sheets ? (
+        {isLoading || !workbook ? (
           <div className="informio-spreadsheet-loading">{t("editor.assetLoading")}</div>
         ) : (
-          <Workbook key={filePath} ref={sheetRef} data={sheets} onOp={handleWorkbookOp} />
+          <SpreadsheetGrid
+            key={`${filePath}-${reloadNonce}`}
+            workbook={workbook}
+            zoom={clampSpreadsheetZoom(zoom)}
+            onWorkbookChange={handleWorkbookChange}
+            onCellChange={handleCellChange}
+          />
         )}
       </div>
       {saveError ? <div className="informio-spreadsheet-save-error-bar">{saveError}</div> : null}
+      <SpreadsheetConflictDialog
+        open={conflictOpen}
+        fileName={pathBaseName(filePath)}
+        hasUnsavedChanges={conflictHasUnsavedChanges}
+        onReload={handleConflictReload}
+        onKeepLocal={handleConflictKeepLocal}
+        onSaveAs={handleConflictSaveAs}
+        onClose={() => {
+          setConflictOpen(false);
+          setPendingFingerprint(null);
+        }}
+      />
     </div>
   );
 }
@@ -294,11 +374,15 @@ function SpreadsheetSurface({ documentId, filePath, autoSave, onDirtyChange }: S
 export function SpreadsheetViewerSurface({
   document,
   autoSave,
-  onDirtyChange
+  onDirtyChange,
+  onFilePathChange,
+  onRequestSaveAs
 }: {
   document: InformioDocument;
   autoSave: boolean;
   onDirtyChange: (documentId: string, dirty: boolean) => void;
+  onFilePathChange: (documentId: string, nextPath: string) => void;
+  onRequestSaveAs: () => void;
 }) {
   const filePath = document.filePath ?? "";
   return (
@@ -307,6 +391,8 @@ export function SpreadsheetViewerSurface({
       filePath={filePath}
       autoSave={autoSave}
       onDirtyChange={onDirtyChange}
+      onFilePathChange={onFilePathChange}
+      onRequestSaveAs={onRequestSaveAs}
     />
   );
 }

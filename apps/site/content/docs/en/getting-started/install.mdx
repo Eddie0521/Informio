@@ -1,0 +1,36 @@
+---
+title: Install
+description: Download Informio for macOS or Windows, or build from source.
+---
+
+## Download a release
+
+1. Open [GitHub Releases](https://github.com/Eddie0521/Informio/releases/latest).
+2. Download the build for your platform:
+   - macOS: `.dmg` or `.zip`
+   - Windows: `.exe` installer
+3. Install the app using your system installer.
+
+## macOS Gatekeeper
+
+Unsigned macOS builds may show a "damaged" warning. See [macOS Gatekeeper](/docs/getting-started/macos-gatekeeper) before opening the app.
+
+## Build from source
+
+If you prefer fewer Gatekeeper prompts or want the latest commit, see [Build from source](/docs/development/build-from-source).
+
+## Prerequisites for development
+
+Building from source requires:
+
+- Node.js 20 LTS or newer
+- Corepack-enabled pnpm (`corepack enable`)
+- Git
+
+Verify:
+
+```bash
+node -v
+git --version
+corepack pnpm -v
+```

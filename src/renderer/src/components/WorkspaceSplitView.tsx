@@ -1,13 +1,12 @@
-import { Fragment, useMemo } from "react";
+import { useMemo } from "react";
 import type { DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Maximize2, X } from "lucide-react";
-import type { EditorDropZone, SplitDirection, WorkspaceDropTarget, WorkspaceLeafNode, WorkspaceSplitNode } from "../types";
+import type { SplitDirection, WorkspaceDropTarget, WorkspaceLeafNode, WorkspaceSplitNode } from "../types";
 import { cn } from "../lib/utils";
 import {
   AGENT_DRAG_MIME,
   BROWSER_DRAG_MIME,
-  MAX_WORKSPACE_PANES,
   countWorkspaceLeaves,
   paneDropZoneFromRect,
   updateSplitRatioAtPath,
@@ -77,27 +76,6 @@ export function WorkspaceSplitView({
     window.addEventListener("pointerup", onPointerUp, { once: true });
   };
 
-  const renderDropOverlay = (paneId: string, zone: EditorDropZone | null) => {
-    if (!zone || dropTarget?.paneId !== paneId) return null;
-    return (
-      <div className="pointer-events-none absolute inset-0 z-40 grid grid-cols-3 grid-rows-3 gap-1 bg-emerald-500/5 p-2">
-        <div className={cn("col-start-1 row-span-3 rounded-md", zone === "left" && "bg-emerald-500/20 ring-1 ring-emerald-500/35")} />
-        <div className={cn("col-start-3 row-span-3 rounded-md", zone === "right" && "bg-emerald-500/20 ring-1 ring-emerald-500/35")} />
-        <div className={cn("col-span-3 row-start-1 rounded-md", zone === "top" && "bg-emerald-500/20 ring-1 ring-emerald-500/35")} />
-        <div className={cn("col-span-3 row-start-3 rounded-md", zone === "bottom" && "bg-emerald-500/20 ring-1 ring-emerald-500/35")} />
-        <div className="col-start-2 row-start-2 grid place-items-center rounded-md bg-white/70 px-3 text-center text-[12px] font-semibold text-emerald-700 shadow-sm">
-          {zone === "left"
-            ? t("app.splitLeft")
-            : zone === "right"
-              ? t("app.splitRight")
-              : zone === "top"
-                ? t("app.splitTop")
-                : t("app.splitBottom")}
-        </div>
-      </div>
-    );
-  };
-
   const bindPaneDrag = (paneId: string) => ({
     onDragOver: (event: ReactDragEvent<HTMLDivElement>) => {
       if (!isWorkspaceDrag(event.dataTransfer)) return;
@@ -122,24 +100,24 @@ export function WorkspaceSplitView({
 
   if (layout.type === "leaf") {
     const active = layout.id === activePaneId || leafCount === 1;
-    const zone = dropTarget?.paneId === layout.id ? dropTarget.zone : null;
     const canClose = leafCount > 1 || layout.content.type !== "document";
     return (
       <div
+        data-pane-id={layout.id}
         className={cn(
-          "workspace-pane relative flex min-h-0 min-w-0 flex-col",
-          active && leafCount > 1 && "ring-1 ring-emerald-500/30"
+          "group/workspace-pane workspace-pane relative flex min-h-0 min-w-0 flex-col",
+          active && leafCount > 1 && "ring-1 ring-emerald-500/30",
         )}
         onMouseDown={() => onActivatePane(layout.id)}
         onFocusCapture={() => onActivatePane(layout.id)}
         {...bindPaneDrag(layout.id)}
       >
-        {leafCount > 1 && active ? (
-          <div className="absolute right-3 top-3 z-30 flex items-center gap-1">
+        {leafCount > 1 ? (
+          <div className="pointer-events-none absolute right-3 top-3 z-30 flex items-center gap-1 opacity-0 transition-opacity group-hover/workspace-pane:opacity-100 group-focus-within/workspace-pane:opacity-100">
             <button
               type="button"
               aria-label={t("app.expandPane")}
-              className="grid h-6 w-6 place-items-center rounded-md text-slate-400 opacity-80 transition hover:bg-slate-100 hover:text-slate-600"
+              className="pointer-events-auto grid h-6 w-6 place-items-center rounded-md bg-white/80 text-slate-400 shadow-sm transition hover:bg-slate-100 hover:text-slate-600"
               onMouseDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -156,7 +134,7 @@ export function WorkspaceSplitView({
               <button
                 type="button"
                 aria-label={t("app.closePane")}
-                className="grid h-6 w-6 place-items-center rounded-md text-slate-400 opacity-80 transition hover:bg-slate-100 hover:text-slate-600"
+                className="pointer-events-auto grid h-6 w-6 place-items-center rounded-md bg-white/80 text-slate-400 shadow-sm transition hover:bg-slate-100 hover:text-slate-600"
                 onMouseDown={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -173,7 +151,6 @@ export function WorkspaceSplitView({
           </div>
         ) : null}
         {renderLeaf(layout, active)}
-        {renderDropOverlay(layout.id, zone)}
       </div>
     );
   }
@@ -202,7 +179,7 @@ export function WorkspaceSplitView({
       <div
         className={cn(
           "shrink-0 bg-slate-200/70 transition-colors hover:bg-slate-300/80",
-          isHorizontal ? "h-full w-1 cursor-col-resize" : "h-1 w-full cursor-row-resize"
+          isHorizontal ? "h-full w-1 cursor-col-resize" : "h-1 w-full cursor-row-resize",
         )}
         onPointerDown={(event) => startResize(event, splitPath, layout.direction, layout.ratio)}
       />

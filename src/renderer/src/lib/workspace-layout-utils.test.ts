@@ -5,17 +5,20 @@ import {
   countWorkspaceLeaves,
   createAgentLeaf,
   createBrowserContent,
+  createBrowserId,
   createBrowserLeaf,
-  createBrowserTab,
   createDocumentLeaf,
   findAgentLeaf,
+  findBrowserLeafByTabId,
   findDocumentLeafById,
   findWorkspaceLeaf,
-  getBrowserTabIds,
+  getBrowserTabId,
+  isSameDropTarget,
   maximizeWorkspaceLeaf,
   normalizeBrowserContent,
   normalizeBrowserUrl,
   normalizeWorkspaceLayout,
+  paneDropZoneFromRect,
   removeWorkspaceLeaf,
   splitWorkspaceLeaf,
   updateSplitRatioAtPath,
@@ -68,7 +71,7 @@ describe("workspace layout utils", () => {
       createDocumentLeaf("doc-a"),
       createDocumentLeaf("doc-a").id,
       "right",
-      createBrowserContent()
+      createBrowserContent("browser-1")
     )!;
     const browserLeaf = collectWorkspaceLeaves(layout).find((leaf) => leaf.content.type === "browser")!;
     const maximized = maximizeWorkspaceLeaf(layout, browserLeaf.id);
@@ -117,39 +120,65 @@ describe("workspace layout utils", () => {
     const leaf = createBrowserLeaf();
     expect(leaf.content.type).toBe("browser");
     if (leaf.content.type === "browser") {
-      expect(leaf.content.tabs).toHaveLength(1);
-      expect(leaf.content.tabs[0]?.id).toMatch(/^browser-/);
-      expect(leaf.content.activeTabId).toBe(leaf.content.tabs[0]?.id);
+      expect(leaf.content.tabId).toMatch(/^browser-/);
     }
   });
 
   it("finds leaf by pane id", () => {
-    const leaf = createBrowserLeaf("https://example.com", "pane-42");
+    const tabId = "browser-1";
+    const leaf = createBrowserLeaf(tabId, "pane-42");
     const found = findWorkspaceLeaf(leaf, "pane-42");
-    expect(found?.content.type).toBe("browser");
-    if (found?.content.type === "browser") {
-      expect(found.content.tabs[0]?.url).toBe("https://example.com");
-      expect(getBrowserTabIds(found.content)).toEqual([found.content.tabs[0]!.id]);
-    }
+    expect(found?.content).toEqual({ type: "browser", tabId });
   });
 
   it("normalizes legacy browser content", () => {
     const normalized = normalizeBrowserContent({ type: "browser", browserId: "browser-1", url: "https://example.com" });
-    expect(normalized.tabs).toHaveLength(1);
-    expect(normalized.tabs[0]).toEqual({ id: "browser-1", url: "https://example.com" });
-    expect(normalized.activeTabId).toBe("browser-1");
+    expect(normalized).toEqual({ type: "browser", tabId: "browser-1" });
+    const fromTabs = normalizeBrowserContent({
+      type: "browser",
+      tabs: [{ id: "tab-a", url: "https://a.com" }, { id: "tab-b" }],
+      activeTabId: "tab-b",
+    });
+    expect(fromTabs.tabId).toBe("tab-b");
+  });
+
+  it("finds browser leaf by tab id", () => {
+    const layout = createBrowserLeaf("browser-42", "pane-1");
+    expect(findBrowserLeafByTabId(layout, "browser-42")?.id).toBe("pane-1");
+    expect(getBrowserTabId({ type: "browser", tabId: "browser-42" })).toBe("browser-42");
   });
 
   it("labels browser tabs from title, host, or fallback", () => {
-    expect(browserTabLabel({ id: "a", title: "Docs" }, "New tab")).toBe("Docs");
-    expect(browserTabLabel({ id: "b", url: "https://example.com/path" }, "New tab")).toBe("example.com");
-    expect(browserTabLabel({ id: "c" }, "New tab")).toBe("New tab");
+    expect(browserTabLabel({ title: "Docs" }, "New tab")).toBe("Docs");
+    expect(browserTabLabel({ url: "https://example.com/path" }, "New tab")).toBe("example.com");
+    expect(browserTabLabel(undefined, "New tab")).toBe("New tab");
   });
 
-  it("creates independent browser tabs", () => {
-    const first = createBrowserTab();
-    const second = createBrowserTab("https://example.com");
-    expect(first.id).not.toBe(second.id);
-    expect(second.url).toBe("https://example.com");
+  it("creates independent browser tab ids", () => {
+    const first = createBrowserId();
+    const second = createBrowserId();
+    expect(first).not.toBe(second);
+  });
+
+  it("resolves drop zones by aspect-independent quadrants", () => {
+    const tall = { left: 0, top: 0, width: 400, height: 800 };
+    // Upper half of a tall, narrow pane should resolve to "top", not "left"/"right".
+    expect(paneDropZoneFromRect(tall, 200, 80)).toBe("top");
+    expect(paneDropZoneFromRect(tall, 200, 720)).toBe("bottom");
+    expect(paneDropZoneFromRect(tall, 20, 400)).toBe("left");
+    expect(paneDropZoneFromRect(tall, 380, 400)).toBe("right");
+
+    const wide = { left: 0, top: 0, width: 1000, height: 300 };
+    expect(paneDropZoneFromRect(wide, 30, 150)).toBe("left");
+    expect(paneDropZoneFromRect(wide, 970, 150)).toBe("right");
+    expect(paneDropZoneFromRect(wide, 500, 20)).toBe("top");
+    expect(paneDropZoneFromRect(wide, 500, 280)).toBe("bottom");
+  });
+
+  it("compares drop targets for dedup", () => {
+    expect(isSameDropTarget(null, null)).toBe(true);
+    expect(isSameDropTarget({ paneId: "p", zone: "top" }, { paneId: "p", zone: "top" })).toBe(true);
+    expect(isSameDropTarget({ paneId: "p", zone: "top" }, { paneId: "p", zone: "bottom" })).toBe(false);
+    expect(isSameDropTarget(null, { paneId: "p", zone: "top" })).toBe(false);
   });
 });

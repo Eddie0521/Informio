@@ -10,7 +10,26 @@ autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 autoUpdater.forceDevUpdateConfig = !app.isPackaged;
 
-export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null) {
+const broadcastToRenderers = (channel: string, payload: unknown) => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) continue;
+    window.webContents.send(channel, payload);
+  }
+};
+
+const isNewerVersion = (nextVersion: string, currentVersion: string) => {
+  const normalize = (value: string) => value.trim().replace(/^v/i, "").split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+  const next = normalize(nextVersion);
+  const current = normalize(currentVersion);
+  const length = Math.max(next.length, current.length);
+  for (let index = 0; index < length; index += 1) {
+    const delta = (next[index] ?? 0) - (current[index] ?? 0);
+    if (delta !== 0) return delta > 0;
+  }
+  return false;
+};
+
+export function setupAutoUpdater() {
   // Check for updates on startup (delayed)
   setTimeout(() => {
     autoUpdater.checkForUpdates().catch((error) => {
@@ -30,7 +49,7 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null) {
     try {
       const result = await autoUpdater.checkForUpdates();
       const updateInfo = result?.updateInfo;
-      if (!updateInfo) return { available: false };
+      if (!updateInfo || !isNewerVersion(updateInfo.version, app.getVersion())) return { available: false };
       const releaseNotes = updateInfo.releaseNotes;
       return {
         available: true,
@@ -57,16 +76,14 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null) {
     autoUpdater.quitAndInstall();
   });
 
-  // Event handlers — notify renderer
+  // Event handlers — notify all renderer windows (settings opens in its own window)
   autoUpdater.on("update-available", (info) => {
     log.info("Update available:", info.version);
-    const win = getMainWindow();
-    win?.webContents.send("updater:update-available", { version: info.version });
+    broadcastToRenderers("updater:update-available", { version: info.version });
   });
 
   autoUpdater.on("download-progress", (progress) => {
-    const win = getMainWindow();
-    win?.webContents.send("updater:download-progress", {
+    broadcastToRenderers("updater:download-progress", {
       percent: progress.percent,
       transferred: progress.transferred,
       total: progress.total
@@ -75,11 +92,11 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null) {
 
   autoUpdater.on("update-downloaded", (info) => {
     log.info("Update downloaded:", info.version);
-    const win = getMainWindow();
-    win?.webContents.send("updater:update-downloaded", { version: info.version });
+    broadcastToRenderers("updater:update-downloaded", { version: info.version });
   });
 
   autoUpdater.on("error", (error) => {
     log.error("Auto-updater error:", error);
+    broadcastToRenderers("updater:error", { message: error.message });
   });
 }

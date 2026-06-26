@@ -3,7 +3,7 @@ import type { JSONContent, PasteRuleMatch } from "@tiptap/core";
 import { DOMParser as ProseMirrorDOMParser } from "@tiptap/pm/model";
 import { Plugin } from "@tiptap/pm/state";
 import type { MarkdownParserEditor } from "../types";
-import { normalizeCodeLanguage } from "../lib/markdown-block-parser";
+import { normalizeCodeLanguage, tableJsonFromHeaderRow } from "../lib/markdown-block-parser";
 import { clipboardPlainTextForPaste, htmlFragmentHasContent, sanitizeHtmlFragmentForPaste, stripClipboardFragmentMarkers } from "../lib/clipboardPaste";
 
 const INVALID_AUTO_LINK_CHAR_PATTERN = /[㐀-鿿豈-﫿，。！？；：、（）【】《》""]'']/;
@@ -110,42 +110,6 @@ const markdownFromSelection = (editor: any, from: number, to: number) => {
   if (!editor.markdown) return editor.state.doc.textBetween(from, to, "\n");
   const fragment = editor.state.doc.slice(from, to).content.toJSON();
   return editor.markdown.serialize({ type: "doc", content: fragment });
-};
-
-// tableJsonFromHeaderRow is in lib/markdown-block-parser
-const isExplicitMarkdownTableRow = (line: string) => /^\|.*\|$/.test(line.trim());
-const parseMarkdownTableRow = (line: string) => {
-  const trimmed = line.trim();
-  if (!trimmed.includes("|")) return null;
-  const body = trimmed.replace(/^\|/, "").replace(/\|$/, "");
-  const cells = body.split("|").map((cell) => cell.trim());
-  return cells.length >= 2 ? cells : null;
-};
-
-const tableJsonFromHeaderRow = (headerLine: string): JSONContent | null => {
-  if (!isExplicitMarkdownTableRow(headerLine)) return null;
-  const header = parseMarkdownTableRow(headerLine);
-  if (!header) return null;
-  const paragraph = (text?: string): JSONContent => (text ? { type: "paragraph", content: [{ type: "text", text }] } : { type: "paragraph" });
-  return {
-    type: "table",
-    content: [
-      {
-        type: "tableRow",
-        content: header.map((cell) => ({
-          type: "tableHeader",
-          content: [paragraph(cell)]
-        }))
-      },
-      {
-        type: "tableRow",
-        content: header.map(() => ({
-          type: "tableCell",
-          content: [paragraph()]
-        }))
-      }
-    ]
-  };
 };
 
 export const TyporaMarkdownInput = Extension.create({

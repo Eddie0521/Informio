@@ -1,0 +1,26 @@
+---
+title: Markdown editing
+description: How Informio treats Markdown as the source of truth.
+---
+
+Informio uses a Tiptap-based editor with Markdown as the source of truth.
+
+## Clean Markdown policy
+
+Saved files stay standard Markdown:
+
+- Standard links and images
+- GFM tables with alignment syntax
+- Obsidian-compatible block syntax where supported
+- Encrypted blocks are the only Informio-specific extension (they need cryptographic metadata)
+
+Informio does not write presentation-only HTML, arbitrary color spans, or app-private file URLs into your files by default.
+
+## Tables and images
+
+- Table layout tweaks are session-only unless representable in Markdown.
+- Images support in-editor resize when the width can be saved as a normal image reference.
+
+## PDF and other formats
+
+PDF preview and highlight mode live in the PDF viewer. Spreadsheet and Word files keep their binary file as source of truth inside the library.

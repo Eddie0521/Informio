@@ -99,15 +99,23 @@ export function SettingsView({
     const normalized = requested === "markdown" ? "editor" : requested === "integrations" ? "agent" : requested;
     return settingsNav.some((item) => item.id === normalized) ? (normalized as (typeof settingsNav)[number]["id"]) : "appearance";
   });
-  const [updateCheckStatus, setUpdateCheckStatus] = useState<"idle" | "checking" | "available" | "downloading" | "downloaded" | "up-to-date">("idle");
+  const [updateCheckStatus, setUpdateCheckStatus] = useState<"idle" | "checking" | "available" | "downloading" | "downloaded" | "up-to-date" | "error">("idle");
   const [updateInfo, setUpdateInfo] = useState<{ version: string; releaseNotes: string } | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState({ percent: 0, transferred: 0, total: 0 });
 
   // Listen for update events from main process
   useEffect(() => {
     window.informio.onUpdateAvailable(() => {});
-    window.informio.onUpdateDownloaded(() => setUpdateCheckStatus("downloaded"));
+    window.informio.onUpdateDownloaded(() => {
+      setUpdateCheckStatus("downloaded");
+      setUpdateError(null);
+    });
     window.informio.onDownloadProgress((info) => setDownloadProgress({ percent: info.percent, transferred: info.transferred, total: info.total }));
+    window.informio.onUpdateError((info) => {
+      setUpdateCheckStatus("error");
+      setUpdateError(info.message);
+    });
   }, []);
 
   const [localFontsState, setLocalFontsState] = useState<{
@@ -672,6 +680,7 @@ export function SettingsView({
                         onClick={() => {
                           setUpdateCheckStatus("checking");
                           setUpdateInfo(null);
+                          setUpdateError(null);
                           window.informio.checkForUpdates().then((result) => {
                             if (result.available && result.version) {
                               setUpdateInfo({ version: result.version, releaseNotes: result.releaseNotes ?? "" });
@@ -710,7 +719,14 @@ export function SettingsView({
                             type="button"
                             onClick={() => {
                               setUpdateCheckStatus("downloading");
-                              window.informio.downloadUpdate();
+                              setUpdateError(null);
+                              setDownloadProgress({ percent: 0, transferred: 0, total: 0 });
+                              window.informio.downloadUpdate().then((result) => {
+                                if (!result.success) {
+                                  setUpdateCheckStatus("error");
+                                  setUpdateError(result.error ?? t("settings.about.downloadFailed"));
+                                }
+                              });
                             }}
                             className="inline-flex items-center gap-2 rounded-md bg-[var(--accent)] px-3 py-1.5 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
                           >
@@ -751,6 +767,20 @@ export function SettingsView({
                         <Download size={14} />
                         <span className="border-b border-current/25 pb-0.5">{t("settings.about.readyToInstall")}</span>
                       </button>
+                    ) : updateCheckStatus === "error" ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="text-[12px] text-red-500">{updateError ?? t("settings.about.downloadFailed")}</div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUpdateCheckStatus(updateInfo ? "available" : "idle");
+                            setUpdateError(null);
+                          }}
+                          className="text-[12px] text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                        >
+                          {t("settings.about.checkUpdate")}
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                 </div>

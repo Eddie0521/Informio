@@ -1,5 +1,5 @@
 import type {
-  BrowserTab,
+  BrowserTabMeta,
   EditorDropZone,
   SplitDirection,
   WorkspaceDropTarget,
@@ -21,40 +21,50 @@ export function createBrowserId() {
   return `browser-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function createBrowserTab(url = "", id = createBrowserId()): BrowserTab {
-  return { id, url };
+export function createBrowserContent(tabId = createBrowserId()) {
+  return { type: "browser" as const, tabId };
 }
 
-export function createBrowserContent(url = "", tabId = createBrowserId()) {
-  const tab = createBrowserTab(url, tabId);
-  return { type: "browser" as const, tabs: [tab], activeTabId: tab.id };
+export function createBrowserLeaf(tabId = createBrowserId(), paneId = createPaneId()): WorkspaceLeafNode {
+  return { type: "leaf", id: paneId, content: createBrowserContent(tabId) };
 }
 
-export function createBrowserLeaf(url = "", paneId = createPaneId()): WorkspaceLeafNode {
-  return { type: "leaf", id: paneId, content: createBrowserContent(url) };
-}
+type LegacyBrowserContent = {
+  type: "browser";
+  tabId?: string;
+  browserId?: string;
+  url?: string;
+  tabs?: Array<{ id: string; url?: string; title?: string }>;
+  activeTabId?: string;
+};
 
-export function normalizeBrowserContent(
-  content:
-    | Extract<WorkspacePaneContent, { type: "browser" }>
-    | { type: "browser"; browserId?: string; url?: string; tabs?: BrowserTab[]; activeTabId?: string },
-): Extract<WorkspacePaneContent, { type: "browser" }> {
-  if ("tabs" in content && Array.isArray(content.tabs) && content.tabs.length > 0 && content.activeTabId) {
-    return { type: "browser", tabs: content.tabs, activeTabId: content.activeTabId };
+export function normalizeBrowserContent(content: LegacyBrowserContent): Extract<WorkspacePaneContent, { type: "browser" }> {
+  if (content.tabId) {
+    return { type: "browser", tabId: content.tabId };
   }
-  const legacy = content as { type: "browser"; browserId?: string; url?: string };
-  const tabId = legacy.browserId ?? createBrowserId();
-  const url = legacy.url ?? "";
-  return createBrowserContent(url, tabId);
+  if (content.tabs?.length && content.activeTabId) {
+    return { type: "browser", tabId: content.activeTabId };
+  }
+  if (content.tabs?.length) {
+    return { type: "browser", tabId: content.tabs[0]!.id };
+  }
+  const tabId = content.browserId ?? createBrowserId();
+  return { type: "browser", tabId };
 }
 
-export function getBrowserTabIds(content: Extract<WorkspacePaneContent, { type: "browser" }>) {
-  return content.tabs.map((tab) => tab.id);
+export function getBrowserTabId(content: Extract<WorkspacePaneContent, { type: "browser" }> | LegacyBrowserContent) {
+  return normalizeBrowserContent(content as LegacyBrowserContent).tabId;
 }
 
-export function browserTabLabel(tab: BrowserTab, fallback: string) {
-  if (tab.title?.trim()) return tab.title.trim();
-  const url = tab.url?.trim();
+export function findBrowserLeafByTabId(node: WorkspaceSplitNode | null, tabId: string) {
+  return collectWorkspaceLeaves(node).find(
+    (leaf) => leaf.content.type === "browser" && leaf.content.tabId === tabId,
+  ) ?? null;
+}
+
+export function browserTabLabel(meta: BrowserTabMeta | undefined, fallback: string) {
+  if (meta?.title?.trim()) return meta.title.trim();
+  const url = meta?.url?.trim();
   if (!url) return fallback;
   try {
     return new URL(url).hostname || url;
@@ -110,13 +120,15 @@ export function paneDropZoneFromRect(
   clientX: number,
   clientY: number
 ): EditorDropZone {
-  const x = clientX - rect.left;
-  const y = clientY - rect.top;
+  const width = Math.max(1, rect.width);
+  const height = Math.max(1, rect.height);
+  const fx = Math.min(1, Math.max(0, (clientX - rect.left) / width));
+  const fy = Math.min(1, Math.max(0, (clientY - rect.top) / height));
   const distances: Array<[EditorDropZone, number]> = [
-    ["left", x],
-    ["right", rect.width - x],
-    ["top", y],
-    ["bottom", rect.height - y],
+    ["left", fx],
+    ["right", 1 - fx],
+    ["top", fy],
+    ["bottom", 1 - fy],
   ];
   return distances.sort((left, right) => left[1] - right[1])[0][0];
 }

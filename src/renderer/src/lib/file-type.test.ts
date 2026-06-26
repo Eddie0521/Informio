@@ -77,6 +77,11 @@ describe("documentKindFromPath", () => {
     expect(documentKindFromPath("data.csv")).toBe("spreadsheet");
   });
 
+  it("returns 'word' for word extensions", () => {
+    expect(documentKindFromPath("report.docx")).toBe("word");
+    expect(documentKindFromPath("legacy.doc")).toBe("word");
+  });
+
   it("returns 'unknown' for unrecognized extension", () => {
     expect(documentKindFromPath("file.xyz")).toBe("unknown");
   });
@@ -551,6 +556,11 @@ describe("mimeTypeFromName", () => {
     expect(mimeTypeFromName("budget.xlsx")).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     expect(mimeTypeFromName("legacy.xls")).toBe("application/vnd.ms-excel");
     expect(mimeTypeFromName("data.csv")).toBe("text/csv");
+  });
+
+  it("returns word mime types", () => {
+    expect(mimeTypeFromName("report.docx")).toBe("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    expect(mimeTypeFromName("legacy.doc")).toBe("application/msword");
   });
 
   it("returns 'text/markdown' for .md", () => {

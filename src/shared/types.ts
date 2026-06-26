@@ -10,7 +10,7 @@ export type AgentTransport = "codex-app-server" | "claude-agent-sdk" | "opencode
 
 export type ApiProviderKind = "openai-compatible" | "anthropic";
 
-export type InformioDocumentKind = "markdown" | "text" | "image" | "video" | "audio" | "pdf" | "spreadsheet" | "unknown";
+export type InformioDocumentKind = "markdown" | "text" | "image" | "video" | "audio" | "pdf" | "spreadsheet" | "word" | "unknown";
 
 export type InformioDocument = {
   id: string;
@@ -26,6 +26,25 @@ export type InformioDocument = {
 export type AssetDataResult = {
   data: ArrayBuffer;
   mimeType: string;
+};
+
+export type SaveSpreadsheetResult = {
+  path: string;
+  migratedFrom?: string;
+};
+
+export type SaveWordResult = {
+  path: string;
+};
+
+export type SpreadsheetDiskFingerprint = {
+  mtimeMs: number;
+  size: number;
+};
+
+export type WordDiskFingerprint = {
+  mtimeMs: number;
+  size: number;
 };
 
 export type DocumentConflict = {

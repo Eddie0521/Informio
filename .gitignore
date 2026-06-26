@@ -3,6 +3,8 @@ dist
 dist-electron
 out
 release
+.next
+.source
 .playwright-cli
 output
 output/playwright

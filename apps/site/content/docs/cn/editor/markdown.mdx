@@ -1,0 +1,26 @@
+---
+title: Markdown 编辑
+description: Informio 如何将 Markdown 作为唯一事实来源。
+---
+
+Informio 使用基于 Tiptap 的编辑器，Markdown 文件是唯一事实来源。
+
+## 干净的 Markdown 策略
+
+保存的文件保持标准 Markdown：
+
+- 标准链接与图片
+- 带对齐语法的 GFM 表格
+- 在支持范围内兼容 Obsidian 块语法
+- 加密块是唯一的 Informio 专用扩展（需要加密元数据）
+
+默认情况下，Informio 不会把纯展示用 HTML、任意颜色 span 或应用私有文件 URL 写入你的文件。
+
+## 表格与图片
+
+- 表格布局调整仅在会话内生效，除非能以 Markdown 表示。
+- 图片支持在编辑器内拖拽调整大小，宽度会保存为普通图片引用。
+
+## PDF 与其他格式
+
+PDF 预览与高亮模式在 PDF 查看器中。表格与 Word 文件在库内以二进制文件为事实来源。

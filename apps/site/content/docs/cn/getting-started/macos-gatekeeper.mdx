@@ -1,0 +1,26 @@
+---
+title: macOS Gatekeeper
+description: 解决未签名 macOS 构建的「已损坏」提示。
+---
+
+Release 构建未经过公证，macOS 首次打开时可能拦截或提示 Informio「已损坏」。
+
+## 移除隔离标记
+
+打开应用前，在终端运行：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Informio.app
+```
+
+若安装路径不同，请相应修改。
+
+## 希望完全没有警告？
+
+在本机从源码打包 Informio。本地构建的应用打开时不会出现 Gatekeeper 损坏提示。请参阅 [从源码打包](/cn/docs/development/build-from-source)。
+
+## 仍然无法打开？
+
+1. 打开 **系统设置 → 隐私与安全性**。
+2. 若出现 Informio 相关提示，选择 **仍要打开**。
+3. 若问题依旧，请在 [Issues](https://github.com/Eddie0521/Informio/issues) 提交 macOS 版本信息。

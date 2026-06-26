@@ -1,5 +1,5 @@
 <p align="right">
-  <a href="./README.md">English</a> | 简体中文
+  <a href="./README.md">English</a> | 简体中文 · <a href="https://informio.tech/cn">官网</a>
 </p>
 
 <p align="center">
