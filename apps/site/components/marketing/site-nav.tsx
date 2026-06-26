@@ -1,9 +1,11 @@
 'use client';
 
+import { AppLogo } from '@/components/brand/app-logo';
+import { MarketingNavLinks } from '@/components/marketing/marketing-nav-links';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { Locale } from '@/lib/i18n';
-import { docsHref, homeHref, marketingCopy, switchLocalePath } from '@/lib/marketing-copy';
+import { homeHref, marketingCopy, switchLocalePath } from '@/lib/marketing-copy';
 import { APP_RELEASES_URL } from '@informio/brand/meta';
 
 type SiteNavProps = {
@@ -13,33 +15,25 @@ type SiteNavProps = {
 export function SiteNav({ locale }: SiteNavProps) {
   const copy = marketingCopy[locale];
   const pathname = usePathname() ?? homeHref(locale);
-  const docsPath = docsHref(locale);
+  const home = homeHref(locale);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[var(--informio-border)] bg-[color-mix(in_srgb,var(--informio-surface)_92%,transparent)] backdrop-blur-md">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-6 px-4 md:px-6">
-        <Link href={homeHref(locale)} className="flex items-center gap-2.5 font-semibold tracking-tight">
-          <img src="/icon.svg" alt="" width={28} height={28} className="rounded-lg" />
-          <span>Informio</span>
+    <header className="fixed top-5 left-1/2 z-50 -translate-x-1/2">
+      <div className="flex items-center gap-6 rounded-full border border-white/60 bg-white/80 px-5 py-2.5 shadow-[0_2px_20px_rgba(0,0,0,0.04)] backdrop-blur-xl">
+        <Link href={home} className="flex shrink-0 items-center gap-2 font-medium tracking-tight">
+          <AppLogo size={24} />
+          <span className="text-sm">Informio</span>
         </Link>
 
-        <nav className="hidden items-center gap-6 text-sm text-[var(--informio-muted)] lg:flex">
-          <a href="#features" className="transition-colors hover:text-[var(--informio-text)]">
-            {copy.nav.features}
-          </a>
-          <a href="#agent" className="transition-colors hover:text-[var(--informio-text)]">
-            {copy.nav.agent}
-          </a>
-          <Link href={docsPath} className="transition-colors hover:text-[var(--informio-text)]">
-            {copy.nav.docs}
-          </Link>
-        </nav>
+        <div className="hidden h-4 w-px bg-black/[0.08] md:block" />
 
-        <div className="flex items-center gap-2 sm:gap-3">
+        <MarketingNavLinks locale={locale} className="hidden md:flex" />
+
+        <div className="flex items-center gap-2">
           <LocaleSwitcher currentLocale={locale} pathname={pathname} />
           <a
             href={APP_RELEASES_URL}
-            className="inline-flex h-9 items-center rounded-full bg-[var(--informio-accent)] px-4 text-sm font-medium text-white transition active:scale-[0.98] hover:bg-[var(--informio-accent-hover)]"
+            className="inline-flex h-8 items-center rounded-full bg-[var(--informio-text)] px-4 text-xs font-medium text-white transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.98] hover:bg-black/80"
           >
             {copy.nav.download}
           </a>
@@ -56,7 +50,7 @@ function LocaleSwitcher({ currentLocale, pathname }: { currentLocale: Locale; pa
   return (
     <Link
       href={switchLocalePath(currentLocale, otherLocale, pathname)}
-      className="inline-flex h-9 items-center rounded-full border border-[var(--informio-border)] bg-white px-3 text-sm text-[var(--informio-muted)] transition hover:text-[var(--informio-text)]"
+      className="inline-flex h-8 items-center rounded-full bg-black/[0.04] px-2.5 text-xs font-medium text-[var(--informio-muted)] transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.08] hover:text-[var(--informio-text)]"
     >
       {label}
     </Link>
