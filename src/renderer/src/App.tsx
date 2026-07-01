@@ -204,8 +204,6 @@ import {
 } from "./lib/asset-url";
 import { saveSpreadsheetDocumentAs, saveSpreadsheetDocumentNow } from "./lib/spreadsheet-save-bridge";
 import { spreadsheetDocumentMarkdown } from "./lib/spreadsheet-document";
-import { saveWordDocumentAs, saveWordDocumentNow } from "./lib/word-save-bridge";
-import { wordDocumentMarkdown } from "./lib/word-document";
 import {
   documentKindFromPath,
   documentKind,
@@ -315,6 +313,12 @@ import {
   highlightedCodeHtml,
   lowlight,
 } from "./lib/markdown-block-parser";
+import {
+  DOCUMENT_STATE_SYNC_DEBOUNCE_MS,
+  mergeLiveMarkdownIntoDocuments,
+  pruneSyncedLiveMarkdown,
+  shouldSkipDocumentStateSync
+} from "./lib/document-state-sync";
 import type {
   SidebarMode,
   OutlineItem,
@@ -554,6 +558,8 @@ export function App() {
   const latestDataRef = useRef<AppData | null>(null);
   const dirtyBaseMarkdownRef = useRef<Map<string, string>>(new Map());
   const composingDocumentIdRef = useRef<string | null>(null);
+  const liveMarkdownRef = useRef<Map<string, string>>(new Map());
+  const documentStateSyncTimerRef = useRef<number | null>(null);
   const initializedTabsRef = useRef(false);
   const lastActiveDocumentIdRef = useRef<string | null>(null);
   const tabsScrollRef = useRef<HTMLDivElement | null>(null);
@@ -576,6 +582,36 @@ export function App() {
   const applyDataState = (next: AppData) => {
     latestDataRef.current = next;
     setData(next);
+  };
+
+  const getDocumentsWithLiveMarkdown = (base?: AppData | null) => {
+    const current = base ?? latestDataRef.current;
+    if (!current) return [];
+    return mergeLiveMarkdownIntoDocuments(current.documents, liveMarkdownRef.current);
+  };
+
+  const flushDocumentStateSync = () => {
+    if (documentStateSyncTimerRef.current !== null) {
+      window.clearTimeout(documentStateSyncTimerRef.current);
+      documentStateSyncTimerRef.current = null;
+    }
+    const current = latestDataRef.current;
+    if (!current || !liveMarkdownRef.current.size) return;
+    const documents = mergeLiveMarkdownIntoDocuments(current.documents, liveMarkdownRef.current);
+    if (documents === current.documents) return;
+    const nextData = { ...current, documents };
+    applyDataState(nextData);
+    pruneSyncedLiveMarkdown(liveMarkdownRef.current, documents);
+  };
+
+  const scheduleDocumentStateSync = () => {
+    if (documentStateSyncTimerRef.current !== null) {
+      window.clearTimeout(documentStateSyncTimerRef.current);
+    }
+    documentStateSyncTimerRef.current = window.setTimeout(() => {
+      documentStateSyncTimerRef.current = null;
+      flushDocumentStateSync();
+    }, DOCUMENT_STATE_SYNC_DEBOUNCE_MS);
   };
 
   const applyDirtyDocumentIds = (next: Set<string>) => {
@@ -640,38 +676,13 @@ export function App() {
     void window.informio.saveDocuments(documents, current.activeDocumentId);
   }, []);
 
-  const updateWordDocumentPath = useCallback((documentId: string, nextPath: string) => {
-    const current = latestDataRef.current;
-    if (!current) return;
-    const title = pathBaseName(nextPath);
-    const markdown = wordDocumentMarkdown(nextPath);
-    const documents = current.documents.map((doc) =>
-      doc.id === documentId
-        ? {
-            ...doc,
-            filePath: nextPath,
-            title,
-            markdown,
-            kind: "word" as const,
-            updatedAt: new Date().toISOString()
-          }
-        : doc
-    );
-    applyDataState({ ...current, documents });
-    void window.informio.saveDocuments(documents, current.activeDocumentId);
-  }, []);
-
   const handleBinaryDocumentPathChange = useCallback((documentId: string, nextPath: string) => {
     const doc = latestDataRef.current?.documents.find((item) => item.id === documentId);
     if (!doc) return;
     if (documentKind(doc) === "spreadsheet") {
       updateSpreadsheetDocumentPath(documentId, nextPath);
-      return;
     }
-    if (documentKind(doc) === "word") {
-      updateWordDocumentPath(documentId, nextPath);
-    }
-  }, [updateSpreadsheetDocumentPath, updateWordDocumentPath]);
+  }, [updateSpreadsheetDocumentPath]);
 
   const applyMergedAppData = (updated: AppData, options: { allowNewConflicts?: boolean } = {}) => {
     const merged = mergeDiskDataWithLocalDrafts(
@@ -708,28 +719,11 @@ export function App() {
     }
   };
 
-  const requestWordSaveAs = async (documentId: string) => {
-    const current = latestDataRef.current;
-    if (!current) return;
-    try {
-      const next = await saveWordDocumentAs(documentId, current.documents, current.activeDocumentId);
-      if (!next) return;
-      applyMergedAppData(next);
-      forgetDocumentDirtyState(documentId);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : String(error));
-    }
-  };
-
   const requestBinaryDocumentSaveAs = async (documentId: string) => {
     const doc = latestDataRef.current?.documents.find((item) => item.id === documentId);
     if (!doc) return;
     if (documentKind(doc) === "spreadsheet") {
       await requestSpreadsheetSaveAs(documentId);
-      return;
-    }
-    if (documentKind(doc) === "word") {
-      await requestWordSaveAs(documentId);
     }
   };
 
@@ -762,9 +756,6 @@ export function App() {
       if (local.markdown === doc.markdown) {
         dirtyBaseMarkdownRef.current.delete(doc.id);
         if (documentKind(local) === "spreadsheet" && dirtyIds.has(doc.id)) {
-          nextDirtyIds.add(doc.id);
-        }
-        if (documentKind(local) === "word" && dirtyIds.has(doc.id)) {
           nextDirtyIds.add(doc.id);
         }
         return doc;
@@ -929,6 +920,14 @@ export function App() {
   }, [data]);
 
   useEffect(() => {
+    const flushOnExit = () => {
+      flushDocumentStateSync();
+    };
+    window.addEventListener("beforeunload", flushOnExit);
+    return () => window.removeEventListener("beforeunload", flushOnExit);
+  }, []);
+
+  useEffect(() => {
     dirtyDocumentIdsRef.current = dirtyDocumentIds;
   }, [dirtyDocumentIds]);
 
@@ -1023,10 +1022,11 @@ export function App() {
       agents: data.settings.agents.map((agent) => (agent.id === activeAgent.id ? { ...agent, model: fallbackModel } : agent))
     });
   }, [activeAgent?.id, activeAgent?.model, activeConnection?.models, data?.settings]);
-  const documentLookupIndex = useMemo(
-    () => (data ? buildDocumentLookupIndex(data.documents) : null),
-    [data?.documents]
-  );
+  const documentLinkStructureKey = useMemo(() => (data ? documentStructureKey(data.documents) : ""), [data?.documents]);
+  const documentLookupIndex = useMemo(() => {
+    const documents = latestDataRef.current?.documents ?? data?.documents;
+    return documents?.length ? buildDocumentLookupIndex(documents) : null;
+  }, [documentLinkStructureKey]);
   const documentsById = useMemo(() => new Map((data?.documents ?? []).map((doc) => [doc.id, doc])), [data?.documents]);
   const openDocumentIds = useMemo(() => selectOpenDocumentIds(openWorkspaceTabs), [openWorkspaceTabs]);
   const openDocuments = useMemo(
@@ -1161,7 +1161,11 @@ export function App() {
     cleanIds?: string[],
     options: { syncData?: boolean; ignoreConflicts?: boolean } = {}
   ) => {
-    const targetIds = cleanIds?.length ? cleanIds : nextDocuments.map((doc) => doc.id);
+    flushDocumentStateSync();
+    const documentsToSave = nextDocuments === latestDataRef.current?.documents
+      ? getDocumentsWithLiveMarkdown()
+      : nextDocuments;
+    const targetIds = cleanIds?.length ? cleanIds : documentsToSave.map((doc) => doc.id);
     const conflictedId = options.ignoreConflicts ? undefined : targetIds.find((id) => documentConflictsRef.current.has(id));
     if (conflictedId) {
       setActiveConflictDocumentId(conflictedId);
@@ -1169,7 +1173,7 @@ export function App() {
     }
     if (!cleanIds?.length) pendingAutoSaveIdsRef.current.clear();
     const runSave = async () => {
-      const result = await window.informio.saveNow(nextDocuments, activeDocumentId);
+      const result = await window.informio.saveNow(documentsToSave, activeDocumentId);
       if (options.syncData !== false) {
         applyDataState(result.data);
       }
@@ -1197,6 +1201,7 @@ export function App() {
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
       saveTimer.current = null;
+      flushDocumentStateSync();
       const latest = latestDataRef.current;
       if (!latest?.settings.markdown.autoSave) return;
       if (composingDocumentIdRef.current) return;
@@ -1212,28 +1217,25 @@ export function App() {
     }, 900);
   };
 
-  const updateDocument = (documentId: string, markdown: string, options?: { composing?: boolean }) => {
+  const updateDocument = (documentId: string, markdown: string, options?: { composing?: boolean; immediate?: boolean }) => {
     if (!data) return;
     const sourceDocument = documentsById.get(documentId);
     if (!sourceDocument) return;
-    const documents = data.documents.map((doc) =>
-      doc.id === documentId ? { ...doc, markdown, updatedAt: new Date().toISOString() } : doc
-    );
-    const nextData = { ...data, documents };
-    applyDataState(nextData);
+    liveMarkdownRef.current.set(documentId, markdown);
     markDocumentDirty(sourceDocument);
-    applyDocumentConflicts(
-      (() => {
-        const items = documentConflictsRef.current;
-        const existing = items.get(sourceDocument.id);
-        if (!existing) return items;
-        const next = new Map(items);
-        const nextConflict = { ...existing, localMarkdown: markdown };
-        next.set(sourceDocument.id, nextConflict);
-        return next;
-      })()
-    );
-    if (!options?.composing) persistDocuments(sourceDocument.id);
+    const existing = documentConflictsRef.current.get(sourceDocument.id);
+    if (existing) {
+      const next = new Map(documentConflictsRef.current);
+      next.set(sourceDocument.id, { ...existing, localMarkdown: markdown });
+      applyDocumentConflicts(next);
+    }
+    if (shouldSkipDocumentStateSync(options?.composing)) return;
+    if (options?.immediate) {
+      flushDocumentStateSync();
+    } else {
+      scheduleDocumentStateSync();
+    }
+    persistDocuments(sourceDocument.id);
   };
 
   const handleAgentSelection = (selection: AgentSelection | null) => {
@@ -1535,6 +1537,7 @@ export function App() {
     }
     const changedDocumentId = composingDocumentIdRef.current;
     composingDocumentIdRef.current = null;
+    flushDocumentStateSync();
     if (changedDocumentId) {
       window.setTimeout(() => {
         persistDocuments(changedDocumentId);
@@ -1544,6 +1547,7 @@ export function App() {
 
   const selectDocument = (id: string) => {
     if (!data) return;
+    flushDocumentStateSync();
     setOpenWorkspaceTabs((tabs) =>
       tabs.some((tab) => tab.kind === "document" && tab.id === id) ? tabs : [...tabs, { kind: "document", id }],
     );
@@ -1615,6 +1619,7 @@ export function App() {
   };
 
   const closeDocumentTab = async (id: string) => {
+    flushDocumentStateSync();
     const currentData = latestDataRef.current;
     if (!currentData) return;
     try {
@@ -1622,9 +1627,6 @@ export function App() {
         const closingDoc = currentData.documents.find((doc) => doc.id === id);
         if (closingDoc && documentKind(closingDoc) === "spreadsheet") {
           await saveSpreadsheetDocumentNow(id);
-          forgetDocumentDirtyState(id);
-        } else if (closingDoc && documentKind(closingDoc) === "word") {
-          await saveWordDocumentNow(id);
           forgetDocumentDirtyState(id);
         } else {
           await saveDocumentsNow(currentData.documents, currentData.activeDocumentId, [id]);
@@ -1804,6 +1806,46 @@ export function App() {
     applyMergedAppData(next);
   };
 
+  const fileListHandlersRef = useRef({
+    selectDocument,
+    createDocument,
+    createFolder,
+    executeFileSystemAction,
+    importExternalFiles,
+    renameProject,
+    toggleProjectPinned,
+    startDocumentDrag
+  });
+  fileListHandlersRef.current = {
+    selectDocument,
+    createDocument,
+    createFolder,
+    executeFileSystemAction,
+    importExternalFiles,
+    renameProject,
+    toggleProjectPinned,
+    startDocumentDrag
+  };
+  const handleFileListSelect = useCallback((id: string) => fileListHandlersRef.current.selectDocument(id), []);
+  const handleFileListCreate = useCallback((folderPath?: string) => { void fileListHandlersRef.current.createDocument(folderPath); }, []);
+  const handleFileListCreateFolder = useCallback((folderPath?: string) => { void fileListHandlersRef.current.createFolder(folderPath); }, []);
+  const handleFileListAction = useCallback((input: FileSystemOperationInput) => { void fileListHandlersRef.current.executeFileSystemAction(input); }, []);
+  const handleFileListImport = useCallback((sourcePaths: string[], destinationFolderPath: string) => {
+    void fileListHandlersRef.current.importExternalFiles(sourcePaths, destinationFolderPath);
+  }, []);
+  const handleFileListRenameProject = useCallback((path: string, title: string) => {
+    void fileListHandlersRef.current.renameProject(path, title);
+  }, []);
+  const handleFileListTogglePinned = useCallback((path: string) => {
+    void fileListHandlersRef.current.toggleProjectPinned(path);
+  }, []);
+  const handleFileListDragStart = useCallback((documentId: string, event: ReactDragEvent<HTMLElement>) => {
+    fileListHandlersRef.current.startDocumentDrag(documentId, event);
+  }, []);
+  const handleRemoveProject = useCallback((path: string) => {
+    void window.informio.removeProject(path).then(setData);
+  }, [setData]);
+
   const saveActiveDocumentAs = async () => {
     if (!data || !activeOpenDoc) return;
     const next = await window.informio.saveActiveDocumentAs(data.documents, data.activeDocumentId);
@@ -1878,21 +1920,11 @@ export function App() {
           });
           return true;
         }
-        if (activeOpenDoc && documentKind(activeOpenDoc) === "word") {
-          void saveWordDocumentNow(activeOpenDoc.id).then((saved) => {
-            if (saved) forgetDocumentDirtyState(activeOpenDoc.id);
-          });
-          return true;
-        }
         if (activeOpenDoc) void saveDocumentsNow(data.documents, data.activeDocumentId);
         return true;
       case "file:save-as":
         if (activeOpenDoc && documentKind(activeOpenDoc) === "spreadsheet") {
           void requestSpreadsheetSaveAs(activeOpenDoc.id);
-          return true;
-        }
-        if (activeOpenDoc && documentKind(activeOpenDoc) === "word") {
-          void requestWordSaveAs(activeOpenDoc.id);
           return true;
         }
         void saveActiveDocumentAs();
@@ -2263,6 +2295,7 @@ export function App() {
 
   const sendAgentSession = async (text: string, permissionMode: AgentPermissionMode, attachments: AgentMessageAttachment[] = []) => {
     if (!data || !activeAgent) return;
+    flushDocumentStateSync();
     const messageText = `${text.trim() || t("agentpanel.processAttachments")}${attachmentsMarkdown(attachments)}`;
     const currentDoc = activeOpenDoc;
     const selection = agentSelection?.documentId === currentDoc?.id ? agentSelection : null;
@@ -2891,15 +2924,15 @@ export function App() {
 	              sidebarMode === "files" ? (
 	                <ErrorBoundary name={t("app.fileList")}>
 	                  <FileList
-	                    onSelect={selectDocument}
-	                    onCreate={createDocument}
-	                    onCreateFolder={createFolder}
-	                    onFileAction={(input) => { void executeFileSystemAction(input); }}
-	                    onImportExternalFiles={(sourcePaths, destinationFolderPath) => { void importExternalFiles(sourcePaths, destinationFolderPath); }}
-	                    onRenameProject={renameProject}
-	                    onToggleProjectPinned={toggleProjectPinned}
-	                    onRemoveProject={(path) => window.informio.removeProject(path).then(setData)}
-	                    onDocumentDragStart={startDocumentDrag}
+	                    onSelect={handleFileListSelect}
+	                    onCreate={handleFileListCreate}
+	                    onCreateFolder={handleFileListCreateFolder}
+	                    onFileAction={handleFileListAction}
+	                    onImportExternalFiles={handleFileListImport}
+	                    onRenameProject={handleFileListRenameProject}
+	                    onToggleProjectPinned={handleFileListTogglePinned}
+	                    onRemoveProject={handleRemoveProject}
+	                    onDocumentDragStart={handleFileListDragStart}
 	                  />
 	                </ErrorBoundary>
 	              ) : sidebarMode === "outline" ? (

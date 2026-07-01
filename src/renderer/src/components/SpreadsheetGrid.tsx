@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Plus } from "lucide-react";
 import {
   SpreadsheetContextMenu,
@@ -33,13 +34,39 @@ type SpreadsheetGridProps = {
   onCellChange: (sheetIndex: number, row: number, column: number, value: string) => void;
 };
 
+const ROW_HEIGHT = 28;
+const COL_WIDTH = 96;
+const ROW_HEADER_WIDTH = 44;
+const COL_HEADER_HEIGHT = 28;
+
 export function SpreadsheetGrid({ workbook, zoom, onWorkbookChange, onCellChange }: SpreadsheetGridProps) {
   const { t } = useTranslation();
   const [activeCell, setActiveCell] = useState<ActiveCell>({ row: 0, column: 0 });
   const [menu, setMenu] = useState<SpreadsheetContextMenuState | null>(null);
   const clipboardRef = useRef("");
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const activeSheet = workbook.sheets[workbook.activeSheetIndex] ?? workbook.sheets[0];
   const { rowCount, colCount } = useMemo(() => sheetGridSize(activeSheet), [activeSheet]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 5
+  });
+
+  const colVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: colCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => COL_WIDTH,
+    overscan: 2
+  });
+
+  useEffect(() => {
+    rowVirtualizer.scrollToIndex(activeCell.row, { align: "auto" });
+    colVirtualizer.scrollToIndex(activeCell.column, { align: "auto" });
+  }, [activeCell.row, activeCell.column, colVirtualizer, rowVirtualizer]);
 
   if (!activeSheet) {
     return <div className="informio-spreadsheet-message is-error">{t("editor.assetDecodeError", { type: t("spreadsheet.fileType") })}</div>;
@@ -135,6 +162,9 @@ export function SpreadsheetGrid({ workbook, zoom, onWorkbookChange, onCellChange
     applyStructure(renameWorkbookSheet(workbook, sheetIndex, nextName));
   };
 
+  const gridWidth = ROW_HEADER_WIDTH + colVirtualizer.getTotalSize();
+  const gridHeight = COL_HEADER_HEIGHT + rowVirtualizer.getTotalSize();
+
   return (
     <div className="informio-spreadsheet-grid-shell">
       <div className="informio-spreadsheet-status">
@@ -145,51 +175,87 @@ export function SpreadsheetGrid({ workbook, zoom, onWorkbookChange, onCellChange
         <span className="informio-spreadsheet-status-hint">{t("spreadsheet.contextMenuHint")}</span>
       </div>
       <div
+        ref={scrollRef}
         className="informio-spreadsheet-grid-scroll"
         onContextMenu={(event) => openMenu(event, { kind: "cell", row: activeCell.row, column: activeCell.column })}
       >
         <div className="informio-spreadsheet-grid-zoom" style={{ zoom }}>
-          <table className="informio-spreadsheet-grid" aria-label={activeSheet.name}>
-            <thead>
-              <tr>
-                <th className="informio-spreadsheet-grid-corner" scope="col" />
-                {Array.from({ length: colCount }, (_, column) => (
-                  <th
+          <div
+            className="informio-spreadsheet-grid"
+            aria-label={activeSheet.name}
+            style={{ width: gridWidth, height: gridHeight, position: "relative" }}
+          >
+            <div
+              className="informio-spreadsheet-grid-corner"
+              style={{ position: "sticky", left: 0, top: 0, width: ROW_HEADER_WIDTH, height: COL_HEADER_HEIGHT, zIndex: 3 }}
+            />
+            <div style={{ position: "absolute", top: 0, left: ROW_HEADER_WIDTH, height: COL_HEADER_HEIGHT, width: colVirtualizer.getTotalSize() }}>
+              {colVirtualizer.getVirtualItems().map((virtualColumn) => {
+                const column = virtualColumn.index;
+                return (
+                  <div
                     key={column}
                     className={cn(
                       "informio-spreadsheet-grid-col-header",
                       column === activeCell.column && "is-active"
                     )}
-                    scope="col"
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: virtualColumn.start,
+                      width: virtualColumn.size,
+                      height: COL_HEADER_HEIGHT
+                    }}
                     onClick={() => setActiveCell((current) => ({ ...current, column }))}
                     onContextMenu={(event) => openMenu(event, { kind: "column", column })}
                   >
                     {columnLabel(column)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: rowCount }, (_, row) => (
-                <tr key={row}>
-                  <th
-                    className={cn(
-                      "informio-spreadsheet-grid-row-header",
-                      row === activeCell.row && "is-active"
-                    )}
-                    scope="row"
+                  </div>
+                );
+              })}
+            </div>
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const row = virtualRow.index;
+              return (
+                <div
+                  key={row}
+                  style={{
+                    position: "absolute",
+                    top: COL_HEADER_HEIGHT + virtualRow.start,
+                    left: 0,
+                    width: gridWidth,
+                    height: virtualRow.size
+                  }}
+                >
+                  <div
+                    className={cn("informio-spreadsheet-grid-row-header", row === activeCell.row && "is-active")}
+                    style={{
+                      position: "sticky",
+                      left: 0,
+                      width: ROW_HEADER_WIDTH,
+                      height: virtualRow.size,
+                      zIndex: 2
+                    }}
                     onClick={() => setActiveCell((current) => ({ ...current, row }))}
                     onContextMenu={(event) => openMenu(event, { kind: "row", row })}
                   >
                     {row + 1}
-                  </th>
-                  {Array.from({ length: colCount }, (_, column) => {
+                  </div>
+                  {colVirtualizer.getVirtualItems().map((virtualColumn) => {
+                    const column = virtualColumn.index;
                     const value = activeSheet.rows[row]?.[column];
                     const isActive = row === activeCell.row && column === activeCell.column;
                     return (
-                      <td
+                      <div
                         key={column}
                         className={cn("informio-spreadsheet-grid-cell", isActive && "is-active")}
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: ROW_HEADER_WIDTH + virtualColumn.start,
+                          width: virtualColumn.size,
+                          height: virtualRow.size
+                        }}
                         onContextMenu={(event) => openMenu(event, { kind: "cell", row, column })}
                       >
                         <input
@@ -206,13 +272,13 @@ export function SpreadsheetGrid({ workbook, zoom, onWorkbookChange, onCellChange
                             }
                           }}
                         />
-                      </td>
+                      </div>
                     );
                   })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
       <div

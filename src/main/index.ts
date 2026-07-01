@@ -31,9 +31,7 @@ import type {
   SaveAgentConversationsInput,
   SaveResult,
   SaveSpreadsheetResult,
-  SaveWordResult,
   SpreadsheetDiskFingerprint,
-  WordDiskFingerprint,
   AgentApprovalResponseInput,
   AgentSessionInput,
   SendAgentMessageInput,
@@ -78,6 +76,13 @@ import {
   normalizeLocalFileCandidate
 } from "./markdown-utils.js";
 import {
+  collectPendingChange,
+  collectUniquePaths,
+  filterFolderPathsAfterRemoval,
+  mergeRefreshedDocuments,
+  shouldFallbackToFullRefresh
+} from "./workspace-sync.js";
+import {
   documentKindFromPath,
   isExternalOpenablePath,
   isWritableTextDocument,
@@ -88,12 +93,9 @@ import {
   savePdfFile,
   saveSpreadsheetFile,
   getSpreadsheetFileStat,
-  saveWordFile,
-  getWordFileStat,
   generatedMarkdownForAssetPath,
   pdfMarkdown,
   spreadsheetMarkdown,
-  wordMarkdown,
   normalizeAssetDocumentMarkdown,
   escapeHtml,
   exportFontStack,
@@ -131,6 +133,8 @@ const mainWindows = new Set<BrowserWindow>();
 let workspaceWatchers: FSWatcher[] = [];
 let workspaceRefreshTimer: NodeJS.Timeout | null = null;
 let workspaceRefreshInFlight = false;
+let pendingWorkspaceChanges = new Set<string>();
+let pendingWorkspaceRequiresFullRefresh = false;
 let appDataLoaded = false;
 const pendingExternalOpenFiles = new Map<string, string>();
 const documentReadCache = new Map<string, { size: number; mtimeMs: number; document: InformioDocument }>();
@@ -625,7 +629,9 @@ const collectWorkspaceEntries = async (
           const childEntries = await collectWorkspaceEntries(path, { ensure: false });
           return { filePaths: childEntries.filePaths, folderPaths: [path, ...childEntries.folderPaths] };
         }
-        if (entry.isFile()) return { filePaths: [path], folderPaths: [] };
+        if (entry.isFile()) {
+          return isExternalOpenablePath(path) ? { filePaths: [path], folderPaths: [] } : { filePaths: [], folderPaths: [] };
+        }
         return { filePaths: [], folderPaths: [] };
       })
   );
@@ -648,69 +654,89 @@ const scanWorkspaceEntries = async (
 
 const scanWorkspaceFiles = async (folder: string): Promise<string[]> => (await scanWorkspaceEntries(folder)).filePaths;
 
+const READ_DOCUMENTS_CONCURRENCY = 32;
+
+const mapWithConcurrency = async <T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>) => {
+  if (!items.length) return [] as R[];
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index]!);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+};
+
+const readDocumentFromPath = async (
+  path: string,
+  existingByPath: Map<string, InformioDocument>
+) => {
+  try {
+    if (!isExternalOpenablePath(path)) return null;
+    const existing = existingByPath.get(normalizeForCompare(path));
+    const fileStats = await stat(path);
+    if (!fileStats.isFile()) return null;
+    const cached = documentReadCache.get(path);
+    const kind = documentKindFromPath(path);
+    if (cachedDocumentMatches(cached, fileStats)) {
+      return existing
+        ? { ...cached!.document, id: existing.id, kind, updatedAt: existing.updatedAt }
+        : { ...cached!.document, kind };
+    }
+    let markdown: string;
+    let sourceMarkdown: string | null = null;
+    if (kind === "unknown") {
+      markdown = "";
+    } else if (kind === "image") {
+      markdown = generatedMarkdownForAssetPath(path) ?? "";
+    } else if (kind === "video") {
+      markdown = generatedMarkdownForAssetPath(path) ?? "";
+    } else if (kind === "audio") {
+      markdown = generatedMarkdownForAssetPath(path) ?? "";
+    } else if (kind === "pdf") {
+      markdown = pdfMarkdown(path);
+    } else if (kind === "spreadsheet") {
+      markdown = spreadsheetMarkdown(path);
+    } else {
+      markdown = await readFile(path, "utf8");
+      sourceMarkdown = markdown;
+    }
+    markdown = await cleanMarkdownStorage(markdown, dirname(path));
+    if (sourceMarkdown !== null && markdown !== sourceMarkdown) {
+      await backupMarkdownFile(path);
+      await saveMarkdownFile(path, markdown);
+    }
+    const document = {
+      id: existing?.id ?? `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      title: basename(path),
+      filePath: path,
+      kind,
+      collection: "writing" as const,
+      updatedAt: new Date().toISOString(),
+      markdown
+    };
+    documentReadCache.set(path, { size: fileStats.size, mtimeMs: fileStats.mtimeMs, document });
+    return document;
+  } catch (error) {
+    log.warn("Failed to read document:", path, error);
+    documentReadCache.delete(path);
+    return null;
+  }
+};
+
 const readDocumentsFromPaths = async (paths: string[]) => {
   const existingByPath = new Map(
     appData.documents
       .filter((document) => document.filePath)
       .map((document) => [normalizeForCompare(document.filePath!), document] as const)
   );
+  const uniquePaths = collectUniquePaths(paths, isWindows);
   return (
-    await Promise.all(
-      paths.map(async (path) => {
-        try {
-          const existing = existingByPath.get(normalizeForCompare(path));
-          const fileStats = await stat(path);
-          if (!fileStats.isFile()) return null;
-          const cached = documentReadCache.get(path);
-          const kind = documentKindFromPath(path);
-          if (cachedDocumentMatches(cached, fileStats)) {
-            return existing
-              ? { ...cached!.document, id: existing.id, kind, updatedAt: existing.updatedAt }
-              : { ...cached!.document, kind };
-          }
-          let markdown: string;
-          let sourceMarkdown: string | null = null;
-          if (kind === "unknown") {
-            markdown = "";
-          } else if (kind === "image") {
-            markdown = generatedMarkdownForAssetPath(path) ?? "";
-          } else if (kind === "video") {
-            markdown = generatedMarkdownForAssetPath(path) ?? "";
-          } else if (kind === "audio") {
-            markdown = generatedMarkdownForAssetPath(path) ?? "";
-          } else if (kind === "pdf") {
-            markdown = pdfMarkdown(path);
-          } else if (kind === "spreadsheet") {
-            markdown = spreadsheetMarkdown(path);
-          } else if (kind === "word") {
-            markdown = wordMarkdown(path);
-          } else {
-            markdown = await readFile(path, "utf8");
-            sourceMarkdown = markdown;
-          }
-          markdown = await cleanMarkdownStorage(markdown, dirname(path));
-          if (sourceMarkdown !== null && markdown !== sourceMarkdown) {
-            await backupMarkdownFile(path);
-            await saveMarkdownFile(path, markdown);
-          }
-          const document = {
-            id: existing?.id ?? `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            title: basename(path),
-            filePath: path,
-            kind,
-            collection: "writing" as const,
-            updatedAt: new Date().toISOString(),
-            markdown
-          };
-          documentReadCache.set(path, { size: fileStats.size, mtimeMs: fileStats.mtimeMs, document });
-          return document;
-        } catch (error) {
-          log.warn("Failed to read document:", path, error);
-          documentReadCache.delete(path);
-          return null;
-        }
-      })
-    )
+    await mapWithConcurrency(uniquePaths, READ_DOCUMENTS_CONCURRENCY, (path) => readDocumentFromPath(path, existingByPath))
   ).filter(
     (
       document
@@ -768,6 +794,21 @@ const syncWorkspaceFoldersFromDisk = async () => {
   return appData;
 };
 
+const getTrackedProjectPaths = () =>
+  appData.projects?.length
+    ? appData.projects.map((project) => project.path)
+    : appData.workspacePath
+      ? [appData.workspacePath]
+      : [];
+
+const purgeNonOpenableProjectDocuments = (documents: InformioDocument[], projectPaths: string[]) => {
+  if (!projectPaths.length) return documents;
+  const isInsideTrackedProject = (path: string) => projectPaths.some((projectPath) => pathContains(projectPath, path));
+  return documents.filter(
+    (document) => !document.filePath || !isInsideTrackedProject(document.filePath) || isExternalOpenablePath(document.filePath)
+  );
+};
+
 const refreshWorkspaceFromDisk = async (options: { emit?: boolean } = {}) => {
   const projectPaths = appData.projects?.length
     ? appData.projects.map((project) => project.path)
@@ -800,12 +841,15 @@ const refreshWorkspaceFromDisk = async (options: { emit?: boolean } = {}) => {
   });
   const refreshedDocuments = await readDocumentsFromPaths(allFilePaths);
   const isInsideTrackedProject = (path: string) => projectPaths.some((projectPath) => pathContains(projectPath, path));
-  const nextDocuments = [
-    ...refreshedDocuments,
-    ...appData.documents
-      .filter((document) => !document.filePath || !isInsideTrackedProject(document.filePath))
-      .map((document) => (document.filePath ? { ...document, title: basename(document.filePath) } : document))
-  ];
+  const nextDocuments = purgeNonOpenableProjectDocuments(
+    [
+      ...refreshedDocuments,
+      ...appData.documents
+        .filter((document) => !document.filePath || !isInsideTrackedProject(document.filePath))
+        .map((document) => (document.filePath ? { ...document, title: basename(document.filePath) } : document))
+    ],
+    projectPaths
+  );
   const projectPathSet = new Set(projectPaths.map(normalizeForCompare));
   const outsideProjectFolders = appData.folders.filter(
     (folder) => !Array.from(projectPathSet).some((projectPath) => pathContains(projectPath, folder.path))
@@ -822,7 +866,96 @@ const refreshWorkspaceFromDisk = async (options: { emit?: boolean } = {}) => {
   return appData;
 };
 
-const scheduleWorkspaceRefresh = () => {
+const refreshWorkspaceIncremental = async (
+  changedPaths: string[],
+  options: { emit?: boolean } = {}
+) => {
+  const projectPaths = getTrackedProjectPaths();
+  if (!projectPaths.length || !changedPaths.length) return appData;
+
+  const pathsToRead: string[] = [];
+  const pathsToRemove: string[] = [];
+  const folderPathsToAdd: string[] = [];
+
+  for (const changedPath of collectUniquePaths(changedPaths, isWindows)) {
+    try {
+      const info = await stat(changedPath);
+      if (info.isFile()) {
+        if (isExternalOpenablePath(changedPath)) {
+          pathsToRead.push(changedPath);
+        } else {
+          pathsToRemove.push(changedPath);
+        }
+        continue;
+      }
+      if (info.isDirectory()) {
+        const { filePaths, folderPaths } = await scanWorkspaceEntries(changedPath, { ensure: false });
+        pathsToRead.push(...filePaths);
+        folderPathsToAdd.push(changedPath, ...folderPaths);
+      }
+    } catch {
+      pathsToRemove.push(changedPath);
+      documentReadCache.delete(changedPath);
+    }
+  }
+
+  const isInsideTrackedProject = (path: string) => projectPaths.some((projectPath) => pathContains(projectPath, path));
+  const refreshedDocuments = pathsToRead.length ? await readDocumentsFromPaths(pathsToRead) : [];
+  const nextDocuments = purgeNonOpenableProjectDocuments(
+    mergeRefreshedDocuments(
+      appData.documents,
+      refreshedDocuments,
+      pathsToRemove,
+      isInsideTrackedProject,
+      isWindows
+    ).map((document) => (document.filePath ? { ...document, title: basename(document.filePath) } : document)),
+    projectPaths
+  );
+
+  const projectPathSet = new Set(projectPaths.map(normalizeForCompare));
+  const outsideProjectFolders = appData.folders.filter(
+    (folder) => !Array.from(projectPathSet).some((projectPath) => pathContains(projectPath, folder.path))
+  );
+  const trackedFolderPaths = appData.folders
+    .filter((folder) => isInsideTrackedProject(folder.path))
+    .map((folder) => folder.path);
+  const nextTrackedFolderPaths = filterFolderPathsAfterRemoval(
+    [...trackedFolderPaths, ...folderPathsToAdd, ...projectPaths],
+    pathsToRemove,
+    isWindows
+  );
+
+  pathsToRemove.forEach((removedPath) => {
+    Array.from(documentReadCache.keys()).forEach((path) => {
+      if (pathContains(removedPath, path) || normalizeForCompare(path) === normalizeForCompare(removedPath)) {
+        documentReadCache.delete(path);
+      }
+    });
+  });
+
+  appData = await saveAppData({
+    ...appData,
+    folders: dedupeFolders([
+      ...outsideProjectFolders,
+      ...collectUniquePaths(nextTrackedFolderPaths, isWindows).map((path) => createFolderRecord(path))
+    ]),
+    documents: nextDocuments,
+    activeDocumentId: normalizeActiveDocumentId(nextDocuments, appData.activeDocumentId)
+  });
+  updateApplicationMenu();
+  if (options.emit !== false) emitAppData();
+  return appData;
+};
+
+const scheduleWorkspaceRefresh = (eventType?: string, filename?: string | Buffer | null, watchRoot?: string) => {
+  if (watchRoot && eventType) {
+    const pending = collectPendingChange(watchRoot, eventType, filename, isWindows);
+    if (pending?.kind === "fallback") {
+      pendingWorkspaceRequiresFullRefresh = true;
+    } else if (pending?.kind === "path") {
+      pendingWorkspaceChanges.add(pending.absolutePath);
+    }
+  }
   if (workspaceRefreshTimer) clearTimeout(workspaceRefreshTimer);
   workspaceRefreshTimer = setTimeout(async () => {
     workspaceRefreshTimer = null;
@@ -831,8 +964,16 @@ const scheduleWorkspaceRefresh = () => {
       return;
     }
     workspaceRefreshInFlight = true;
+    const changedPaths = Array.from(pendingWorkspaceChanges);
+    const forceFullRefresh = pendingWorkspaceRequiresFullRefresh;
+    pendingWorkspaceChanges.clear();
+    pendingWorkspaceRequiresFullRefresh = false;
     try {
-      await refreshWorkspaceFromDisk();
+      if (forceFullRefresh || shouldFallbackToFullRefresh(new Set(changedPaths))) {
+        await refreshWorkspaceFromDisk();
+      } else if (changedPaths.length) {
+        await refreshWorkspaceIncremental(changedPaths);
+      }
     } catch (error) {
       console.error("Could not refresh workspace from disk.", error);
     } finally {
@@ -844,6 +985,8 @@ const scheduleWorkspaceRefresh = () => {
 const stopWorkspaceWatchers = () => {
   workspaceWatchers.forEach((watcher) => watcher.close());
   workspaceWatchers = [];
+  pendingWorkspaceChanges.clear();
+  pendingWorkspaceRequiresFullRefresh = false;
 };
 
 const startWorkspaceWatchers = async () => {
@@ -853,7 +996,9 @@ const startWorkspaceWatchers = async () => {
     try {
       const info = await stat(projectPath);
       if (!info.isDirectory()) continue;
-      const watcher = watch(projectPath, { recursive: true }, scheduleWorkspaceRefresh);
+      const watcher = watch(projectPath, { recursive: true }, (eventType, filename) => {
+        scheduleWorkspaceRefresh(eventType, filename, projectPath);
+      });
       watcher.on("error", (error) => console.error(`Workspace watcher failed for ${projectPath}.`, error));
       workspaceWatchers.push(watcher);
     } catch (error) {
@@ -927,7 +1072,7 @@ const openFileDialog = async (): Promise<AppData | null> => {
   const result = await dialog.showOpenDialog(window, {
     properties: ["openFile", "multiSelections"],
     filters: [
-      { name: "Informio files", extensions: ["md", "markdown", "txt", "png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "mov", "webm", "mp3", "wav", "m4a", "ogg", "pdf", "docx", "doc"] },
+      { name: "Informio files", extensions: ["md", "markdown", "txt", "png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "mov", "webm", "mp3", "wav", "m4a", "ogg", "pdf"] },
       { name: "All Files", extensions: ["*"] }
     ]
   });
@@ -1592,45 +1737,6 @@ const saveActiveDocumentAs = async (documents?: InformioDocument[], activeDocume
   return appData;
 };
 
-const saveWordAs = async (
-  documents?: InformioDocument[],
-  activeDocumentId?: string,
-  data?: ArrayBuffer
-) => {
-  await syncRendererDocuments(documents, activeDocumentId);
-  const window = getFocusedMainWindow();
-  const doc = activeDocument();
-  if (!window || !doc || normalizeDocumentKind(doc) !== "word" || !data || !(data instanceof ArrayBuffer)) return;
-  const result = await dialog.showSaveDialog(window, {
-    defaultPath: doc.filePath ?? doc.title,
-    filters: [{ name: "Word", extensions: ["docx"] }]
-  });
-  if (result.canceled || !result.filePath) return;
-  if (documentKindFromPath(result.filePath) !== "word" || extname(result.filePath).toLowerCase() !== ".docx") {
-    throw new Error("Only .docx files can be saved this way");
-  }
-  await writeFile(result.filePath, Buffer.from(data));
-  appData = await saveAppData({
-    ...appData,
-    folders: withTrackedFolders(appData.folders, [dirname(result.filePath)]),
-    documents: appData.documents.map((item) =>
-      item.id === doc.id
-        ? {
-            ...item,
-            title: basename(result.filePath!),
-            filePath: result.filePath,
-            markdown: wordMarkdown(result.filePath!),
-            kind: "word" as const,
-            updatedAt: new Date().toISOString()
-          }
-        : item
-    )
-  });
-  updateApplicationMenu();
-  emitAppData();
-  return appData;
-};
-
 const saveSpreadsheetAs = async (
   documents?: InformioDocument[],
   activeDocumentId?: string,
@@ -2278,46 +2384,6 @@ ipcMain.handle(
       return;
     }
     return saveSpreadsheetAs(documents, activeDocumentId, data);
-  }
-);
-
-ipcMain.handle("app:save-word-file", async (_event, path: string, data: ArrayBuffer): Promise<SaveWordResult | void> => {
-  if (typeof path !== "string" || path.includes("..")) {
-    log.warn("Invalid path in app:save-word-file:", path);
-    return;
-  }
-  if (!data || !(data instanceof ArrayBuffer)) {
-    log.warn("Invalid data in app:save-word-file");
-    return;
-  }
-  return saveWordFile(path, data);
-});
-
-ipcMain.handle("app:word-file-stat", async (_event, path: string): Promise<WordDiskFingerprint | void> => {
-  if (typeof path !== "string" || path.includes("..")) {
-    log.warn("Invalid path in app:word-file-stat:", path);
-    return;
-  }
-  try {
-    return await getWordFileStat(path);
-  } catch (error) {
-    log.warn("Failed to stat word file:", path, error);
-    return;
-  }
-});
-
-ipcMain.handle(
-  "app:save-word-as",
-  async (_event, documents: InformioDocument[], activeDocumentId: string, data: ArrayBuffer) => {
-    if (!Array.isArray(documents) || typeof activeDocumentId !== "string") {
-      log.warn("Invalid IPC args for app:save-word-as");
-      return;
-    }
-    if (!data || !(data instanceof ArrayBuffer)) {
-      log.warn("Invalid data in app:save-word-as");
-      return;
-    }
-    return saveWordAs(documents, activeDocumentId, data);
   }
 );
 

@@ -283,19 +283,6 @@
     "renameSheetPrompt": "工作表名称",
     "contextMenuHint": "右键行号、列标、单元格或工作表标签可编辑结构"
   },
-  "word": {
-    "missingFilePath": "当前 Word 文档缺少文件路径。",
-    "fileType": "Word 文档",
-    "legacyUnsupported": "Informio 暂不支持在应用内编辑旧版 .doc 文件，请用系统 Word 处理器打开。",
-    "conflictTitle": "磁盘上的 Word 文档已变更",
-    "conflictDescription": "外部程序修改了 {{fileName}}。",
-    "conflictUnsavedWarning": "重载将丢失当前标签页中未保存的更改。",
-    "conflictReload": "重载",
-    "conflictKeepLocal": "保留本地编辑",
-    "conflictSaveAs": "另存为…",
-    "saveFailed": "Word 文档保存失败。",
-    "saveAsFailed": "Word 文档另存为失败。"
-  },
   "encrypted": {
     "content": "已加密内容",
     "damaged": "加密内容损坏",

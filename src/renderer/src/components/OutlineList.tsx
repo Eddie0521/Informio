@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { InformioDocument, OutlineItem } from "../types";
 import { cn } from "../lib/utils";
@@ -21,7 +21,7 @@ function getDocumentOutline(markdown: string): OutlineItem[] {
     .map((item, order) => ({ ...item, order }));
 }
 
-export function OutlineList({
+export const OutlineList = memo(function OutlineList({
   document,
   width,
   onJump
@@ -68,4 +68,4 @@ export function OutlineList({
       </div>
     </aside>
   );
-}
+});

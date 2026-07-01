@@ -13,10 +13,7 @@ import {
   generatedMarkdownForAssetPath,
   pdfMarkdown,
   spreadsheetMarkdown,
-  wordMarkdown,
   saveSpreadsheetFile,
-  saveWordFile,
-  getWordFileStat,
   normalizeAssetDocumentMarkdown,
   isWritableTextDocument,
   normalizeDocumentKind,
@@ -60,9 +57,14 @@ describe("documentKindFromPath", () => {
     expect(documentKindFromPath("data.csv")).toBe("spreadsheet");
   });
 
-  it("returns word for word extensions", () => {
-    expect(documentKindFromPath("essay.docx")).toBe("word");
-    expect(documentKindFromPath("legacy.doc")).toBe("word");
+  it("returns unknown for word extensions", () => {
+    expect(documentKindFromPath("essay.docx")).toBe("unknown");
+    expect(documentKindFromPath("legacy.doc")).toBe("unknown");
+  });
+
+  it("returns false for word extensions in openable paths", () => {
+    expect(isExternalOpenablePath("essay.docx")).toBe(false);
+    expect(isExternalOpenablePath("legacy.doc")).toBe(false);
   });
 
   it("returns unknown for unrecognized", () => {
@@ -208,13 +210,6 @@ describe("spreadsheetMarkdown", () => {
   });
 });
 
-describe("wordMarkdown", () => {
-  it("generates word link markdown", () => {
-    const md = wordMarkdown("/project/report.docx", "/project/doc.md");
-    expect(md).toContain("[report.docx]");
-  });
-});
-
 describe("saveSpreadsheetFile", () => {
   it("writes spreadsheet bytes to disk", async () => {
     const dir = await mkdtemp(join(tmpdir(), "informio-spreadsheet-"));
@@ -241,36 +236,6 @@ describe("saveSpreadsheetFile", () => {
     await expect(saveSpreadsheetFile("/tmp/readme.txt", new ArrayBuffer(0))).rejects.toThrow(
       "Only spreadsheet files can be saved this way"
     );
-  });
-});
-
-describe("saveWordFile", () => {
-  it("writes .docx bytes to disk", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "informio-word-"));
-    const path = join(dir, "report.docx");
-    const payload = new Uint8Array([9, 8, 7, 6]);
-    const result = await saveWordFile(path, payload.buffer);
-    expect(result.path).toBe(path);
-    const written = await readFile(path);
-    expect(Array.from(written)).toEqual([9, 8, 7, 6]);
-  });
-
-  it("rejects non-docx paths", async () => {
-    await expect(saveWordFile("/tmp/readme.doc", new ArrayBuffer(0))).rejects.toThrow(
-      "Only .docx files can be saved this way"
-    );
-  });
-});
-
-describe("getWordFileStat", () => {
-  it("returns file fingerprint for .docx", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "informio-word-"));
-    const path = join(dir, "report.docx");
-    const payload = new Uint8Array([1, 2, 3]);
-    await writeFile(path, payload);
-    const stat = await getWordFileStat(path);
-    expect(stat.size).toBe(3);
-    expect(stat.mtimeMs).toBeGreaterThan(0);
   });
 });
 

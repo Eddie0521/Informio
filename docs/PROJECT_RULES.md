@@ -28,11 +28,8 @@ Informio is a minimal desktop Markdown editor with contextual Agent assistance. 
 - PDF highlighting remains available through `pdf.js` native highlight mode from the PDF toolbar; default PDF mode remains plain browsing and text selection.
 - PDF annotation management surfaces such as comment dialogs, annotation side panels, and PDF-to-Markdown backlink management should stay out of the PDF viewer unless intentionally reintroduced with a new rule update first.
 - Spreadsheet documents use the binary workbook file as the source of truth; the `markdown` field is only an in-library link reference.
-- Word documents (`.docx`) use the binary file as the source of truth; the `markdown` field is only an in-library link reference.
-- Legacy `.doc` files are not edited in-app; users should open them with the system word processor.
-- Spreadsheet and Word saves preserve the original file extension (for example `.xls` stays `.xls`).
+- Spreadsheet saves preserve the original file extension (for example `.xls` stays `.xls`).
 - External changes to an open spreadsheet must be confirmed by the user (reload, keep local edits, or save as) before overwriting local editor state.
-- External changes to an open Word document must be confirmed by the user (reload, keep local edits, or save as) before overwriting local editor state.
 - Settings must be discoverable from the main shell and should expose practical controls without forcing setup before writing.
 - Errors must explain what happened and the next action, especially for missing or failed MCP servers.
 - Agent runtime infrastructure may be shared, but execution flow presentation must follow each provider's native stage feel and pacing.

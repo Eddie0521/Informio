@@ -120,7 +120,6 @@ export const SECRET_KDF = "pbkdf2-sha256";
 export const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
 export const pdfExtensions = new Set(["pdf"]);
 export const spreadsheetExtensions = new Set(["xlsx", "xls", "csv"]);
-export const wordExtensions = new Set(["docx", "doc"]);
 export const videoExtensions = new Set(["mp4", "mov", "webm"]);
 export const audioExtensions = new Set(["mp3", "wav", "m4a", "ogg"]);
 export const mediaExtensions = new Set([...videoExtensions, ...audioExtensions]);

@@ -30,7 +30,8 @@ export const documentLookupKey = (documents: InformioDocument[], excludedSuggest
 export const folderChain = (path: string, projectPaths: string[]) => {
   const normalizedPath = normalizePath(path);
   if (!normalizedPath) return [];
-  const containingProject = projectPaths.find((p) => pathContains(p, normalizedPath));
+  const sortedProjects = [...projectPaths].sort((left, right) => normalizePath(right).length - normalizePath(left).length);
+  const containingProject = sortedProjects.find((p) => pathContains(p, normalizedPath));
   const normalizedRoot = containingProject ? normalizePath(containingProject) : "";
   if (!normalizedRoot) return [normalizedPath];
 
@@ -48,6 +49,7 @@ export const folderChain = (path: string, projectPaths: string[]) => {
 
 export const buildFileTree = (folders: InformioFolder[], documents: InformioDocument[], projects: InformioProject[]): FileTreeNode[] => {
   const projectPaths = projects.map((p) => normalizePath(p.path));
+  const projectPathSet = new Set(projectPaths);
   const projectsByPath = new Map(projects.map((project) => [normalizePath(project.path), project]));
   const folderRecords = new Map<string, InformioFolder>();
   const nodes = new Map<string, FileTreeNode>();
@@ -124,8 +126,8 @@ export const buildFileTree = (folders: InformioFolder[], documents: InformioDocu
   }
 
   return roots.sort((a, b) => {
-    const aIsProject = projectPaths.includes(normalizePath(a.folder.path));
-    const bIsProject = projectPaths.includes(normalizePath(b.folder.path));
+    const aIsProject = projectPathSet.has(normalizePath(a.folder.path));
+    const bIsProject = projectPathSet.has(normalizePath(b.folder.path));
     if (aIsProject !== bIsProject) return aIsProject ? -1 : 1;
     const aPinned = Boolean(projectsByPath.get(normalizePath(a.folder.path))?.pinned);
     const bPinned = Boolean(projectsByPath.get(normalizePath(b.folder.path))?.pinned);

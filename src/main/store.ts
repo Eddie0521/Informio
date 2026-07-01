@@ -39,7 +39,12 @@ const videoExtensions = new Set([".mp4", ".mov", ".webm"]);
 const audioExtensions = new Set([".mp3", ".wav", ".m4a", ".ogg"]);
 const pdfExtensions = new Set([".pdf"]);
 const spreadsheetExtensions = new Set([".xlsx", ".xls", ".csv"]);
-const wordExtensions = new Set([".docx", ".doc"]);
+
+const isWordDocumentPath = (path?: string) => {
+  if (!path) return false;
+  const extension = extname(path).toLowerCase();
+  return extension === ".docx" || extension === ".doc";
+};
 
 const documentKindFromPath = (path?: string): InformioDocumentKind => {
   if (!path) return "markdown";
@@ -51,18 +56,28 @@ const documentKindFromPath = (path?: string): InformioDocumentKind => {
   if (audioExtensions.has(extension)) return "audio";
   if (pdfExtensions.has(extension)) return "pdf";
   if (spreadsheetExtensions.has(extension)) return "spreadsheet";
-  if (wordExtensions.has(extension)) return "word";
   return "unknown";
 };
 
-const normalizeDocumentKind = (document: InformioDocument): InformioDocumentKind =>
-  document.kind ?? documentKindFromPath(document.filePath ?? document.title);
+const hasLegacyWordKind = (document: InformioDocument) => (document.kind as string | undefined) === "word";
+
+const normalizeDocumentKind = (document: InformioDocument): InformioDocumentKind => {
+  if (hasLegacyWordKind(document) || isWordDocumentPath(document.filePath ?? document.title)) {
+    return documentKindFromPath(document.filePath ?? document.title);
+  }
+  return document.kind ?? documentKindFromPath(document.filePath ?? document.title);
+};
+
+const isRemovedWordDocument = (document: InformioDocument) =>
+  hasLegacyWordKind(document) || isWordDocumentPath(document.filePath);
 
 const normalizeDocuments = (documents: InformioDocument[]) =>
-  documents.map((document) => ({
-    ...document,
-    kind: normalizeDocumentKind(document)
-  }));
+  documents
+    .filter((document) => !isRemovedWordDocument(document))
+    .map((document) => ({
+      ...document,
+      kind: normalizeDocumentKind(document)
+    }));
 const normalizeAssetImportMode = (value: AppSettings["editor"]["assetImportMode"] | undefined): AppSettings["editor"]["assetImportMode"] =>
   value === "link-original-file" ? "link-original-file" : "copy-to-attachment";
 
@@ -459,10 +474,16 @@ const mergeData = (value: Partial<AppData>): AppData => {
   const legacyAppearance = value.settings?.appearance as
     | (Partial<AppSettings["appearance"]> & { bodyFontFamily?: string })
     | undefined;
+  const documents = value.documents?.length ? normalizeDocuments(value.documents) : defaultData.documents;
+  const activeDocumentId =
+    value.activeDocumentId && documents.some((doc) => doc.id === value.activeDocumentId)
+      ? value.activeDocumentId
+      : (documents[0]?.id ?? "");
   return {
     ...defaultData,
     ...value,
-    documents: value.documents?.length ? normalizeDocuments(value.documents) : defaultData.documents,
+    documents,
+    activeDocumentId,
     projects,
     agentConversations: normalizeAgentConversations(
       value.agentConversations,

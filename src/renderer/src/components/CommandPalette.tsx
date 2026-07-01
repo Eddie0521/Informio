@@ -22,6 +22,7 @@ const fuzzyScore = (item: CommandPaletteItem, query: string) => {
 export function CommandPalette({ open, commands, onClose }: { open: boolean; commands: CommandPaletteItem[]; onClose: () => void }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -29,17 +30,27 @@ export function CommandPalette({ open, commands, onClose }: { open: boolean; com
   const matches = useMemo(
     () =>
       commands
-        .map((command) => ({ command, score: fuzzyScore(command, query) }))
+        .map((command) => ({ command, score: fuzzyScore(command, debouncedQuery) }))
         .filter((item) => item.score > 0)
         .sort((a, b) => b.score - a.score || a.command.title.localeCompare(b.command.title))
         .slice(0, 80)
         .map((item) => item.command),
-    [commands, query]
+    [commands, debouncedQuery]
   );
+
+  useEffect(() => {
+    if (!query.trim()) {
+      setDebouncedQuery("");
+      return;
+    }
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 150);
+    return () => window.clearTimeout(timer);
+  }, [query]);
 
   useEffect(() => {
     if (!open) return;
     setQuery("");
+    setDebouncedQuery("");
     setIndex(0);
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }, [open]);

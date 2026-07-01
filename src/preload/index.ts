@@ -24,9 +24,7 @@ import type {
   SaveAttachmentResult,
   SaveResult,
   SaveSpreadsheetResult,
-  SaveWordResult,
   SpreadsheetDiskFingerprint,
-  WordDiskFingerprint,
   SendAgentMessageInput,
   SendAgentMessageResult,
   TranslateSelectionInput,
@@ -71,12 +69,6 @@ const api = {
     ipcRenderer.invoke("app:spreadsheet-file-stat", path) as Promise<SpreadsheetDiskFingerprint | void>,
   saveSpreadsheetAs: (documents: InformioDocument[], activeDocumentId: string, data: ArrayBuffer) =>
     ipcRenderer.invoke("app:save-spreadsheet-as", documents, activeDocumentId, data) as Promise<AppData | undefined>,
-  saveWordFile: (path: string, data: ArrayBuffer) =>
-    ipcRenderer.invoke("app:save-word-file", path, data) as Promise<SaveWordResult | void>,
-  getWordFileStat: (path: string) =>
-    ipcRenderer.invoke("app:word-file-stat", path) as Promise<WordDiskFingerprint | void>,
-  saveWordAs: (documents: InformioDocument[], activeDocumentId: string, data: ArrayBuffer) =>
-    ipcRenderer.invoke("app:save-word-as", documents, activeDocumentId, data) as Promise<AppData | undefined>,
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("app:save-settings", settings) as Promise<AppSettings>,
   getAppInfo: () => ipcRenderer.invoke("app:get-info") as Promise<AppInfo>,
   saveDocuments: (documents: InformioDocument[], activeDocumentId: string) =>

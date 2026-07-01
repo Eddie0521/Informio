@@ -65,7 +65,6 @@ import {
   TABLE_EDGE_COMPRESS_MIN_WIDTH
 } from "../constants";
 import { SpreadsheetEditorPane } from "./SpreadsheetEditorPane";
-import { WordEditorPane } from "./WordEditorPane";
 import { cn } from "../lib/utils";
 import { pathBaseName } from "../lib/path";
 import { markdownToStatusText, countWords, countCharacters, countLines } from "../lib/text-stats";
@@ -106,6 +105,7 @@ import {
   textContentNode,
   markdownAutoBlockMatch
 } from "../lib/markdown-block-parser";
+import { DOCUMENT_STATE_SYNC_DEBOUNCE_MS } from "../lib/document-state-sync";
 import {
   applyTableColumnWidths,
   measureNaturalTableColumnWidthInfo,
@@ -254,7 +254,7 @@ type EditorPaneProps = {
   paneId: EditorPaneState["id"];
   documentId: string;
   onOutlineJumpHandled: (request: OutlineJumpRequest) => void;
-  onChange: (documentId: string, markdown: string, options?: { composing?: boolean }) => void;
+  onChange: (documentId: string, markdown: string, options?: { composing?: boolean; immediate?: boolean }) => void;
   onOpenInternalLink: (documentId: string, sourcePaneId: EditorPaneState["id"]) => void;
   onCreateInternalLink: (title: string) => void;
   onSelection: (selection: AgentSelection | null) => void;
@@ -292,6 +292,7 @@ function MarkdownEditorPane({
   const composingRef = useRef(false);
   const applyingMarkdownAutoBlockRef = useRef(false);
   const markdownAutoBlockTimerRef = useRef<number | null>(null);
+  const markdownSyncTimerRef = useRef<number | null>(null);
   const sourceTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const editorScrollTimerRef = useRef<number | null>(null);
   const editorInstanceRef = useRef<Editor | null>(null);
@@ -324,11 +325,25 @@ function MarkdownEditorPane({
   const isAssetDocument = isEmbeddableAssetDocument(document);
   const isReadOnlyDocument = !isWritableTextDocument(document);
   const isSourceMode = !isReadOnlyDocument && viewMode === "source";
+  const documentStructureKeyValue = useMemo(() => documentStructureKey(documents), [documents]);
   const documentLinkIndexKey = useMemo(
     () => documentLookupKey(documents, document.id),
-    [documents]
+    [documentStructureKeyValue, document.id]
   );
   const documentLookupIndex = useMemo(() => buildDocumentLookupIndex(documents, document.id), [documentLinkIndexKey]);
+  const flushMarkdownToParent = (editor: Editor, options?: { composing?: boolean; immediate?: boolean }) => {
+    if (editor.isDestroyed) return;
+    onChange(document.id, composeMarkdownWithFrontmatter(frontmatter, editor.getMarkdown()), options);
+  };
+  const scheduleMarkdownToParent = (editor: Editor) => {
+    if (markdownSyncTimerRef.current !== null) window.clearTimeout(markdownSyncTimerRef.current);
+    markdownSyncTimerRef.current = window.setTimeout(() => {
+      markdownSyncTimerRef.current = null;
+      const instance = editorInstanceRef.current;
+      if (!instance || instance.isDestroyed) return;
+      flushMarkdownToParent(instance);
+    }, DOCUMENT_STATE_SYNC_DEBOUNCE_MS);
+  };
   const closeSecretPrompt = () => {
     pendingSecretActionRef.current = null;
     setSecretPromptRequest(null);
@@ -661,6 +676,14 @@ function MarkdownEditorPane({
           compositionend: () => {
             composingRef.current = false;
             onCompositionChange(document.id, false);
+            const instance = editorInstanceRef.current;
+            if (instance && !instance.isDestroyed) {
+              if (markdownSyncTimerRef.current !== null) {
+                window.clearTimeout(markdownSyncTimerRef.current);
+                markdownSyncTimerRef.current = null;
+              }
+              flushMarkdownToParent(instance, { immediate: true });
+            }
             return false;
           },
           paste: (view, event) => {
@@ -760,7 +783,8 @@ function MarkdownEditorPane({
           }, 0);
         }
         updateWikiSuggestion(editor);
-        onChange(document.id, composeMarkdownWithFrontmatter(frontmatter, editor.getMarkdown()), { composing });
+        if (composing) return;
+        scheduleMarkdownToParent(editor);
       },
       onSelectionUpdate: ({ editor }) => {
         updateWikiSuggestion(editor);
@@ -782,8 +806,24 @@ function MarkdownEditorPane({
         window.clearTimeout(editorScrollTimerRef.current);
         editorScrollTimerRef.current = null;
       }
+      if (markdownSyncTimerRef.current !== null) {
+        window.clearTimeout(markdownSyncTimerRef.current);
+        markdownSyncTimerRef.current = null;
+      }
     };
   }, [editor]);
+
+  useEffect(() => {
+    return () => {
+      const instance = editorInstanceRef.current;
+      if (!instance || instance.isDestroyed) return;
+      if (markdownSyncTimerRef.current !== null) {
+        window.clearTimeout(markdownSyncTimerRef.current);
+        markdownSyncTimerRef.current = null;
+      }
+      flushMarkdownToParent(instance, { immediate: true });
+    };
+  }, [document.id]);
 
   useEffect(() => {
     if (!editor || isReadOnlyDocument || isSourceMode) return;
@@ -959,7 +999,7 @@ function MarkdownEditorPane({
       const textarea = sourceTextareaRef.current;
       if (!textarea) return;
       const nextMarkdown = `${document.markdown.slice(0, findMatch.start)}${replaceQuery}${document.markdown.slice(findMatch.end)}`;
-      onChange(document.id, nextMarkdown);
+      onChange(document.id, nextMarkdown, { immediate: true });
       window.setTimeout(() => {
         const nextStart = findMatch.start;
         textarea.focus();
@@ -1049,7 +1089,7 @@ function MarkdownEditorPane({
 
   const updateFrontmatterRaw = (raw: string) => {
     const body = editor?.getMarkdown() ?? editorMarkdown;
-    onChange(document.id, `---\n${raw.trimEnd()}\n---\n${body.replace(/^\n+/, "")}`);
+    onChange(document.id, `---\n${raw.trimEnd()}\n---\n${body.replace(/^\n+/, "")}`, { immediate: true });
   };
 
   useEffect(() => {
@@ -1963,7 +2003,7 @@ function MarkdownEditorPane({
                 if (!text) return;
                 event.preventDefault();
                 const nextMarkdown = insertTextIntoTextarea(event.currentTarget, stripClipboardFragmentMarkers(text));
-                onChange(document.id, nextMarkdown);
+                onChange(document.id, nextMarkdown, { immediate: true });
               }}
               className="informio-editor informio-editor-source w-full resize-none border-0 bg-transparent p-0"
             />
@@ -2159,16 +2199,6 @@ function EditorPane(props: EditorPaneProps) {
         autoSave={data?.settings.markdown.autoSave ?? false}
         onDirtyChange={props.onDirtyChange}
         onFilePathChange={props.onFilePathChange}
-        onRequestSaveAs={() => props.onRequestSaveAs(document.id)}
-      />
-    );
-  }
-  if (document && documentKind(document) === "word") {
-    return (
-      <WordEditorPane
-        document={document}
-        autoSave={data?.settings.markdown.autoSave ?? false}
-        onDirtyChange={props.onDirtyChange}
         onRequestSaveAs={() => props.onRequestSaveAs(document.id)}
       />
     );

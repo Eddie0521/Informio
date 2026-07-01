@@ -1,6 +1,6 @@
 {
   "name": "informio",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "A minimal Markdown editor with contextual MCP Agent assistance.",
   "license": "AGPL-3.0-only",
   "homepage": "https://informio.tech",
@@ -28,20 +28,19 @@
     "typecheck": "tsc --noEmit",
     "preview": "electron-vite preview",
     "dist:mac": "tsc --noEmit && electron-vite build && node scripts/run-electron-builder.cjs --mac dmg zip --config electron-builder.config.ts",
-    "dist:mac:unsigned": "tsc --noEmit && electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/run-electron-builder.cjs --mac dmg zip -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --config electron-builder.config.ts",
-    "release:mac:unsigned": "tsc --noEmit && electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/run-electron-builder.cjs --mac dmg zip -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --config electron-builder.config.ts",
+    "dist:mac:unsigned": "tsc --noEmit && electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/run-electron-builder.cjs --mac dmg zip -c.mac.identity=\"-\" -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --config electron-builder.config.ts",
+    "release:mac:unsigned": "tsc --noEmit && electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/run-electron-builder.cjs --mac dmg zip -c.mac.identity=\"-\" -c.mac.notarize=false -c.mac.hardenedRuntime=false -c.dmg.sign=false --config electron-builder.config.ts",
     "dist:win": "tsc --noEmit && electron-vite build && node scripts/run-electron-builder.cjs --win nsis --config electron-builder.config.ts",
     "release:win": "tsc --noEmit && electron-vite build && node scripts/run-electron-builder.cjs --win nsis --config electron-builder.config.ts",
     "dist:desktop": "tsc --noEmit && electron-vite build && node scripts/run-electron-builder.cjs --mac dmg zip --win nsis --config electron-builder.config.ts",
     "release": "node scripts/run-electron-builder.cjs --mac dmg zip --win nsis --publish always --config electron-builder.config.ts",
-    "dev:site": "pnpm --filter @informio/site dev",
-    "build:site": "pnpm --filter @informio/site build",
-    "lint:site": "pnpm --filter @informio/site lint"
+    "dev:site": "corepack pnpm --filter @informio/site dev",
+    "build:site": "corepack pnpm --filter @informio/site build",
+    "lint:site": "corepack pnpm --filter @informio/site lint"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.144",
     "@anthropic-ai/sdk": "^0.96.0",
-    "@eigenpal/docx-editor-react": "^1.9.0",
     "@embedpdf/react-pdf-viewer": "^2.14.3",
     "@opencode-ai/sdk": "^1.15.5",
     "@tanstack/react-virtual": "^3.14.2",

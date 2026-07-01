@@ -54,6 +54,17 @@ describe("documentStructureKey", () => {
   });
 });
 
+describe("documentStructureKey metadata", () => {
+  it("changes when metadata changes but not when only markdown changes", () => {
+    const docs = [makeDocument({ id: "a", title: "A", markdown: "# v1" })];
+    const key1 = documentStructureKey(docs);
+    const key2 = documentStructureKey([{ ...docs[0]!, markdown: "# v2" }]);
+    expect(key1).toBe(key2);
+    const key3 = documentStructureKey([{ ...docs[0]!, title: "B" }]);
+    expect(key3).not.toBe(key1);
+  });
+});
+
 describe("documentLookupKey", () => {
   it("includes excluded id", () => {
     const docs = [makeDocument()];

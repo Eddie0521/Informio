@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAppStore, useDocumentStore } from "../stores";
 import type { DragEvent as ReactDragEvent, ReactNode } from "react";
 import type {
@@ -39,6 +40,7 @@ import {
   filePathForFile,
   dataTransferFilePaths
 } from "../lib/file-tree";
+import { flattenVisibleFileTree, type FlatTreeRow } from "../lib/file-tree-flat";
 import { BlankFileContextMenu, FileContextMenu, ProjectContextMenu } from "./FileContextMenu";
 import { FileText, Film, Folder, FolderRoot, ImageIcon, Music, Pin, Table } from "lucide-react";
 
@@ -46,7 +48,7 @@ import { FileText, Film, Folder, FolderRoot, ImageIcon, Music, Pin, Table } from
 // FileList component
 // ---------------------------------------------------------------------------
 
-export default function FileList({
+export function FileList({
   onSelect,
   onCreate,
   onCreateFolder,
@@ -86,6 +88,14 @@ export default function FileList({
   const treeKey = useMemo(() => documentStructureKey(documents), [documents]);
   const tree = useMemo(() => buildFileTree(folders, documents, projects), [treeKey, folders, projects]);
   const projectsByPath = useMemo(() => new Map(projects.map((project) => [normalizePath(project.path), project])), [projects]);
+  const flatRows = useMemo(() => flattenVisibleFileTree(tree, expandedFolderKeys), [tree, expandedFolderKeys]);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const virtualizer = useVirtualizer({
+    count: flatRows.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 32,
+    overscan: 10
+  });
 
   useEffect(() => {
     if (!inlineRename) return;
@@ -296,15 +306,16 @@ export default function FileList({
     />
   );
 
-  const renderTreeNode = (node: FileTreeNode, depth = 0): ReactNode => {
-    const folderKey = normalizePath(node.folder.path || node.folder.id);
-    const isProject = depth === 0 && projectPaths.has(normalizePath(node.folder.path));
-    const collapsed = !expandedFolderKeys.has(folderKey);
-    const isEditingFolder = inlineRename?.type === "folder" && normalizePath(inlineRename.path) === folderKey;
-    const isEditingProject = inlineRename?.type === "project" && normalizePath(inlineRename.path) === folderKey;
-    const isDropTarget = dropTarget?.path === folderKey;
-    return (
-      <div key={node.folder.id} className="space-y-1">
+  const renderFlatRow = (row: FlatTreeRow) => {
+    if (row.kind === "folder") {
+      const node = row.node;
+      const depth = row.depth;
+      const folderKey = normalizePath(node.folder.path || node.folder.id);
+      const isProject = depth === 0 && projectPaths.has(normalizePath(node.folder.path));
+      const isEditingFolder = inlineRename?.type === "folder" && normalizePath(inlineRename.path) === folderKey;
+      const isEditingProject = inlineRename?.type === "project" && normalizePath(inlineRename.path) === folderKey;
+      const isDropTarget = dropTarget?.path === folderKey;
+      return (
         <button
           type="button"
           data-file-context-target={isProject ? "project" : "folder"}
@@ -352,65 +363,58 @@ export default function FileList({
           )}
           {isEditingFolder || isEditingProject
             ? renderInlineRenameInput(
-                (inlineRename as InlineRenameState),
+                inlineRename as InlineRenameState,
                 "min-w-0 flex-1 rounded-md bg-white px-2 py-1 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-2 ring-emerald-500/45"
               )
             : <span className="min-w-0 flex-1 truncate">{node.folder.title}</span>}
           {isProject && projectsByPath.get(folderKey)?.pinned ? <Pin size={11} className="shrink-0 text-slate-400" /> : null}
         </button>
-        {collapsed ? null : (
-          <div className="space-y-1">
-            {node.children.map((child) => renderTreeNode(child, depth + 1))}
-            {node.documents.map((doc) => {
-              const active = doc.id === activeDocumentId;
-              const isEditingFile = inlineRename?.type === "file" && inlineRename.documentId === doc.id;
-              return (
-                <button
-                  key={doc.id}
-                  type="button"
-                  draggable
-                  data-file-context-target="file"
-                  data-file-path={doc.filePath ?? ""}
-                  data-file-title={doc.title}
-                  data-document-id={doc.id}
-                  onClick={() => onSelect(doc.id)}
-                  onDragStart={(event) => onDocumentDragStart(doc.id, event)}
-                  className={cn(
-                    "w-full rounded-md px-2.5 py-2 text-left text-[13px] transition-[background-color,box-shadow,transform] duration-150 active:scale-[0.99]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
-                    active
-                      ? "bg-white shadow-[0_1px_4px_rgba(15,23,42,0.10),inset_0_0_0_1px_rgba(15,23,42,0.10)]"
-                      : "hover:bg-white/75"
-                  )}
-                  style={{ paddingLeft: 8 + (depth + 1) * 14 }}
-                >
-                  <div className="flex items-center gap-2">
-                    {documentKind(doc) === "video" ? (
-                      <Film size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
-                    ) : documentKind(doc) === "audio" ? (
-                      <Music size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
-                    ) : documentKind(doc) === "image" ? (
-                      <ImageIcon size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
-                    ) : documentKind(doc) === "spreadsheet" ? (
-                      <Table size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
-                    ) : documentKind(doc) === "word" ? (
-                      <FileText size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
-                    ) : (
-                      <FileText size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
-                    )}
-                    {isEditingFile
-                      ? renderInlineRenameInput(
-                          inlineRename,
-                          "min-w-0 flex-1 rounded-md bg-white px-2 py-1 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-2 ring-emerald-500/45"
-                        )
-                      : <span className="min-w-0 truncate text-[13px] font-semibold text-[var(--text-main)]">{doc.title}</span>}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+      );
+    }
+
+    const doc = row.document;
+    const depth = row.depth;
+    const active = doc.id === activeDocumentId;
+    const isEditingFile = inlineRename?.type === "file" && inlineRename.documentId === doc.id;
+    return (
+      <button
+        type="button"
+        draggable
+        data-file-context-target="file"
+        data-file-path={doc.filePath ?? ""}
+        data-file-title={doc.title}
+        data-document-id={doc.id}
+        onClick={() => onSelect(doc.id)}
+        onDragStart={(event) => onDocumentDragStart(doc.id, event)}
+        className={cn(
+          "w-full rounded-md px-2.5 py-2 text-left text-[13px] transition-[background-color,box-shadow,transform] duration-150 active:scale-[0.99]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/45",
+          active
+            ? "bg-white shadow-[0_1px_4px_rgba(15,23,42,0.10),inset_0_0_0_1px_rgba(15,23,42,0.10)]"
+            : "hover:bg-white/75"
         )}
-      </div>
+        style={{ paddingLeft: 8 + depth * 14 }}
+      >
+        <div className="flex items-center gap-2">
+          {documentKind(doc) === "video" ? (
+            <Film size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
+          ) : documentKind(doc) === "audio" ? (
+            <Music size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
+          ) : documentKind(doc) === "image" ? (
+            <ImageIcon size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
+          ) : documentKind(doc) === "spreadsheet" ? (
+            <Table size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
+          ) : (
+            <FileText size={13} className={cn("shrink-0", active ? "text-emerald-600" : "text-slate-400")} />
+          )}
+          {isEditingFile
+            ? renderInlineRenameInput(
+                inlineRename,
+                "min-w-0 flex-1 rounded-md bg-white px-2 py-1 text-[13px] font-semibold text-[var(--text-main)] outline-none ring-2 ring-emerald-500/45"
+              )
+            : <span className="min-w-0 truncate text-[13px] font-semibold text-[var(--text-main)]">{doc.title}</span>}
+        </div>
+      </button>
     );
   };
   const openContextMenu = (event: React.MouseEvent<HTMLElement>) => {
@@ -466,8 +470,28 @@ export default function FileList({
       style={{ width }}
       onContextMenu={openContextMenu}
     >
-      <div className="space-y-2 overflow-y-auto px-3 py-3 text-[13px]">
-        {tree.map((node) => renderTreeNode(node))}
+      <div ref={listRef} className="overflow-y-auto px-3 py-3 text-[13px]">
+        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const row = flatRows[virtualRow.index];
+            if (!row) return null;
+            return (
+              <div
+                key={row.key}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  transform: `translateY(${virtualRow.start}px)`,
+                  height: virtualRow.size
+                }}
+              >
+                {renderFlatRow(row)}
+              </div>
+            );
+          })}
+        </div>
       </div>
       {contextMenu ? (
         <FileContextMenu
@@ -532,3 +556,5 @@ export default function FileList({
     </aside>
   );
 }
+
+export default memo(FileList);

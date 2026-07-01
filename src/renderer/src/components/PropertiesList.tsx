@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, FileText } from "lucide-react";
 import type { InformioDocument, PropertyGroup } from "../types";
 import { cn } from "../lib/utils";
@@ -67,7 +67,17 @@ const buildPropertyGroups = (documents: InformioDocument[]): PropertyGroup[] => 
     }));
 };
 
-export function PropertiesList({
+const frontmatterCacheKey = (documents: InformioDocument[]) =>
+  documents
+    .map((document) => {
+      const end = document.markdown.indexOf("\n---");
+      if (!document.markdown.startsWith("---")) return `${document.id}:`;
+      const block = end > 0 ? document.markdown.slice(0, end + 4) : document.markdown.slice(0, 512);
+      return `${document.id}:${block}`;
+    })
+    .join("|");
+
+export const PropertiesList = memo(function PropertiesList({
   documents,
   activeDocumentId,
   width,
@@ -78,7 +88,8 @@ export function PropertiesList({
   width: number;
   onSelect: (id: string) => void;
 }) {
-  const groups = useMemo(() => buildPropertyGroups(documents), [documents]);
+  const frontmatterKey = useMemo(() => frontmatterCacheKey(documents), [documents]);
+  const groups = useMemo(() => buildPropertyGroups(documents), [frontmatterKey]);
   const [expandedProperties, setExpandedProperties] = useState<Set<string>>(() => new Set());
   const [expandedValues, setExpandedValues] = useState<Set<string>>(() => new Set());
 
@@ -185,4 +196,4 @@ export function PropertiesList({
       </div>
     </aside>
   );
-}
+});

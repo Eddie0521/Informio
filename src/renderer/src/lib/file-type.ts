@@ -1,5 +1,5 @@
 import type { InformioDocument, InformioDocumentKind, AgentMessageAttachment } from "../types";
-import { imageExtensions, pdfExtensions, spreadsheetExtensions, videoExtensions, audioExtensions, wordExtensions } from "../constants";
+import { imageExtensions, pdfExtensions, spreadsheetExtensions, videoExtensions, audioExtensions } from "../constants";
 import { assetExtensionFromSrc } from "./asset-url";
 
 export const documentKindFromPath = (path?: string): InformioDocumentKind => {
@@ -12,12 +12,8 @@ export const documentKindFromPath = (path?: string): InformioDocumentKind => {
   if (audioExtensions.has(extension)) return "audio";
   if (pdfExtensions.has(extension)) return "pdf";
   if (spreadsheetExtensions.has(extension)) return "spreadsheet";
-  if (wordExtensions.has(extension)) return "word";
   return "unknown";
 };
-
-export const isEditableWordFile = (path?: string) => Boolean(path && assetExtensionFromSrc(path) === "docx");
-export const isLegacyWordFile = (path?: string) => Boolean(path && assetExtensionFromSrc(path) === "doc");
 
 export const documentKind = (document?: InformioDocument | null): InformioDocumentKind =>
   document ? (document.kind ?? documentKindFromPath(document.filePath ?? document.title)) : "unknown";
@@ -76,8 +72,6 @@ export const mimeTypeFromName = (name: string) => {
   if (extension === ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (extension === ".xls") return "application/vnd.ms-excel";
   if (extension === ".csv") return "text/csv";
-  if (extension === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  if (extension === ".doc") return "application/msword";
   if (extension === ".md" || extension === ".markdown") return "text/markdown";
   if (extension === ".txt") return "text/plain";
   return undefined;
